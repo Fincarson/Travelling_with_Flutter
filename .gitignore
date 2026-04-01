@@ -1,0 +1,72 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub/
+build/
+
+# Flutter generated files
+.flutter-plugins
+.flutter-plugins-dependencies
+.flutter-versions
+
+# Dart / Flutter lock (KEEP pubspec.lock for apps)
+# pubspec.lock   <- DO NOT IGNORE for apps
+
+# VS Code
+.vscode/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+
+# Android
+android/.gradle/
+android/app/debug/
+android/app/profile/
+android/app/release/
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+
+# macOS / Linux / Windows
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+# Firebase / Secrets
+.env
+.env.*
+*.env
+
+# Firebase configs
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+
+# Generated files
+*.g.dart
+*.freezed.dart
+
+# Coverage / Testing
+coverage/
+
+# Misc
+*.zip
+*.rar
+*.7z
+*.tar.gz
+
+# Ignore local scripts
+scripts/local/
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
