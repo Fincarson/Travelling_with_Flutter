@@ -60,6 +60,7 @@ coverage/
 *.rar
 *.7z
 *.tar.gz
+/docs/
 
 # Ignore local scripts
 scripts/local/
