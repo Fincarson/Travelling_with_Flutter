@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-// import '../../domain/usecases/login_user.dart';
+
+import '../../domain/usecases/login_user.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -24,6 +25,13 @@ class _LoginPageState extends State<LoginPage> {
     setState(() {
       result = message;
     });
+  }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
   }
 
   @override
