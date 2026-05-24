@@ -43,6 +43,7 @@ Thumbs.db
 .env
 .env.*
 *.env
+lib/core/config/local_api_keys.dart
 
 # Firebase configs
 android/app/google-services.json

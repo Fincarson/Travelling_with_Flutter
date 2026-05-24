@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../core/config/local_api_keys.dart';
 
 const _primary = Color(0xFF355872);
 const _secondary = Color(0xFF7AAACE);
@@ -204,6 +208,18 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     }
   }
 
+  Future<void> _updateTrip(Trip trip) async {
+    setState(() {
+      final index = _trips.indexWhere((item) => item.id == trip.id);
+      if (index >= 0) _trips[index] = trip;
+      if (_selectedTrip?.id == trip.id) _selectedTrip = trip;
+      if (_activeTrip?.id == trip.id) _activeTrip = trip;
+      _loadError = null;
+    });
+
+    await _saveTripOnline(trip);
+  }
+
   Future<void> _saveTripOnline(Trip trip) async {
     final accountId = _accountId;
     if (accountId == null) return;
@@ -305,6 +321,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onOpenBudget: () => setState(() => _screen = _Screen.budget),
           onOpenPacking: () => setState(() => _screen = _Screen.packing),
           onOpenMap: () => setState(() => _screen = _Screen.map),
+          onUpdateTrip: _updateTrip,
         );
       case _Screen.trips:
         return TripsScreen(
@@ -465,6 +482,9 @@ class Trip {
     required this.items,
     required this.bookings,
     required this.checklist,
+    this.currency = 'USD',
+    this.preferences = const [],
+    this.budgetCategories = const [],
     this.placeId,
     this.formattedAddress,
     this.latitude,
@@ -483,24 +503,45 @@ class Trip {
   final List<ItineraryItem> items;
   final List<Booking> bookings;
   final List<ChecklistCategory> checklist;
+  final String currency;
+  final List<String> preferences;
+  final List<BudgetCategory> budgetCategories;
   final String? placeId;
   final String? formattedAddress;
   final double? latitude;
   final double? longitude;
 
-  Trip copyWith({TripStatus? status}) => Trip(
+  Trip copyWith({
+    TripStatus? status,
+    int? spent,
+    int? budget,
+    String? destination,
+    String? startDate,
+    String? endDate,
+    String? groupType,
+    String? currency,
+    List<String>? images,
+    List<ItineraryItem>? items,
+    List<Booking>? bookings,
+    List<ChecklistCategory>? checklist,
+    List<String>? preferences,
+    List<BudgetCategory>? budgetCategories,
+  }) => Trip(
     id: id,
-    destination: destination,
-    startDate: startDate,
-    endDate: endDate,
-    budget: budget,
-    spent: spent,
-    groupType: groupType,
+    destination: destination ?? this.destination,
+    startDate: startDate ?? this.startDate,
+    endDate: endDate ?? this.endDate,
+    budget: budget ?? this.budget,
+    spent: spent ?? this.spent,
+    groupType: groupType ?? this.groupType,
     status: status ?? this.status,
-    images: images,
-    items: items,
-    bookings: bookings,
-    checklist: checklist,
+    images: images ?? this.images,
+    items: items ?? this.items,
+    bookings: bookings ?? this.bookings,
+    checklist: checklist ?? this.checklist,
+    currency: currency ?? this.currency,
+    preferences: preferences ?? this.preferences,
+    budgetCategories: budgetCategories ?? this.budgetCategories,
     placeId: placeId,
     formattedAddress: formattedAddress,
     latitude: latitude,
@@ -518,11 +559,16 @@ class Trip {
     'budget': budget,
     'spent': spent,
     'groupType': groupType,
+    'currency': currency,
     'status': status.name,
     'images': images,
     'items': items.map((item) => item.toMap()).toList(),
     'bookings': bookings.map((booking) => booking.toMap()).toList(),
     'checklist': checklist.map((category) => category.toMap()).toList(),
+    'preferences': preferences,
+    'budgetCategories': budgetCategories
+        .map((category) => category.toMap())
+        .toList(),
     'updatedAt': FieldValue.serverTimestamp(),
   };
 
@@ -540,6 +586,7 @@ class Trip {
       budget: (map['budget'] as num?)?.toInt() ?? 0,
       spent: (map['spent'] as num?)?.toInt() ?? 0,
       groupType: (map['groupType'] as String?) ?? 'Solo',
+      currency: (map['currency'] as String?) ?? 'USD',
       status: TripStatus.values.firstWhere(
         (status) => status.name == map['status'],
         orElse: () => TripStatus.upcoming,
@@ -562,6 +609,17 @@ class Trip {
                 ChecklistCategory.fromMap(Map<String, dynamic>.from(item)),
           )
           .toList(),
+      preferences: ((map['preferences'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .toList(),
+      budgetCategories:
+          ((map['budgetCategories'] as List<dynamic>?) ?? const [])
+              .whereType<Map>()
+              .map(
+                (item) =>
+                    BudgetCategory.fromMap(Map<String, dynamic>.from(item)),
+              )
+              .toList(),
     );
   }
 }
@@ -626,6 +684,41 @@ class Booking {
   );
 }
 
+class BudgetCategory {
+  const BudgetCategory({
+    required this.id,
+    required this.category,
+    required this.planned,
+    required this.actual,
+  });
+
+  final String id;
+  final String category;
+  final int planned;
+  final int actual;
+
+  BudgetCategory copyWith({int? planned, int? actual}) => BudgetCategory(
+    id: id,
+    category: category,
+    planned: planned ?? this.planned,
+    actual: actual ?? this.actual,
+  );
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'category': category,
+    'planned': planned,
+    'actual': actual,
+  };
+
+  static BudgetCategory fromMap(Map<String, dynamic> map) => BudgetCategory(
+    id: (map['id'] as String?) ?? 'category',
+    category: (map['category'] as String?) ?? 'Category',
+    planned: (map['planned'] as num?)?.toInt() ?? 0,
+    actual: (map['actual'] as num?)?.toInt() ?? 0,
+  );
+}
+
 class ChecklistCategory {
   const ChecklistCategory(this.category, this.items);
   final String category;
@@ -658,6 +751,10 @@ String _iconName(IconData icon) {
   if (icon == Icons.directions_walk_rounded) return 'walk';
   if (icon == Icons.flight_takeoff_rounded) return 'flight';
   if (icon == Icons.hotel_rounded) return 'hotel';
+  if (icon == Icons.museum_rounded) return 'museum';
+  if (icon == Icons.beach_access_rounded) return 'beach';
+  if (icon == Icons.local_cafe_rounded) return 'cafe';
+  if (icon == Icons.shopping_bag_rounded) return 'shopping';
   return 'place';
 }
 
@@ -677,6 +774,14 @@ IconData _iconByName(String? name) {
       return Icons.flight_takeoff_rounded;
     case 'hotel':
       return Icons.hotel_rounded;
+    case 'museum':
+      return Icons.museum_rounded;
+    case 'beach':
+      return Icons.beach_access_rounded;
+    case 'cafe':
+      return Icons.local_cafe_rounded;
+    case 'shopping':
+      return Icons.shopping_bag_rounded;
     default:
       return Icons.place_rounded;
   }
@@ -732,6 +837,7 @@ class PlaceSuggestion {
 
   static PlaceSuggestion fromMap(Map<String, dynamic> map) {
     final city =
+        map['name'] as String? ??
         map['city'] as String? ??
         map['county'] as String? ??
         map['state'] as String? ??
@@ -746,9 +852,18 @@ class PlaceSuggestion {
     return PlaceSuggestion(
       name: name,
       formatted: formatted,
-      latitude: (map['lat'] as num?)?.toDouble() ?? 0,
-      longitude: (map['lon'] as num?)?.toDouble() ?? 0,
-      placeId: (map['place_id'] as String?) ?? formatted,
+      latitude:
+          (map['latitude'] as num?)?.toDouble() ??
+          (map['lat'] as num?)?.toDouble() ??
+          0,
+      longitude:
+          (map['longitude'] as num?)?.toDouble() ??
+          (map['lon'] as num?)?.toDouble() ??
+          0,
+      placeId:
+          (map['placeId'] as String?) ??
+          (map['place_id'] as String?) ??
+          formatted,
       country: country,
     );
   }
@@ -765,11 +880,40 @@ class GeoapifyPlacesService {
     final trimmed = query.trim();
     if (trimmed.length < 3) return const [];
 
+    if (LocalApiKeys.hasGeoapifyApiKey) {
+      return _searchDestinationsDirectly(trimmed);
+    }
+
     final callable = _functions.httpsCallable('searchPlaces');
     final response = await callable.call<Map<String, dynamic>>({
       'query': trimmed,
     });
     final results = (response.data['results'] as List<dynamic>?) ?? const [];
+    return _placeSuggestionsFromResults(results);
+  }
+
+  Future<List<PlaceSuggestion>> _searchDestinationsDirectly(
+    String query,
+  ) async {
+    final url = Uri.https('api.geoapify.com', '/v1/geocode/autocomplete', {
+      'text': query,
+      'format': 'json',
+      'type': 'city',
+      'limit': '6',
+      'apiKey': LocalApiKeys.geoapifyApiKey,
+    });
+
+    final response = await http.get(url);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Place search is unavailable.');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final results = (body['results'] as List<dynamic>?) ?? const [];
+    return _placeSuggestionsFromResults(results);
+  }
+
+  List<PlaceSuggestion> _placeSuggestionsFromResults(List<dynamic> results) {
     return results
         .whereType<Map>()
         .map((item) => PlaceSuggestion.fromMap(Map<String, dynamic>.from(item)))
@@ -777,6 +921,382 @@ class GeoapifyPlacesService {
         .toList();
   }
 }
+
+class TravelAssistantService {
+  TravelAssistantService({FirebaseFunctions? functions})
+    : _functions =
+          functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
+
+  final FirebaseFunctions _functions;
+
+  Future<String> sendMessage(String message) async {
+    final trimmed = message.trim();
+    if (trimmed.isEmpty) return '';
+
+    if (LocalApiKeys.hasOpenAiApiKey) {
+      return _sendMessageDirectly(trimmed);
+    }
+
+    final callable = _functions.httpsCallable('chatWithAssistant');
+    final response = await callable.call<Map<String, dynamic>>({
+      'message': trimmed,
+    });
+    return (response.data['reply'] as String?)?.trim() ?? '';
+  }
+
+  Future<String> _sendMessageDirectly(String message) async {
+    final response = await http.post(
+      Uri.https('api.openai.com', '/v1/responses'),
+      headers: {
+        'Authorization': 'Bearer ${LocalApiKeys.openAiApiKey}',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'model': 'gpt-5.5',
+        'instructions':
+            'You are a concise travel planning assistant inside a mobile app. '
+            'Help with itinerary order, budget tradeoffs, packing, food, '
+            'transit, and practical destination advice. Keep replies friendly '
+            'and short.',
+        'input': message,
+        'store': false,
+        'reasoning': {'effort': 'low'},
+        'text': {'verbosity': 'low'},
+      }),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('AI chat is unavailable.');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final outputText = body['output_text'];
+    if (outputText is String && outputText.trim().isNotEmpty) {
+      return outputText.trim();
+    }
+
+    final output = (body['output'] as List<dynamic>?) ?? const [];
+    return output
+        .whereType<Map>()
+        .expand((item) => (item['content'] as List<dynamic>?) ?? const [])
+        .whereType<Map>()
+        .map((content) => content['text'])
+        .whereType<String>()
+        .join('\n')
+        .trim();
+  }
+
+  Future<GeneratedTripPlan> generateTripPlan({
+    required PlaceSuggestion place,
+    required DateTime startDate,
+    required DateTime endDate,
+    required int budget,
+    required String groupType,
+    required List<String> preferences,
+    required String currency,
+    String airline = '',
+    String flightConfirmation = '',
+  }) async {
+    if (!LocalApiKeys.hasOpenAiApiKey) {
+      throw Exception('OpenAI API key is missing.');
+    }
+
+    final response = await http.post(
+      Uri.https('api.openai.com', '/v1/responses'),
+      headers: {
+        'Authorization': 'Bearer ${LocalApiKeys.openAiApiKey}',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'model': 'gpt-5.5',
+        'instructions': [
+          'Generate a practical travel itinerary as strict JSON only.',
+          'Use current attraction names for the destination.',
+          'Keep costs realistic but approximate.',
+          'Return no markdown and no explanation.',
+        ].join(' '),
+        'input': jsonEncode({
+          'destination': place.name,
+          'formattedAddress': place.formatted,
+          'startDate': _dateKey(startDate),
+          'endDate': _dateKey(endDate),
+          'budgetUsd': budget,
+          'currency': currency,
+          'groupType': groupType,
+          'preferences': preferences,
+          'flight': {'airline': airline, 'confirmation': flightConfirmation},
+          'schema': {
+            'items': [
+              {
+                'day': 1,
+                'time': '09:00 AM',
+                'activity': 'Activity name',
+                'type': 'place|food|walk|museum|beach|shopping|train',
+                'cost': 25,
+              },
+            ],
+            'bookings': [
+              {
+                'title': 'Hotel or transport booking',
+                'date': 'YYYY-MM-DD',
+                'time': '15:00',
+                'reference': 'short reference',
+                'cost': 300,
+                'type': 'hotel|flight|train|place',
+              },
+            ],
+            'checklist': [
+              {
+                'category': 'Essentials',
+                'items': ['Passport'],
+              },
+            ],
+          },
+        }),
+        'store': false,
+        'reasoning': {'effort': 'low'},
+        'text': {'verbosity': 'low'},
+      }),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('AI itinerary generation failed.');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final text = _responseOutputText(body);
+    final data = _decodeJsonObject(text);
+    return GeneratedTripPlan.fromMap(data);
+  }
+
+  Future<CreateTripAiResponse> createTripReply({
+    required String message,
+    required CreateTripDraft currentDraft,
+    required List<CreateTripChatMessage> history,
+  }) async {
+    if (!LocalApiKeys.hasOpenAiApiKey) {
+      throw Exception('OpenAI API key is missing.');
+    }
+
+    final response = await http.post(
+      Uri.https('api.openai.com', '/v1/responses'),
+      headers: {
+        'Authorization': 'Bearer ${LocalApiKeys.openAiApiKey}',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'model': 'gpt-5.5',
+        'instructions': [
+          'You are the Create Trip assistant inside a mobile travel app.',
+          'Actually interpret the user message and update the trip draft.',
+          'Ask for exactly one missing important field at a time.',
+          'When useful, create a tappable widget with 2 to 4 options.',
+          'Widget option values must be short user messages the app can send back.',
+          'Required final fields: destination, startDate, endDate, budget, groupType.',
+          'Dates must be ISO yyyy-MM-dd. groupType must be Solo, Friends, Family, or Tour.',
+          'Return only JSON matching the schema.',
+        ].join(' '),
+        'input': jsonEncode({
+          'latestMessage': message,
+          'currentDraft': currentDraft.toAiMap(),
+          'recentHistory': history
+              .take(8)
+              .map(
+                (item) => {
+                  'role': item.fromUser ? 'user' : 'assistant',
+                  'text': item.text,
+                },
+              )
+              .toList(),
+          'today': _dateKey(DateTime.now()),
+        }),
+        'store': false,
+        'reasoning': {'effort': 'low'},
+        'text': {
+          'verbosity': 'low',
+          'format': {
+            'type': 'json_schema',
+            'name': 'create_trip_reply',
+            'strict': true,
+            'schema': {
+              'type': 'object',
+              'additionalProperties': false,
+              'properties': {
+                'message': {'type': 'string'},
+                'draft': {
+                  'type': 'object',
+                  'additionalProperties': false,
+                  'properties': {
+                    'destination': {
+                      'type': ['string', 'null'],
+                    },
+                    'startDate': {
+                      'type': ['string', 'null'],
+                    },
+                    'endDate': {
+                      'type': ['string', 'null'],
+                    },
+                    'budget': {
+                      'type': ['string', 'null'],
+                    },
+                    'groupType': {
+                      'type': ['string', 'null'],
+                    },
+                    'preferences': {
+                      'type': 'array',
+                      'items': {'type': 'string'},
+                    },
+                  },
+                  'required': [
+                    'destination',
+                    'startDate',
+                    'endDate',
+                    'budget',
+                    'groupType',
+                    'preferences',
+                  ],
+                },
+                'widget': {
+                  'type': ['object', 'null'],
+                  'additionalProperties': false,
+                  'properties': {
+                    'title': {'type': 'string'},
+                    'options': {
+                      'type': 'array',
+                      'minItems': 2,
+                      'maxItems': 4,
+                      'items': {
+                        'type': 'object',
+                        'additionalProperties': false,
+                        'properties': {
+                          'label': {'type': 'string'},
+                          'value': {'type': 'string'},
+                          'description': {'type': 'string'},
+                        },
+                        'required': ['label', 'value', 'description'],
+                      },
+                    },
+                  },
+                  'required': ['title', 'options'],
+                },
+              },
+              'required': ['message', 'draft', 'widget'],
+            },
+          },
+        },
+      }),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('AI create trip chat failed.');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final data = _decodeJsonObject(_responseOutputText(body));
+    return CreateTripAiResponse.fromMap(data, fallbackDraft: currentDraft);
+  }
+}
+
+class GeneratedTripPlan {
+  const GeneratedTripPlan({
+    required this.items,
+    required this.bookings,
+    required this.checklist,
+  });
+
+  final List<ItineraryItem> items;
+  final List<Booking> bookings;
+  final List<ChecklistCategory> checklist;
+
+  static GeneratedTripPlan fromMap(Map<String, dynamic> map) {
+    final items = ((map['items'] as List<dynamic>?) ?? const [])
+        .whereType<Map>()
+        .map((item) {
+          final data = Map<String, dynamic>.from(item);
+          return ItineraryItem(
+            (data['day'] as num?)?.toInt() ?? 1,
+            (data['time'] as String?) ?? '09:00 AM',
+            (data['activity'] as String?) ?? 'Explore local highlights',
+            _iconByName(data['type'] as String?),
+            (data['cost'] as num?)?.toInt() ?? 0,
+          );
+        })
+        .take(12)
+        .toList();
+
+    final bookings = ((map['bookings'] as List<dynamic>?) ?? const [])
+        .whereType<Map>()
+        .map((booking) {
+          final data = Map<String, dynamic>.from(booking);
+          return Booking(
+            (data['title'] as String?) ?? 'Trip booking',
+            (data['date'] as String?) ?? '',
+            (data['time'] as String?) ?? '',
+            (data['reference'] as String?) ?? 'TBD',
+            (data['cost'] as num?)?.toInt() ?? 0,
+            _iconByName(data['type'] as String?),
+          );
+        })
+        .take(4)
+        .toList();
+
+    final checklist = ((map['checklist'] as List<dynamic>?) ?? const [])
+        .whereType<Map>()
+        .map((category) {
+          final data = Map<String, dynamic>.from(category);
+          return ChecklistCategory(
+            (data['category'] as String?) ?? 'Essentials',
+            ((data['items'] as List<dynamic>?) ?? const [])
+                .whereType<String>()
+                .take(8)
+                .toList(),
+          );
+        })
+        .where((category) => category.items.isNotEmpty)
+        .take(5)
+        .toList();
+
+    return GeneratedTripPlan(
+      items: items,
+      bookings: bookings,
+      checklist: checklist,
+    );
+  }
+}
+
+String _responseOutputText(Map<String, dynamic> body) {
+  final outputText = body['output_text'];
+  if (outputText is String) return outputText;
+
+  final output = (body['output'] as List<dynamic>?) ?? const [];
+  return output
+      .whereType<Map>()
+      .expand((item) => (item['content'] as List<dynamic>?) ?? const [])
+      .whereType<Map>()
+      .map((content) => content['text'])
+      .whereType<String>()
+      .join('\n')
+      .trim();
+}
+
+Map<String, dynamic> _decodeJsonObject(String text) {
+  final trimmed = text.trim();
+  final cleaned = trimmed
+      .replaceFirst(RegExp(r'^```(?:json)?', multiLine: true), '')
+      .replaceFirst(RegExp(r'```$', multiLine: true), '')
+      .trim();
+  final start = cleaned.indexOf('{');
+  final end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) {
+    throw const FormatException('AI response did not contain JSON.');
+  }
+  final decoded =
+      jsonDecode(cleaned.substring(start, end + 1)) as Map<String, dynamic>;
+  return decoded;
+}
+
+String _dateKey(DateTime date) =>
+    '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
 const destinations = [
   Destination(
@@ -888,6 +1408,8 @@ const mockKyotoTrip = Trip(
   spent: 450,
   groupType: 'Friends',
   status: TripStatus.ongoing,
+  currency: 'USD',
+  preferences: ['Culture', 'Food', 'Walking'],
   images: [
     'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=900',
     'https://images.unsplash.com/photo-1554797589-7241bb691973?q=80&w=900',
@@ -958,6 +1480,22 @@ const mockKyotoTrip = Trip(
       'Comfortable walking shoes',
       'Light rain jacket',
     ]),
+  ],
+  budgetCategories: [
+    BudgetCategory(
+      id: 'transport',
+      category: 'Transport',
+      planned: 1000,
+      actual: 850,
+    ),
+    BudgetCategory(id: 'stay', category: 'Stay', planned: 900, actual: 420),
+    BudgetCategory(id: 'food', category: 'Food', planned: 650, actual: 45),
+    BudgetCategory(
+      id: 'activities',
+      category: 'Activities',
+      planned: 550,
+      actual: 15,
+    ),
   ],
 );
 
@@ -1205,15 +1743,56 @@ class CreateTripScreen extends StatefulWidget {
 
 class _CreateTripScreenState extends State<CreateTripScreen> {
   final _places = GeoapifyPlacesService();
+  final _assistant = TravelAssistantService();
   final _destination = TextEditingController(text: 'Tokyo');
   final _budget = TextEditingController(text: '3500');
+  final _chatInput = TextEditingController();
+  final _customPreference = TextEditingController();
+  final _airline = TextEditingController();
+  final _flightConfirmation = TextEditingController();
   Timer? _searchTimer;
   PlaceSuggestion? _selectedPlace;
   List<PlaceSuggestion> _placeSuggestions = const [];
+  final List<CreateTripChatMessage> _chatMessages = [];
+  CreateTripDraft? _pendingDraft;
   var _group = 'Friends';
+  var _currency = 'USD';
   var _mode = 0;
   String? _formError;
   var _isSearching = false;
+  var _isGenerating = false;
+  var _isThinking = false;
+  var _usedFallbackPlan = false;
+  var _pendingDraftConfirmed = false;
+  DateTime _startDate = DateTime.now().add(const Duration(days: 30));
+  DateTime _endDate = DateTime.now().add(const Duration(days: 35));
+  String? _selectedImage;
+  final Set<String> _preferences = {'Culture', 'Food'};
+
+  static const _preferenceOptions = [
+    'Culture',
+    'Food',
+    'Nature',
+    'Shopping',
+    'Relax',
+    'Nightlife',
+    'Museums',
+    'Adventure',
+    'Budget-friendly',
+    'Luxury',
+    'Walking',
+  ];
+
+  static const _currencyOptions = ['USD', 'TWD', 'JPY', 'EUR'];
+
+  static const _galleryOptions = [
+    'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=600',
+    'https://images.unsplash.com/photo-1542051841857-5f90071e7989?q=80&w=600',
+    'https://images.unsplash.com/photo-1492571350019-22de08371fd3?q=80&w=600',
+    'https://images.unsplash.com/photo-1464817739973-0128fe72aa1b?q=80&w=600',
+    'https://images.unsplash.com/photo-1454391304352-2bf4678b1a7a?q=80&w=600',
+    'https://images.unsplash.com/photo-1533105079780-92b9be482077?q=80&w=600',
+  ];
 
   @override
   void initState() {
@@ -1226,6 +1805,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     _searchTimer?.cancel();
     _destination.dispose();
     _budget.dispose();
+    _chatInput.dispose();
+    _customPreference.dispose();
+    _airline.dispose();
+    _flightConfirmation.dispose();
     super.dispose();
   }
 
@@ -1278,23 +1861,1051 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     });
   }
 
+  Future<void> _pickStartDate() async {
+    final today = DateTime.now();
+    final firstDate = DateTime(today.year, today.month, today.day);
+    final initialDate = _startDate.isBefore(firstDate) ? firstDate : _startDate;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: DateTime(2028, 12, 31),
+    );
+    if (date == null) return;
+    setState(() {
+      _startDate = date;
+      if (_endDate.isBefore(_startDate)) {
+        _endDate = _startDate.add(const Duration(days: 4));
+      }
+      _formError = null;
+    });
+  }
+
+  Future<void> _pickEndDate() async {
+    final today = DateTime.now();
+    final firstDate = _startDate.isBefore(today)
+        ? DateTime(today.year, today.month, today.day)
+        : _startDate;
+    final initialDate = _endDate.isBefore(firstDate) ? firstDate : _endDate;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: DateTime(2028, 12, 31),
+    );
+    if (date == null) return;
+    setState(() {
+      _endDate = date;
+      _formError = null;
+    });
+  }
+
+  void _togglePreference(String preference) {
+    setState(() {
+      if (_preferences.contains(preference)) {
+        _preferences.remove(preference);
+      } else {
+        _preferences.add(preference);
+      }
+      _formError = null;
+    });
+  }
+
+  void _addCustomPreference() {
+    final tag = _customPreference.text.trim();
+    if (tag.isEmpty) return;
+    setState(() {
+      _preferences.add(tag);
+      _customPreference.clear();
+      _formError = null;
+    });
+  }
+
+  Future<void> _showImagePicker() async {
+    final image = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+          ),
+          child: GridView.builder(
+            shrinkWrap: true,
+            itemCount: _galleryOptions.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 1.35,
+            ),
+            itemBuilder: (context, index) {
+              final option = _galleryOptions[index];
+              return GestureDetector(
+                onTap: () => Navigator.of(context).pop(option),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Image.network(option, fit: BoxFit.cover),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    if (image == null) return;
+    setState(() => _selectedImage = image);
+  }
+
+  void _startAiChat() {
+    setState(() {
+      _mode = 3;
+      _formError = null;
+      if (_chatMessages.isEmpty) {
+        _chatMessages.add(
+          const CreateTripChatMessage(
+            fromUser: false,
+            text:
+                'Hello, where would you like to go? Pick a suggestion or describe the full trip.',
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _sendCreateTripChat([String? value]) async {
+    final text = (value ?? _chatInput.text).trim();
+    if (text.isEmpty || _isThinking || _isGenerating) return;
+
+    _chatInput.clear();
+
+    if (_pendingDraft != null &&
+        RegExp(
+          r'^(confirm|confirmed|approve|approved|yes|use it|looks good)$',
+          caseSensitive: false,
+        ).hasMatch(text)) {
+      setState(() {
+        _pendingDraftConfirmed = true;
+        _chatMessages.add(CreateTripChatMessage(fromUser: true, text: text));
+        _chatMessages.add(
+          const CreateTripChatMessage(
+            fromUser: false,
+            text: 'Confirmed. I will use this draft for the itinerary.',
+          ),
+        );
+      });
+      return;
+    }
+
+    setState(() {
+      _isThinking = true;
+      _pendingDraftConfirmed = false;
+      _chatMessages.add(CreateTripChatMessage(fromUser: true, text: text));
+    });
+
+    CreateTripAiResponse aiResponse;
+    try {
+      aiResponse = await _assistant.createTripReply(
+        message: text,
+        currentDraft: _pendingDraft ?? const CreateTripDraft(),
+        history: _chatMessages,
+      );
+    } catch (_) {
+      final fallbackDraft = _parseTripDraft(text, _pendingDraft);
+      final missing = _missingDraftFields(fallbackDraft);
+      aiResponse = CreateTripAiResponse(
+        message: missing.isEmpty
+            ? 'I prepared a draft plan. Review it first, then confirm it when you are ready.'
+            : _questionForMissingField(missing.first),
+        draft: fallbackDraft,
+        widget: _fallbackWidgetForMissingField(
+          missing.isEmpty ? null : missing.first,
+        ),
+      );
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _isThinking = false;
+      _pendingDraft = aiResponse.draft;
+      _chatMessages.add(
+        CreateTripChatMessage(
+          fromUser: false,
+          text: aiResponse.message,
+          widget: aiResponse.widget,
+        ),
+      );
+    });
+  }
+
+  CreateTripDraft _parseTripDraft(String text, CreateTripDraft? current) {
+    final lower = text.toLowerCase();
+    final draft = (current ?? const CreateTripDraft()).copyWith();
+
+    String? destination = draft.destination;
+    final destinationMatch =
+        RegExp(
+          r'(?:to|in|for)\s+([A-Za-z][A-Za-z\s.,-]+?)(?:\s+(?:from|on|with|for|under|budget|solo|family|friends|tour)|[.!?]|$)',
+          caseSensitive: false,
+        ).firstMatch(text) ??
+        RegExp(
+          r'^(?:plan\s+)?(?:a\s+)?(?:trip\s+)?([A-Za-z][A-Za-z\s.,-]{2,50})(?:\s+\d|\s+for|\s+with|[.!?]|$)',
+          caseSensitive: false,
+        ).firstMatch(text);
+    if (destinationMatch != null) {
+      destination = destinationMatch.group(1)?.trim().replaceAll(',', '');
+    }
+
+    String? groupType = draft.groupType;
+    if (lower.contains('solo')) groupType = 'Solo';
+    if (lower.contains('friend')) groupType = 'Friends';
+    if (lower.contains('family')) groupType = 'Family';
+    if (lower.contains('tour')) groupType = 'Tour';
+
+    String? budget = draft.budget;
+    final budgetMatch = RegExp(
+      r'\$\s?(\d{2,7})|(?:budget|under|around|about|usd|dollars?)\D{0,12}(\d{2,7})|(\d{2,7})\s?(?:usd|dollars?)',
+      caseSensitive: false,
+    ).firstMatch(text);
+    budget =
+        budgetMatch?.group(1) ??
+        budgetMatch?.group(2) ??
+        budgetMatch?.group(3) ??
+        budget;
+
+    DateTime? startDate = draft.startDate;
+    DateTime? endDate = draft.endDate;
+    final rangeMatch = RegExp(
+      r'(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?\s*(?:-|to|until|through)\s*(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (rangeMatch != null) {
+      final year = _fullYear(rangeMatch.group(3) ?? rangeMatch.group(6));
+      final endYear = _fullYear(rangeMatch.group(6) ?? rangeMatch.group(3));
+      startDate = DateTime(
+        year,
+        int.parse(rangeMatch.group(2)!),
+        int.parse(rangeMatch.group(1)!),
+      );
+      endDate = DateTime(
+        endYear,
+        int.parse(rangeMatch.group(5)!),
+        int.parse(rangeMatch.group(4)!),
+      );
+    }
+
+    final durationMatch = RegExp(
+      r'\b(\d{1,2})\s*(?:days?|nights?)\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (durationMatch != null && (startDate == null || endDate == null)) {
+      final duration = math.max(1, int.parse(durationMatch.group(1)!));
+      final today = DateTime.now();
+      startDate = lower.contains('tomorrow')
+          ? today.add(const Duration(days: 1))
+          : today;
+      endDate = startDate.add(Duration(days: duration - 1));
+    }
+
+    final preferenceAdds = <String>{...draft.preferences};
+    for (final option in _preferenceOptions) {
+      if (lower.contains(option.toLowerCase())) preferenceAdds.add(option);
+    }
+    if (lower.contains('cheap') || lower.contains('budget')) {
+      preferenceAdds.add('Budget-friendly');
+    }
+
+    return draft.copyWith(
+      destination: destination,
+      startDate: startDate,
+      endDate: endDate,
+      budget: budget,
+      groupType: groupType,
+      preferences: preferenceAdds.toList(),
+    );
+  }
+
+  int _fullYear(String? value) {
+    final year = int.tryParse(value ?? '') ?? 2026;
+    return year < 100 ? 2000 + year : year;
+  }
+
+  List<String> _missingDraftFields(CreateTripDraft draft) {
+    final missing = <String>[];
+    if ((draft.destination ?? '').trim().isEmpty) missing.add('destination');
+    if (draft.startDate == null || draft.endDate == null) missing.add('dates');
+    if ((draft.budget ?? '').trim().isEmpty) missing.add('total budget');
+    if ((draft.groupType ?? '').trim().isEmpty) missing.add('who is coming');
+    return missing;
+  }
+
+  String _questionForMissingField(String field) {
+    switch (field) {
+      case 'destination':
+        return 'Where would you like to go? Pick one or type your own.';
+      case 'dates':
+        return 'Choose a date range, like 15/05/2026 to 20/05/2026, or say 5 days.';
+      case 'total budget':
+        return 'What total budget should I plan around?';
+      case 'who is coming':
+        return 'Who is coming with you: Solo, Friends, Family, or Tour?';
+      default:
+        return 'Tell me one more detail for the trip.';
+    }
+  }
+
+  CreateTripChoiceWidget? _fallbackWidgetForMissingField(String? field) {
+    switch (field) {
+      case 'destination':
+        return const CreateTripChoiceWidget(
+          title: 'Popular starting points',
+          options: [
+            CreateTripChoiceOption(
+              label: 'Kyoto',
+              value: 'Kyoto, Japan',
+              description: 'Culture, temples, food streets',
+            ),
+            CreateTripChoiceOption(
+              label: 'Tokyo',
+              value: 'Tokyo, Japan',
+              description: 'City energy, shopping, day trips',
+            ),
+            CreateTripChoiceOption(
+              label: 'Bali',
+              value: 'Bali, Indonesia',
+              description: 'Beaches, villas, relaxed pace',
+            ),
+          ],
+        );
+      case 'dates':
+        return const CreateTripChoiceWidget(
+          title: 'Trip length',
+          options: [
+            CreateTripChoiceOption(
+              label: '3 days',
+              value: '15/05/2026 to 17/05/2026',
+              description: 'Fast weekend plan',
+            ),
+            CreateTripChoiceOption(
+              label: '5 days',
+              value: '15/05/2026 to 19/05/2026',
+              description: 'Balanced pace',
+            ),
+            CreateTripChoiceOption(
+              label: '7 days',
+              value: '15/05/2026 to 21/05/2026',
+              description: 'More room for day trips',
+            ),
+          ],
+        );
+      case 'total budget':
+        return const CreateTripChoiceWidget(
+          title: 'Total budget',
+          options: [
+            CreateTripChoiceOption(
+              label: '\$1,500',
+              value: 'budget 1500 dollars',
+              description: 'Lean and efficient',
+            ),
+            CreateTripChoiceOption(
+              label: '\$3,500',
+              value: 'budget 3500 dollars',
+              description: 'Comfortable mid-range',
+            ),
+            CreateTripChoiceOption(
+              label: '\$5,000',
+              value: 'budget 5000 dollars',
+              description: 'More flexible picks',
+            ),
+          ],
+        );
+      case 'who is coming':
+        return const CreateTripChoiceWidget(
+          title: 'Travel party',
+          options: [
+            CreateTripChoiceOption(
+              label: 'Solo',
+              value: 'Solo',
+              description: 'Personal route and pace',
+            ),
+            CreateTripChoiceOption(
+              label: 'Friends',
+              value: 'Friends',
+              description: 'Shared plans and votes',
+            ),
+            CreateTripChoiceOption(
+              label: 'Family',
+              value: 'Family',
+              description: 'Comfortable timing',
+            ),
+          ],
+        );
+      default:
+        return null;
+    }
+  }
+
+  void _applyDraftToForm(CreateTripDraft draft) {
+    final destination = draft.destination?.trim();
+    if (destination != null && destination.isNotEmpty) {
+      _destination.text = destination;
+      _selectedPlace = null;
+    }
+    final startDate = draft.startDate;
+    final endDate = draft.endDate;
+    if (startDate != null) _startDate = startDate;
+    if (endDate != null) _endDate = endDate;
+    final budget = draft.budget?.trim();
+    if (budget != null && budget.isNotEmpty) _budget.text = budget;
+    final groupType = draft.groupType;
+    if (groupType != null && groupType.isNotEmpty) _group = groupType;
+    _preferences
+      ..clear()
+      ..addAll(
+        draft.preferences.isEmpty ? ['Culture', 'Food'] : draft.preferences,
+      );
+  }
+
+  Future<void> _usePendingDraft() async {
+    final draft = _pendingDraft;
+    if (draft == null) return;
+    final missing = _missingDraftFields(draft);
+    if (missing.isNotEmpty) {
+      setState(() {
+        _chatMessages.add(
+          CreateTripChatMessage(
+            fromUser: false,
+            text: _questionForMissingField(missing.first),
+          ),
+        );
+      });
+      return;
+    }
+
+    setState(() {
+      _applyDraftToForm(draft);
+      _mode = 1;
+    });
+    await _generateTrip();
+  }
+
+  Future<void> _editPendingDraft() async {
+    final draft = _pendingDraft;
+    if (draft == null) return;
+
+    final destination = TextEditingController(text: draft.destination ?? '');
+    final budget = TextEditingController(text: draft.budget ?? '');
+    final customTag = TextEditingController();
+    var startDate = draft.startDate ?? _startDate;
+    var endDate = draft.endDate ?? _endDate;
+    var groupType = draft.groupType ?? _group;
+    final preferences = <String>{...draft.preferences};
+
+    try {
+      final edited = await showModalBottomSheet<CreateTripDraft>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setSheetState) {
+              Future<void> pickStart() async {
+                final today = DateTime.now();
+                final firstDate = DateTime(today.year, today.month, today.day);
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: startDate.isBefore(firstDate)
+                      ? firstDate
+                      : startDate,
+                  firstDate: firstDate,
+                  lastDate: DateTime(2028, 12, 31),
+                );
+                if (date == null) return;
+                setSheetState(() {
+                  startDate = date;
+                  if (endDate.isBefore(startDate)) {
+                    endDate = startDate.add(const Duration(days: 4));
+                  }
+                });
+              }
+
+              Future<void> pickEnd() async {
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: endDate.isBefore(startDate)
+                      ? startDate
+                      : endDate,
+                  firstDate: startDate,
+                  lastDate: DateTime(2028, 12, 31),
+                );
+                if (date == null) return;
+                setSheetState(() => endDate = date);
+              }
+
+              void addTag() {
+                final tag = customTag.text.trim();
+                if (tag.isEmpty) return;
+                setSheetState(() {
+                  preferences.add(tag);
+                  customTag.clear();
+                });
+              }
+
+              return SafeArea(
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: 16,
+                    right: 16,
+                    top: 16,
+                    bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const IconBadge(
+                                icon: Icons.tune_rounded,
+                                size: 42,
+                              ),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Text(
+                                  'Customize AI Draft',
+                                  style: TextStyle(
+                                    color: _primary,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                icon: const Icon(Icons.close_rounded),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: destination,
+                            decoration: const InputDecoration(
+                              labelText: 'Destination',
+                              prefixIcon: Icon(Icons.place_rounded),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: DraftEditButton(
+                                  label: 'Start',
+                                  value: _dateKey(startDate),
+                                  onTap: pickStart,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: DraftEditButton(
+                                  label: 'End',
+                                  value: _dateKey(endDate),
+                                  onTap: pickEnd,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: budget,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Total budget',
+                              prefixText: '\$ ',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<String>(
+                            initialValue: groupType,
+                            decoration: const InputDecoration(
+                              labelText: 'Who is coming',
+                            ),
+                            items: const ['Solo', 'Family', 'Friends', 'Tour']
+                                .map(
+                                  (item) => DropdownMenuItem(
+                                    value: item,
+                                    child: Text(item),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) => setSheetState(
+                              () => groupType = value ?? groupType,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          const LabelText('Trip tags'),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final option in _preferenceOptions)
+                                FilterChip(
+                                  selected: preferences.contains(option),
+                                  label: Text(option),
+                                  onSelected: (_) => setSheetState(() {
+                                    preferences.contains(option)
+                                        ? preferences.remove(option)
+                                        : preferences.add(option);
+                                  }),
+                                ),
+                              for (final tag in preferences.where(
+                                (tag) => !_preferenceOptions.contains(tag),
+                              ))
+                                InputChip(
+                                  label: Text(tag),
+                                  onDeleted: () => setSheetState(
+                                    () => preferences.remove(tag),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: customTag,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Add custom tag',
+                                  ),
+                                  onSubmitted: (_) => addTag(),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              IconButton.filled(
+                                style: IconButton.styleFrom(
+                                  backgroundColor: _primary,
+                                  foregroundColor: Colors.white,
+                                  fixedSize: const Size(54, 54),
+                                ),
+                                onPressed: addTag,
+                                icon: const Icon(Icons.add_rounded),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 18),
+                          PrimaryButton(
+                            label: 'Save draft edits',
+                            icon: Icons.check_rounded,
+                            onPressed: () => Navigator.of(context).pop(
+                              CreateTripDraft(
+                                destination: destination.text.trim(),
+                                startDate: startDate,
+                                endDate: endDate,
+                                budget: budget.text
+                                    .replaceAll(RegExp(r'\D'), '')
+                                    .trim(),
+                                groupType: groupType,
+                                preferences: preferences.toList(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+
+      if (edited == null || !mounted) return;
+      setState(() {
+        _pendingDraft = edited;
+        _pendingDraftConfirmed = false;
+        _chatMessages.add(
+          const CreateTripChatMessage(
+            fromUser: false,
+            text:
+                'Draft updated. Review the custom version, then confirm it when it looks right.',
+          ),
+        );
+      });
+    } finally {
+      destination.dispose();
+      budget.dispose();
+      customTag.dispose();
+    }
+  }
+
+  Future<void> _generateTrip() async {
+    final budget =
+        int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+    if (budget <= 0) {
+      setState(() => _formError = 'Enter a budget greater than zero.');
+      return;
+    }
+
+    final typedDestination = _destination.text.trim();
+    final place =
+        _selectedPlace ??
+        (typedDestination.length >= 2
+            ? PlaceSuggestion(
+                name: typedDestination,
+                formatted: typedDestination,
+                latitude: 0,
+                longitude: 0,
+                placeId: typedDestination.toLowerCase().replaceAll(
+                  RegExp(r'[^a-z0-9]+'),
+                  '-',
+                ),
+              )
+            : null);
+    if (place == null) {
+      setState(() {
+        _formError = _mode == 1
+            ? 'Choose a real destination from the search results first.'
+            : 'Enter a destination.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isGenerating = true;
+      _usedFallbackPlan = false;
+      _formError = null;
+    });
+
+    GeneratedTripPlan plan;
+    try {
+      plan = await _assistant.generateTripPlan(
+        place: place,
+        startDate: _startDate,
+        endDate: _endDate,
+        budget: budget,
+        groupType: _group,
+        preferences: _preferences.toList(),
+        currency: _currency,
+        airline: _airline.text.trim(),
+        flightConfirmation: _flightConfirmation.text.trim(),
+      );
+      if (plan.items.isEmpty) {
+        throw Exception('AI returned no itinerary items.');
+      }
+    } catch (_) {
+      plan = _fallbackTripPlan(
+        place: place,
+        startDate: _startDate,
+        budget: budget,
+        preferences: _preferences.toList(),
+      );
+      _usedFallbackPlan = true;
+    }
+
+    if (!mounted) return;
+    setState(() => _isGenerating = false);
+
+    widget.onGenerate(
+      Trip(
+        id: 't-${DateTime.now().millisecondsSinceEpoch}',
+        destination: place.name,
+        placeId: place.placeId,
+        formattedAddress: place.formatted,
+        latitude: place.latitude,
+        longitude: place.longitude,
+        startDate: _dateKey(_startDate),
+        endDate: _dateKey(_endDate),
+        budget: budget,
+        spent: 0,
+        groupType: _group,
+        currency: _currency,
+        status: TripStatus.upcoming,
+        images: [
+          if (_selectedImage != null) _selectedImage!,
+          ..._imagesForDestination(place.name),
+        ],
+        items: plan.items,
+        bookings: _bookingsWithManualDetails(plan.bookings),
+        checklist: plan.checklist,
+        preferences: _preferences.toList(),
+        budgetCategories: _defaultBudgetCategories(
+          budget: budget,
+          actual: 0,
+          items: plan.items,
+          bookings: plan.bookings,
+        ),
+      ),
+    );
+  }
+
+  List<Booking> _bookingsWithManualDetails(List<Booking> generated) {
+    final airline = _airline.text.trim();
+    final confirmation = _flightConfirmation.text.trim();
+    if (airline.isEmpty && confirmation.isEmpty) return generated;
+    final manualFlight = Booking(
+      airline.isEmpty ? 'Flight booking' : airline,
+      _dateKey(_startDate),
+      'TBD',
+      confirmation.isEmpty ? 'CONFIRMATION-TBD' : confirmation,
+      0,
+      Icons.flight_takeoff_rounded,
+    );
+    return [manualFlight, ...generated];
+  }
+
+  void _useTemplateTrip() {
+    widget.onGenerate(
+      Trip(
+        id: 't-${DateTime.now().millisecondsSinceEpoch}',
+        destination: mockKyotoTrip.destination,
+        startDate: '2026-05-15',
+        endDate: '2026-05-20',
+        budget: mockKyotoTrip.budget,
+        spent: 0,
+        groupType: mockKyotoTrip.groupType,
+        currency: mockKyotoTrip.currency,
+        status: TripStatus.upcoming,
+        images: mockKyotoTrip.images,
+        items: mockKyotoTrip.items,
+        bookings: mockKyotoTrip.bookings,
+        checklist: mockKyotoTrip.checklist,
+        preferences: mockKyotoTrip.preferences,
+        budgetCategories: mockKyotoTrip.budgetCategories,
+        placeId: mockKyotoTrip.placeId,
+        formattedAddress: mockKyotoTrip.formattedAddress,
+        latitude: mockKyotoTrip.latitude,
+        longitude: mockKyotoTrip.longitude,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_mode == 0) {
+      return ScreenScaffold(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(24, 18, 24, 32),
+          children: [
+            TopBar(title: 'How do you want to start?', onBack: widget.onBack),
+            const SizedBox(height: 18),
+            const AnimatedGlobe(),
+            const SizedBox(height: 22),
+            CreateOptionCard(
+              icon: Icons.explore_rounded,
+              title: 'Plan Step-by-Step',
+              text: 'Explore ideas, compare pacing, then let AI draft it.',
+              onTap: () => setState(() => _mode = 1),
+            ),
+            const SizedBox(height: 12),
+            CreateOptionCard(
+              icon: Icons.auto_awesome_rounded,
+              title: 'Plan with AI',
+              text: 'Search a real city, choose dates, tags, and generate.',
+              onTap: _startAiChat,
+            ),
+            const SizedBox(height: 12),
+            CreateOptionCard(
+              icon: Icons.edit_note_rounded,
+              title: 'Create Manually',
+              text: 'Enter destination, dates, budget, people, and tags.',
+              onTap: () => setState(() => _mode = 2),
+            ),
+            const SizedBox(height: 12),
+            CreateOptionCard(
+              icon: Icons.work_rounded,
+              title: 'Use Saved Trip Template',
+              text: 'Start from a polished Kyoto sample and edit later.',
+              onTap: _useTemplateTrip,
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_mode == 3) {
+      final pendingDraft = _pendingDraft;
+      final canUsePlan =
+          pendingDraft != null && _missingDraftFields(pendingDraft).isEmpty;
+      return ScreenScaffold(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
+              child: TopBar(
+                title: 'Plan with AI',
+                onBack: () => setState(() => _mode = 0),
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(24, 10, 24, 18),
+                children: [
+                  if (_chatMessages.length <= 1) ...[
+                    const AnimatedGlobe(),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Hello, where would you like to go?',
+                      style: Theme.of(context).textTheme.headlineMedium
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Choose guided suggestions or describe the full trip.',
+                      style: TextStyle(
+                        color: _secondary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children:
+                          [
+                                'Kyoto, Japan',
+                                'Tokyo, Japan',
+                                'Bali, Indonesia',
+                                'Paris, France',
+                              ]
+                              .map(
+                                (prompt) => ActionChip(
+                                  label: Text(prompt),
+                                  onPressed: () => _sendCreateTripChat(prompt),
+                                  labelStyle: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                  backgroundColor: const Color(0xFFF8FAFC),
+                                  side: const BorderSide(
+                                    color: Color(0xFFEFF3F6),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                    ),
+                  ],
+                  for (final message in _chatMessages)
+                    CreateTripChatTurn(
+                      message: message,
+                      onSelect: _sendCreateTripChat,
+                    ),
+                  if (_isThinking) const CreateTripThinkingBubble(),
+                  if (pendingDraft != null && canUsePlan) ...[
+                    const SizedBox(height: 12),
+                    CreateTripDraftCard(
+                      draft: pendingDraft,
+                      confirmed: _pendingDraftConfirmed,
+                      onConfirm: () => _sendCreateTripChat('confirm'),
+                      onEdit: _editPendingDraft,
+                      onUse: _pendingDraftConfirmed ? _usePendingDraft : null,
+                      onChange: _sendCreateTripChat,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_chatMessages.length <= 1)
+                      SizedBox(
+                        height: 38,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            CreateTripPromptChip(
+                              label: 'Kyoto',
+                              prompt:
+                                  'Trip to Kyoto with friends, 15/05/2026 to 20/05/2026, budget \$3500',
+                              onTap: _sendCreateTripChat,
+                            ),
+                            CreateTripPromptChip(
+                              label: 'Beach',
+                              prompt:
+                                  'Trip to Bali with family, 10/07/2026 to 16/07/2026, budget \$5000',
+                              onTap: _sendCreateTripChat,
+                            ),
+                            CreateTripPromptChip(
+                              label: 'Solo',
+                              prompt:
+                                  'Solo trip to Tokyo, 01/06/2026 to 05/06/2026, budget \$2500',
+                              onTap: _sendCreateTripChat,
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (_chatMessages.length <= 1) const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _chatInput,
+                            enabled: !_isThinking && !_isGenerating,
+                            decoration: InputDecoration(
+                              hintText: pendingDraft == null
+                                  ? 'Describe the trip...'
+                                  : 'Type changes or confirm...',
+                            ),
+                            onSubmitted: _sendCreateTripChat,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        IconButton.filled(
+                          style: IconButton.styleFrom(
+                            backgroundColor: _primary,
+                            foregroundColor: Colors.white,
+                            fixedSize: const Size(54, 54),
+                          ),
+                          onPressed: _isThinking || _isGenerating
+                              ? null
+                              : () => _sendCreateTripChat(),
+                          icon: const Icon(Icons.send_rounded),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return ScreenScaffold(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(24, 18, 24, 32),
         children: [
-          TopBar(title: 'Create Trip', onBack: widget.onBack),
+          TopBar(
+            title: _mode == 1 ? 'Plan with AI' : 'Create Manually',
+            onBack: () => setState(() => _mode = 0),
+          ),
           const SizedBox(height: 18),
           SegmentedButton<int>(
             segments: const [
               ButtonSegment(
-                value: 0,
+                value: 1,
                 label: Text('AI Flow'),
                 icon: Icon(Icons.auto_awesome_rounded),
               ),
               ButtonSegment(
-                value: 1,
+                value: 2,
                 label: Text('Manual'),
                 icon: Icon(Icons.edit_note_rounded),
               ),
@@ -1303,8 +2914,61 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             onSelectionChanged: (value) => setState(() => _mode = value.first),
           ),
           const SizedBox(height: 18),
-          if (_mode == 0) const AnimatedGlobe(),
+          if (_mode == 1) ...[
+            const AnimatedGlobe(),
+            const SizedBox(height: 14),
+            const FormNotice(
+              message:
+                  'Tell AI the basics below. It will build stops, bookings, and a packing list.',
+            ),
+          ],
           const SizedBox(height: 18),
+          GestureDetector(
+            onTap: _showImagePicker,
+            child: SizedBox(
+              height: 128,
+              child: _selectedImage == null
+                  ? const GlassPanel(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.add_photo_alternate_rounded,
+                            color: _accent,
+                            size: 30,
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            'ADD PRIMARY PHOTO',
+                            style: TextStyle(
+                              color: _secondary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Image.network(_selectedImage!, fit: BoxFit.cover),
+                          Container(color: Colors.black.withValues(alpha: .18)),
+                          const Center(
+                            child: Icon(
+                              Icons.add_photo_alternate_rounded,
+                              color: Colors.white,
+                              size: 32,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 14),
           TextField(
             controller: _destination,
             onChanged: _schedulePlaceSearch,
@@ -1334,7 +2998,24 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             ),
           ],
           const SizedBox(height: 12),
-          const DateRangeCard(),
+          DateRangeCard(
+            startDate: _startDate,
+            endDate: _endDate,
+            onPickStart: _pickStartDate,
+            onPickEnd: _pickEndDate,
+          ),
+          const SizedBox(height: 12),
+          SegmentedButton<String>(
+            segments: _currencyOptions
+                .map(
+                  (currency) =>
+                      ButtonSegment(value: currency, label: Text(currency)),
+                )
+                .toList(),
+            selected: {_currency},
+            onSelectionChanged: (value) =>
+                setState(() => _currency = value.first),
+          ),
           const SizedBox(height: 12),
           TextField(
             controller: _budget,
@@ -1353,60 +3034,958 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                 .toList(),
             onChanged: (value) => setState(() => _group = value ?? _group),
           ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _airline,
+                  decoration: const InputDecoration(
+                    labelText: 'Airline optional',
+                    prefixIcon: Icon(Icons.flight_takeoff_rounded),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: _flightConfirmation,
+                  decoration: const InputDecoration(
+                    labelText: 'Confirmation',
+                    prefixIcon: Icon(Icons.confirmation_number_rounded),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _preferenceOptions.map((preference) {
+              final selected = _preferences.contains(preference);
+              return FilterChip(
+                selected: selected,
+                label: Text(preference),
+                onSelected: (_) => _togglePreference(preference),
+                selectedColor: _accent.withValues(alpha: .35),
+                checkmarkColor: _primary,
+                labelStyle: const TextStyle(fontWeight: FontWeight.w800),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _customPreference,
+                  decoration: const InputDecoration(
+                    labelText: 'Add custom tag',
+                    hintText: 'e.g. anime, halal food, wheelchair access',
+                  ),
+                  onSubmitted: (_) => _addCustomPreference(),
+                ),
+              ),
+              const SizedBox(width: 10),
+              IconButton.filled(
+                style: IconButton.styleFrom(
+                  backgroundColor: _primary,
+                  foregroundColor: Colors.white,
+                  fixedSize: const Size(54, 54),
+                ),
+                onPressed: _addCustomPreference,
+                icon: const Icon(Icons.add_rounded),
+              ),
+            ],
+          ),
           const SizedBox(height: 22),
           const PlanningIdeaStrip(),
+          if (_usedFallbackPlan) ...[
+            const SizedBox(height: 16),
+            const FormNotice(
+              message:
+                  'AI generation was unavailable, so a local draft plan was created.',
+            ),
+          ],
           if (_formError != null) ...[
             const SizedBox(height: 16),
             FormNotice(message: _formError!),
           ],
           const SizedBox(height: 24),
-          PrimaryButton(
-            label: 'Generate itinerary',
-            icon: Icons.arrow_forward_rounded,
-            onPressed: () {
-              final budget =
-                  int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
-              if (budget <= 0) {
-                setState(() {
-                  _formError = 'Enter a budget greater than zero.';
-                });
-                return;
-              }
-              final place = _selectedPlace;
-              if (place == null) {
-                setState(() {
-                  _formError =
-                      'Choose a real destination from the search results first.';
-                });
-                return;
-              }
+          if (_isGenerating)
+            const GeneratingTripPanel()
+          else
+            PrimaryButton(
+              label: _mode == 1 ? 'Generate with AI' : 'Create itinerary',
+              icon: _mode == 1
+                  ? Icons.auto_awesome_rounded
+                  : Icons.arrow_forward_rounded,
+              onPressed: _generateTrip,
+            ),
+        ],
+      ),
+    );
+  }
+}
 
-              widget.onGenerate(
-                Trip(
-                  id: 't-${DateTime.now().millisecondsSinceEpoch}',
-                  destination: place.name,
-                  placeId: place.placeId,
-                  formattedAddress: place.formatted,
-                  latitude: place.latitude,
-                  longitude: place.longitude,
-                  startDate: '2026-04-16',
-                  endDate: '2026-04-27',
-                  budget: budget,
-                  spent: 0,
-                  groupType: _group,
-                  status: TripStatus.upcoming,
-                  images: mockKyotoTrip.images,
-                  items: mockKyotoTrip.items,
-                  bookings: mockKyotoTrip.bookings,
-                  checklist: mockKyotoTrip.checklist,
+class CreateOptionCard extends StatelessWidget {
+  const CreateOptionCard({
+    required this.icon,
+    required this.title,
+    required this.text,
+    required this.onTap,
+    super.key,
+  });
+
+  final IconData icon;
+  final String title;
+  final String text;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: GlassPanel(
+        child: Row(
+          children: [
+            IconBadge(icon: icon, size: 48),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: _primary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    text,
+                    style: const TextStyle(
+                      color: _secondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_rounded, color: _secondary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class CreateTripDraft {
+  const CreateTripDraft({
+    this.destination,
+    this.startDate,
+    this.endDate,
+    this.budget,
+    this.groupType,
+    this.preferences = const [],
+  });
+
+  final String? destination;
+  final DateTime? startDate;
+  final DateTime? endDate;
+  final String? budget;
+  final String? groupType;
+  final List<String> preferences;
+
+  CreateTripDraft copyWith({
+    String? destination,
+    DateTime? startDate,
+    DateTime? endDate,
+    String? budget,
+    String? groupType,
+    List<String>? preferences,
+  }) {
+    return CreateTripDraft(
+      destination: destination ?? this.destination,
+      startDate: startDate ?? this.startDate,
+      endDate: endDate ?? this.endDate,
+      budget: budget ?? this.budget,
+      groupType: groupType ?? this.groupType,
+      preferences: preferences ?? this.preferences,
+    );
+  }
+
+  Map<String, dynamic> toAiMap() => {
+    'destination': destination,
+    'startDate': startDate == null ? null : _dateKey(startDate!),
+    'endDate': endDate == null ? null : _dateKey(endDate!),
+    'budget': budget,
+    'groupType': groupType,
+    'preferences': preferences,
+  };
+
+  static CreateTripDraft fromAiMap(
+    Map<String, dynamic> map, {
+    required CreateTripDraft fallback,
+  }) {
+    return fallback.copyWith(
+      destination: _nonEmptyString(map['destination']) ?? fallback.destination,
+      startDate: _parseIsoDate(map['startDate']) ?? fallback.startDate,
+      endDate: _parseIsoDate(map['endDate']) ?? fallback.endDate,
+      budget: _nonEmptyString(map['budget']) ?? fallback.budget,
+      groupType: _normalGroupType(map['groupType']) ?? fallback.groupType,
+      preferences: ((map['preferences'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .where((item) => item.trim().isNotEmpty)
+          .toList(),
+    );
+  }
+}
+
+class CreateTripChatMessage {
+  const CreateTripChatMessage({
+    required this.fromUser,
+    required this.text,
+    this.widget,
+  });
+
+  final bool fromUser;
+  final String text;
+  final CreateTripChoiceWidget? widget;
+}
+
+class CreateTripAiResponse {
+  const CreateTripAiResponse({
+    required this.message,
+    required this.draft,
+    this.widget,
+  });
+
+  final String message;
+  final CreateTripDraft draft;
+  final CreateTripChoiceWidget? widget;
+
+  static CreateTripAiResponse fromMap(
+    Map<String, dynamic> map, {
+    required CreateTripDraft fallbackDraft,
+  }) {
+    final draftMap = map['draft'] is Map
+        ? Map<String, dynamic>.from(map['draft'] as Map)
+        : const <String, dynamic>{};
+    return CreateTripAiResponse(
+      message: (map['message'] as String?)?.trim().isNotEmpty == true
+          ? (map['message'] as String).trim()
+          : 'I updated the trip draft.',
+      draft: CreateTripDraft.fromAiMap(draftMap, fallback: fallbackDraft),
+      widget: CreateTripChoiceWidget.fromMap(map['widget']),
+    );
+  }
+}
+
+class CreateTripChoiceWidget {
+  const CreateTripChoiceWidget({required this.title, required this.options});
+
+  final String title;
+  final List<CreateTripChoiceOption> options;
+
+  static CreateTripChoiceWidget? fromMap(Object? value) {
+    if (value is! Map) return null;
+    final map = Map<String, dynamic>.from(value);
+    final options = ((map['options'] as List<dynamic>?) ?? const [])
+        .whereType<Map>()
+        .map((item) => CreateTripChoiceOption.fromMap(item))
+        .whereType<CreateTripChoiceOption>()
+        .take(4)
+        .toList();
+    if (options.isEmpty) return null;
+    return CreateTripChoiceWidget(
+      title: (map['title'] as String?)?.trim().isNotEmpty == true
+          ? (map['title'] as String).trim()
+          : 'Choose an option',
+      options: options,
+    );
+  }
+}
+
+class CreateTripChoiceOption {
+  const CreateTripChoiceOption({
+    required this.label,
+    required this.value,
+    required this.description,
+  });
+
+  final String label;
+  final String value;
+  final String description;
+
+  static CreateTripChoiceOption? fromMap(Map<dynamic, dynamic> map) {
+    final label = _nonEmptyString(map['label']);
+    final value = _nonEmptyString(map['value']);
+    if (label == null || value == null) return null;
+    return CreateTripChoiceOption(
+      label: label,
+      value: value,
+      description: _nonEmptyString(map['description']) ?? '',
+    );
+  }
+}
+
+String? _nonEmptyString(Object? value) {
+  if (value is! String) return null;
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
+DateTime? _parseIsoDate(Object? value) {
+  if (value is! String || value.trim().isEmpty) return null;
+  return DateTime.tryParse(value.trim());
+}
+
+String? _normalGroupType(Object? value) {
+  final text = _nonEmptyString(value)?.toLowerCase();
+  if (text == null) return null;
+  if (text.contains('solo')) return 'Solo';
+  if (text.contains('family')) return 'Family';
+  if (text.contains('tour')) return 'Tour';
+  if (text.contains('friend')) return 'Friends';
+  return null;
+}
+
+class CreateTripChatTurn extends StatelessWidget {
+  const CreateTripChatTurn({
+    required this.message,
+    required this.onSelect,
+    super.key,
+  });
+
+  final CreateTripChatMessage message;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: message.fromUser
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
+      children: [
+        CreateTripChatBubble(message: message),
+        if (!message.fromUser && message.widget != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: CreateTripChoicePanel(
+              widget: message.widget!,
+              onSelect: onSelect,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class CreateTripChatBubble extends StatelessWidget {
+  const CreateTripChatBubble({required this.message, super.key});
+  final CreateTripChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: message.fromUser
+          ? Alignment.centerRight
+          : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        constraints: const BoxConstraints(maxWidth: 320),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: message.fromUser ? _primary : Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(message.fromUser ? 22 : 6),
+            topRight: Radius.circular(message.fromUser ? 6 : 22),
+            bottomLeft: const Radius.circular(22),
+            bottomRight: const Radius.circular(22),
+          ),
+          border: message.fromUser
+              ? null
+              : Border.all(color: const Color(0xFFEFF3F6)),
+        ),
+        child: Text(
+          message.text,
+          style: TextStyle(
+            color: message.fromUser ? Colors.white : _primary,
+            fontWeight: FontWeight.w800,
+            height: 1.35,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CreateTripThinkingBubble extends StatelessWidget {
+  const CreateTripThinkingBubble({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Align(
+      alignment: Alignment.centerLeft,
+      child: GlassPanel(
+        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 10),
+            Text('Thinking...', style: TextStyle(fontWeight: FontWeight.w900)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class CreateTripChoicePanel extends StatelessWidget {
+  const CreateTripChoicePanel({
+    required this.widget,
+    required this.onSelect,
+    super.key,
+  });
+
+  final CreateTripChoiceWidget widget;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.title,
+            style: const TextStyle(
+              color: _primary,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 10),
+          for (final option in widget.options)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () => onSelect(option.value),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFEFF3F6)),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              option.label,
+                              style: const TextStyle(
+                                color: _primary,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            if (option.description.isNotEmpty) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                option.description,
+                                style: const TextStyle(
+                                  color: _secondary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const Icon(
+                        Icons.arrow_forward_rounded,
+                        color: _secondary,
+                      ),
+                    ],
+                  ),
                 ),
-              );
-            },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class CreateTripDraftCard extends StatelessWidget {
+  const CreateTripDraftCard({
+    required this.draft,
+    required this.confirmed,
+    required this.onConfirm,
+    required this.onChange,
+    required this.onEdit,
+    this.onUse,
+    super.key,
+  });
+
+  final CreateTripDraft draft;
+  final bool confirmed;
+  final VoidCallback onConfirm;
+  final ValueChanged<String> onChange;
+  final VoidCallback onEdit;
+  final VoidCallback? onUse;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const IconBadge(icon: Icons.auto_awesome_rounded, size: 42),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const LabelText('AI Prepared'),
+                    Text(
+                      draft.destination ?? 'New trip',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SmallPill(label: confirmed ? 'Confirmed' : 'Review'),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: DraftStat(
+                  label: 'Dates',
+                  value: draft.startDate == null || draft.endDate == null
+                      ? 'TBD'
+                      : '${_dateKey(draft.startDate!)} / ${_dateKey(draft.endDate!)}',
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DraftStat(
+                  label: 'Budget',
+                  value: draft.budget == null ? 'TBD' : '\$${draft.budget}',
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DraftStat(
+                  label: 'Party',
+                  value: draft.groupType ?? 'TBD',
+                ),
+              ),
+            ],
+          ),
+          if (draft.preferences.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: draft.preferences
+                  .map((item) => SmallPill(label: item))
+                  .toList(),
+            ),
+          ],
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 36,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                CreateTripPromptChip(
+                  label: 'Cheaper',
+                  prompt: 'Make it cheaper',
+                  onTap: onChange,
+                ),
+                CreateTripPromptChip(
+                  label: 'More food',
+                  prompt: 'Add more food',
+                  onTap: onChange,
+                ),
+                CreateTripPromptChip(
+                  label: 'Slower',
+                  prompt: 'Slow the pace',
+                  onTap: onChange,
+                ),
+                CreateTripPromptChip(
+                  label: 'Nature',
+                  prompt: 'More nature',
+                  onTap: onChange,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  onPressed: onEdit,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFF8FAFC),
+                    foregroundColor: _primary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                  ),
+                  child: const Text('CUSTOMIZE'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton(
+                  onPressed: onConfirm,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: confirmed ? _accent : _primary,
+                    foregroundColor: confirmed ? _primary : Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                  ),
+                  child: Text(confirmed ? 'CONFIRMED' : 'CONFIRM'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onUse,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _primary,
+              minimumSize: const Size.fromHeight(48),
+              side: const BorderSide(color: Color(0xFFEFF3F6)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+            ),
+            icon: const Icon(Icons.auto_awesome_rounded),
+            label: const Text('USE CUSTOMIZED PLAN'),
           ),
         ],
       ),
     );
   }
+}
+
+class DraftEditButton extends StatelessWidget {
+  const DraftEditButton({
+    required this.label,
+    required this.value,
+    required this.onTap,
+    super.key,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFEFF3F6)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label.toUpperCase(),
+              style: const TextStyle(
+                color: _secondary,
+                fontSize: 9,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: const TextStyle(
+                color: _primary,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class DraftStat extends StatelessWidget {
+  const DraftStat({required this.label, required this.value, super.key});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _secondary,
+              fontSize: 9,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _primary,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class CreateTripPromptChip extends StatelessWidget {
+  const CreateTripPromptChip({
+    required this.label,
+    required this.prompt,
+    required this.onTap,
+    super.key,
+  });
+
+  final String label;
+  final String prompt;
+  final ValueChanged<String> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ActionChip(
+        label: Text(label),
+        onPressed: () => onTap(prompt),
+        labelStyle: const TextStyle(fontWeight: FontWeight.w900),
+        backgroundColor: const Color(0xFFF8FAFC),
+        side: const BorderSide(color: Color(0xFFEFF3F6)),
+      ),
+    );
+  }
+}
+
+GeneratedTripPlan _fallbackTripPlan({
+  required PlaceSuggestion place,
+  required DateTime startDate,
+  required int budget,
+  required List<String> preferences,
+}) {
+  final placeName = place.name.split(',').first;
+  final wantsFood = preferences.any(
+    (item) => item.toLowerCase().contains('food'),
+  );
+  final wantsNature = preferences.any(
+    (item) =>
+        item.toLowerCase().contains('nature') ||
+        item.toLowerCase().contains('adventure'),
+  );
+  final wantsShopping = preferences.any(
+    (item) => item.toLowerCase().contains('shopping'),
+  );
+
+  final items = [
+    ItineraryItem(
+      1,
+      '09:30 AM',
+      '$placeName arrival and neighborhood orientation',
+      Icons.directions_walk_rounded,
+      0,
+    ),
+    ItineraryItem(
+      1,
+      '12:30 PM',
+      wantsFood ? '$placeName local food crawl' : 'Central cafe lunch stop',
+      wantsFood ? Icons.restaurant_rounded : Icons.local_cafe_rounded,
+      (budget * .03).round(),
+    ),
+    ItineraryItem(
+      1,
+      '03:00 PM',
+      wantsShopping
+          ? 'Market and boutique shopping route'
+          : 'Historic district walk',
+      wantsShopping ? Icons.shopping_bag_rounded : Icons.museum_rounded,
+      (budget * .02).round(),
+    ),
+    ItineraryItem(
+      2,
+      '09:00 AM',
+      wantsNature
+          ? 'Scenic outdoor viewpoint and easy trail'
+          : 'Signature landmark visit',
+      wantsNature ? Icons.hiking_rounded : Icons.place_rounded,
+      (budget * .02).round(),
+    ),
+    ItineraryItem(
+      2,
+      '06:00 PM',
+      '$placeName evening dinner plan',
+      Icons.restaurant_rounded,
+      (budget * .04).round(),
+    ),
+  ];
+
+  final bookings = [
+    Booking(
+      '$placeName stay placeholder',
+      _dateKey(startDate),
+      '15:00',
+      'HOTEL-TBD',
+      (budget * .28).round(),
+      Icons.hotel_rounded,
+    ),
+    Booking(
+      '$placeName transport placeholder',
+      _dateKey(startDate),
+      '09:00',
+      'TRANSIT-TBD',
+      (budget * .12).round(),
+      Icons.train_rounded,
+    ),
+  ];
+
+  final checklist = [
+    const ChecklistCategory('Essentials', [
+      'Passport or ID',
+      'Wallet and payment cards',
+      'Phone charger',
+      'Travel adapter',
+    ]),
+    ChecklistCategory('Trip Style', [
+      if (wantsNature) 'Comfortable walking shoes',
+      if (wantsFood) 'Restaurant reservation notes',
+      if (wantsShopping) 'Extra tote bag',
+      'Reusable water bottle',
+    ]),
+  ];
+
+  return GeneratedTripPlan(
+    items: items,
+    bookings: bookings,
+    checklist: checklist,
+  );
+}
+
+List<String> _imagesForDestination(String destination) {
+  final lower = destination.toLowerCase();
+  for (final option in destinations) {
+    final optionName = option.name.toLowerCase();
+    if (lower.contains(optionName.split(',').first) ||
+        optionName.contains(lower.split(',').first)) {
+      return [option.image, ...mockKyotoTrip.images.take(2)];
+    }
+  }
+  return mockKyotoTrip.images;
+}
+
+List<BudgetCategory> _defaultBudgetCategories({
+  required int budget,
+  required int actual,
+  required List<ItineraryItem> items,
+  required List<Booking> bookings,
+}) {
+  final bookingCost = bookings.fold<int>(0, (total, item) => total + item.cost);
+  final activityCost = items.fold<int>(0, (total, item) => total + item.cost);
+  final transportCost = bookings
+      .where(
+        (item) =>
+            item.icon == Icons.flight_takeoff_rounded ||
+            item.icon == Icons.train_rounded,
+      )
+      .fold<int>(0, (total, item) => total + item.cost);
+  final stayCost = bookings
+      .where((item) => item.icon == Icons.hotel_rounded)
+      .fold<int>(0, (total, item) => total + item.cost);
+  final foodCost = items
+      .where((item) => item.type == Icons.restaurant_rounded)
+      .fold<int>(0, (total, item) => total + item.cost);
+  final fallback = math.max(0, budget - transportCost - stayCost - foodCost);
+
+  return [
+    BudgetCategory(
+      id: 'transport',
+      category: 'Transport',
+      planned: math.max(transportCost, (budget * .25).round()),
+      actual: transportCost,
+    ),
+    BudgetCategory(
+      id: 'stay',
+      category: 'Stay',
+      planned: math.max(stayCost, (budget * .28).round()),
+      actual: stayCost,
+    ),
+    BudgetCategory(
+      id: 'food',
+      category: 'Food',
+      planned: math.max(foodCost, (budget * .18).round()),
+      actual: foodCost,
+    ),
+    BudgetCategory(
+      id: 'activities',
+      category: 'Activities',
+      planned: math.max(activityCost, fallback ~/ 2),
+      actual: math.max(0, activityCost - foodCost),
+    ),
+    BudgetCategory(
+      id: 'other',
+      category: 'Other',
+      planned: math.max(0, budget ~/ 10),
+      actual: math.max(0, actual - bookingCost - activityCost),
+    ),
+  ];
 }
 
 class ItineraryScreen extends StatelessWidget {
@@ -1417,6 +3996,7 @@ class ItineraryScreen extends StatelessWidget {
     required this.onOpenBudget,
     required this.onOpenPacking,
     required this.onOpenMap,
+    required this.onUpdateTrip,
     super.key,
   });
   final Trip trip;
@@ -1425,6 +4005,269 @@ class ItineraryScreen extends StatelessWidget {
   final VoidCallback onOpenBudget;
   final VoidCallback onOpenPacking;
   final VoidCallback onOpenMap;
+  final ValueChanged<Trip> onUpdateTrip;
+
+  @override
+  Widget build(BuildContext context) {
+    return _EditableItineraryScreen(
+      trip: trip,
+      onBack: onBack,
+      onOpenChat: onOpenChat,
+      onOpenMap: onOpenMap,
+      onUpdateTrip: onUpdateTrip,
+    );
+  }
+}
+
+class _EditableItineraryScreen extends StatefulWidget {
+  const _EditableItineraryScreen({
+    required this.trip,
+    required this.onBack,
+    required this.onOpenChat,
+    required this.onOpenMap,
+    required this.onUpdateTrip,
+  });
+
+  final Trip trip;
+  final VoidCallback onBack;
+  final VoidCallback onOpenChat;
+  final VoidCallback onOpenMap;
+  final ValueChanged<Trip> onUpdateTrip;
+
+  @override
+  State<_EditableItineraryScreen> createState() =>
+      _EditableItineraryScreenState();
+}
+
+class _EditableItineraryScreenState extends State<_EditableItineraryScreen> {
+  late Trip _trip;
+
+  @override
+  void initState() {
+    super.initState();
+    _trip = widget.trip;
+  }
+
+  @override
+  void didUpdateWidget(covariant _EditableItineraryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.trip.id != oldWidget.trip.id || widget.trip != oldWidget.trip) {
+      _trip = widget.trip;
+    }
+  }
+
+  void _save(Trip trip) {
+    setState(() => _trip = trip);
+    widget.onUpdateTrip(trip);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 7,
+      child: ScreenScaffold(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 18, 24, 10),
+              child: TopBar(title: _trip.destination, onBack: widget.onBack),
+            ),
+            SizedBox(height: 190, child: HeroTripCard(trip: _trip)),
+            const SizedBox(height: 8),
+            const SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: 14),
+              child: TabBar(
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                labelColor: _primary,
+                unselectedLabelColor: _secondary,
+                indicatorColor: _accent,
+                tabs: [
+                  Tab(text: 'Overview'),
+                  Tab(text: 'Itinerary'),
+                  Tab(text: 'Budget'),
+                  Tab(text: 'Map'),
+                  Tab(text: 'Checklist'),
+                  Tab(text: 'Booking'),
+                  Tab(text: 'Chat'),
+                ],
+              ),
+            ),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  TripOverviewTab(trip: _trip),
+                  EditableItineraryTab(trip: _trip, onSave: _save),
+                  EditableBudgetTab(trip: _trip, onSave: _save),
+                  TripMapTab(trip: _trip, onOpenMap: widget.onOpenMap),
+                  EditableChecklistTab(trip: _trip, onSave: _save),
+                  EditableBookingTab(trip: _trip, onSave: _save),
+                  TripChatTab(trip: _trip, onOpenChat: widget.onOpenChat),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class TripOverviewTab extends StatelessWidget {
+  const TripOverviewTab({required this.trip, super.key});
+  final Trip trip;
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = trip.budgetCategories.isEmpty
+        ? _defaultBudgetCategories(
+            budget: trip.budget,
+            actual: trip.spent,
+            items: trip.items,
+            bookings: trip.bookings,
+          )
+        : trip.budgetCategories;
+    final actual = categories.fold<int>(
+      0,
+      (total, item) => total + item.actual,
+    );
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: StatCard(
+                title: 'Dates',
+                value: trip.startDate,
+                detail: trip.endDate,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: StatCard(
+                title: 'Budget',
+                value: '${trip.currency} $actual',
+                detail: 'of ${trip.currency} ${trip.budget}',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        GlassPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const LabelText('Trip tags'),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children:
+                    (trip.preferences.isEmpty
+                            ? ['Culture', 'Food']
+                            : trip.preferences)
+                        .map((tag) => SmallPill(label: tag))
+                        .toList(),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        const SectionHeader(title: 'Bookings'),
+        const SizedBox(height: 10),
+        for (final booking in trip.bookings.take(2))
+          BookingTile(booking: booking),
+        const SizedBox(height: 12),
+        const SectionHeader(title: 'First stops'),
+        const SizedBox(height: 10),
+        for (final item in trip.items.take(3)) ItineraryTile(item: item),
+      ],
+    );
+  }
+}
+
+class EditableItineraryTab extends StatelessWidget {
+  const EditableItineraryTab({
+    required this.trip,
+    required this.onSave,
+    super.key,
+  });
+
+  final Trip trip;
+  final ValueChanged<Trip> onSave;
+
+  Future<void> _addStop(BuildContext context) async {
+    final activity = TextEditingController();
+    final time = TextEditingController(text: '10:00 AM');
+    final cost = TextEditingController(text: '0');
+    var day = 1;
+    try {
+      final item = await showDialog<ItineraryItem>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Add stop'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: activity,
+                  decoration: const InputDecoration(labelText: 'Activity'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: time,
+                  decoration: const InputDecoration(labelText: 'Time'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: cost,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Cost'),
+                ),
+                const SizedBox(height: 10),
+                StepperControl(
+                  label: 'Day $day',
+                  onMinus: () =>
+                      setDialogState(() => day = math.max(1, day - 1)),
+                  onPlus: () => setDialogState(() => day += 1),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(
+                  ItineraryItem(
+                    day,
+                    time.text.trim().isEmpty ? '10:00 AM' : time.text.trim(),
+                    activity.text.trim().isEmpty
+                        ? 'New activity'
+                        : activity.text.trim(),
+                    Icons.place_rounded,
+                    int.tryParse(cost.text.replaceAll(RegExp(r'\D'), '')) ?? 0,
+                  ),
+                ),
+                child: const Text('Add'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (item == null) return;
+      onSave(trip.copyWith(items: [...trip.items, item]));
+    } finally {
+      activity.dispose();
+      time.dispose();
+      cost.dispose();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1432,56 +4275,550 @@ class ItineraryScreen extends StatelessWidget {
     for (final item in trip.items) {
       grouped.putIfAbsent(item.day, () => []).add(item);
     }
-    return ScreenScaffold(
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(24, 18, 24, 32),
-        children: [
-          TopBar(
-            title: trip.destination,
-            onBack: onBack,
-            action: Icons.more_horiz_rounded,
-          ),
-          const SizedBox(height: 16),
-          HeroTripCard(trip: trip),
-          const SizedBox(height: 18),
-          Row(
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+      children: [
+        PrimaryButton(
+          label: 'Add stop',
+          icon: Icons.add_rounded,
+          onPressed: () => _addStop(context),
+        ),
+        const SizedBox(height: 16),
+        for (final day in grouped.keys.toList()..sort()) ...[
+          LabelText('Day $day'),
+          const SizedBox(height: 10),
+          for (final item in grouped[day]!)
+            Dismissible(
+              key: ValueKey('${item.day}-${item.time}-${item.activity}'),
+              direction: DismissDirection.endToStart,
+              background: Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: const Icon(Icons.delete_rounded, color: Colors.red),
+              ),
+              onDismissed: (_) => onSave(
+                trip.copyWith(
+                  items: trip.items
+                      .where((candidate) => candidate != item)
+                      .toList(),
+                ),
+              ),
+              child: ItineraryTile(item: item),
+            ),
+          const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+}
+
+class EditableBudgetTab extends StatelessWidget {
+  const EditableBudgetTab({
+    required this.trip,
+    required this.onSave,
+    super.key,
+  });
+  final Trip trip;
+  final ValueChanged<Trip> onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = trip.budgetCategories.isEmpty
+        ? _defaultBudgetCategories(
+            budget: trip.budget,
+            actual: trip.spent,
+            items: trip.items,
+            bookings: trip.bookings,
+          )
+        : trip.budgetCategories;
+    final actual = categories.fold<int>(
+      0,
+      (total, item) => total + item.actual,
+    );
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+      children: [
+        GlassPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: MiniAction(
-                  label: 'Packing',
-                  icon: Icons.check_circle_outline_rounded,
-                  onTap: onOpenPacking,
+              const LabelText('Budget'),
+              const SizedBox(height: 8),
+              Text(
+                '${trip.currency} $actual of ${trip.currency} ${trip.budget}',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: MiniAction(
-                  label: 'Budget',
-                  icon: Icons.payments_rounded,
-                  onTap: onOpenBudget,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: MiniAction(
-                  label: 'Map',
-                  icon: Icons.map_rounded,
-                  onTap: onOpenMap,
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(99),
+                child: LinearProgressIndicator(
+                  value: trip.budget == 0
+                      ? 0
+                      : (actual / trip.budget).clamp(0.0, 1.0),
+                  minHeight: 10,
+                  backgroundColor: _secondary.withValues(alpha: .16),
+                  color: _secondary,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 22),
-          SectionHeader(title: 'Bookings', action: 'Chat', onTap: onOpenChat),
-          const SizedBox(height: 10),
-          for (final booking in trip.bookings) BookingTile(booking: booking),
-          const SizedBox(height: 16),
-          for (final day in grouped.keys) ...[
-            LabelText('Day $day'),
-            const SizedBox(height: 10),
-            for (final item in grouped[day]!) ItineraryTile(item: item),
-            const SizedBox(height: 12),
+        ),
+        const SizedBox(height: 14),
+        for (final category in categories)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: BudgetCategoryEditor(
+              category: category,
+              currency: trip.currency,
+              onChanged: (updated) {
+                final next = categories
+                    .map((item) => item.id == updated.id ? updated : item)
+                    .toList();
+                onSave(
+                  trip.copyWith(
+                    budgetCategories: next,
+                    spent: next.fold<int>(
+                      0,
+                      (total, item) => total + item.actual,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class TripMapTab extends StatelessWidget {
+  const TripMapTab({required this.trip, required this.onOpenMap, super.key});
+  final Trip trip;
+  final VoidCallback onOpenMap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+      children: [
+        GlassPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const LabelText('Route map'),
+              const SizedBox(height: 8),
+              Text(
+                trip.formattedAddress ?? trip.destination,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 12),
+              PrimaryButton(
+                label: 'Open map',
+                icon: Icons.map_rounded,
+                onPressed: onOpenMap,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        for (final item in trip.items.take(6)) ItineraryTile(item: item),
+      ],
+    );
+  }
+}
+
+class EditableChecklistTab extends StatelessWidget {
+  const EditableChecklistTab({
+    required this.trip,
+    required this.onSave,
+    super.key,
+  });
+  final Trip trip;
+  final ValueChanged<Trip> onSave;
+
+  Future<void> _addItem(
+    BuildContext context,
+    ChecklistCategory category,
+  ) async {
+    final controller = TextEditingController();
+    try {
+      final item = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Add to ${category.category}'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(labelText: 'Checklist item'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('Add'),
+            ),
           ],
+        ),
+      );
+      if (item == null || item.isEmpty) return;
+      final next = trip.checklist
+          .map(
+            (candidate) => candidate == category
+                ? ChecklistCategory(candidate.category, [
+                    ...candidate.items,
+                    item,
+                  ])
+                : candidate,
+          )
+          .toList();
+      onSave(trip.copyWith(checklist: next));
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+      children: [
+        for (final category in trip.checklist)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: GlassPanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          category.category,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => _addItem(context, category),
+                        icon: const Icon(Icons.add_rounded),
+                      ),
+                    ],
+                  ),
+                  for (final item in category.items)
+                    CheckboxListTile(
+                      dense: true,
+                      value: false,
+                      onChanged: (_) {},
+                      title: Text(item),
+                      secondary: IconButton(
+                        icon: const Icon(Icons.delete_outline_rounded),
+                        onPressed: () {
+                          final next = trip.checklist
+                              .map(
+                                (candidate) => candidate == category
+                                    ? ChecklistCategory(
+                                        candidate.category,
+                                        candidate.items
+                                            .where((value) => value != item)
+                                            .toList(),
+                                      )
+                                    : candidate,
+                              )
+                              .toList();
+                          onSave(trip.copyWith(checklist: next));
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class EditableBookingTab extends StatelessWidget {
+  const EditableBookingTab({
+    required this.trip,
+    required this.onSave,
+    super.key,
+  });
+  final Trip trip;
+  final ValueChanged<Trip> onSave;
+
+  Future<void> _addBooking(BuildContext context) async {
+    final title = TextEditingController();
+    final date = TextEditingController(text: trip.startDate);
+    final time = TextEditingController(text: '10:00');
+    final reference = TextEditingController(text: 'TBD');
+    final cost = TextEditingController(text: '0');
+    try {
+      final booking = await showDialog<Booking>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Add booking'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: title,
+                  decoration: const InputDecoration(labelText: 'Title'),
+                ),
+                TextField(
+                  controller: date,
+                  decoration: const InputDecoration(labelText: 'Date'),
+                ),
+                TextField(
+                  controller: time,
+                  decoration: const InputDecoration(labelText: 'Time'),
+                ),
+                TextField(
+                  controller: reference,
+                  decoration: const InputDecoration(labelText: 'Reference'),
+                ),
+                TextField(
+                  controller: cost,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Cost'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(
+                Booking(
+                  title.text.trim().isEmpty ? 'New booking' : title.text.trim(),
+                  date.text.trim(),
+                  time.text.trim(),
+                  reference.text.trim(),
+                  int.tryParse(cost.text.replaceAll(RegExp(r'\D'), '')) ?? 0,
+                  Icons.confirmation_number_rounded,
+                ),
+              ),
+              child: const Text('Add'),
+            ),
+          ],
+        ),
+      );
+      if (booking == null) return;
+      onSave(trip.copyWith(bookings: [...trip.bookings, booking]));
+    } finally {
+      title.dispose();
+      date.dispose();
+      time.dispose();
+      reference.dispose();
+      cost.dispose();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+      children: [
+        PrimaryButton(
+          label: 'Add booking',
+          icon: Icons.add_rounded,
+          onPressed: () => _addBooking(context),
+        ),
+        const SizedBox(height: 16),
+        for (final booking in trip.bookings)
+          Dismissible(
+            key: ValueKey('${booking.title}-${booking.reference}'),
+            direction: DismissDirection.endToStart,
+            background: Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: 18),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: const Icon(Icons.delete_rounded, color: Colors.red),
+            ),
+            onDismissed: (_) => onSave(
+              trip.copyWith(
+                bookings: trip.bookings
+                    .where((candidate) => candidate != booking)
+                    .toList(),
+              ),
+            ),
+            child: BookingTile(booking: booking),
+          ),
+      ],
+    );
+  }
+}
+
+class TripChatTab extends StatelessWidget {
+  const TripChatTab({required this.trip, required this.onOpenChat, super.key});
+  final Trip trip;
+  final VoidCallback onOpenChat;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+      children: [
+        GlassPanel(
+          child: Column(
+            children: [
+              const IconBadge(icon: Icons.chat_bubble_rounded, size: 54),
+              const SizedBox(height: 12),
+              Text(
+                '${trip.destination} AI',
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Ask for route changes, cheaper options, packing help, or booking reminders.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: _secondary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 16),
+              PrimaryButton(
+                label: 'Open chat',
+                icon: Icons.arrow_forward_rounded,
+                onPressed: onOpenChat,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class StepperControl extends StatelessWidget {
+  const StepperControl({
+    required this.label,
+    required this.onMinus,
+    required this.onPlus,
+    super.key,
+  });
+  final String label;
+  final VoidCallback onMinus;
+  final VoidCallback onPlus;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        IconButton(onPressed: onMinus, icon: const Icon(Icons.remove_rounded)),
+        Expanded(
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w900),
+          ),
+        ),
+        IconButton(onPressed: onPlus, icon: const Icon(Icons.add_rounded)),
+      ],
+    );
+  }
+}
+
+class BudgetCategoryEditor extends StatelessWidget {
+  const BudgetCategoryEditor({
+    required this.category,
+    required this.currency,
+    required this.onChanged,
+    super.key,
+  });
+  final BudgetCategory category;
+  final String currency;
+  final ValueChanged<BudgetCategory> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final planned = TextEditingController(text: category.planned.toString());
+    final actual = TextEditingController(text: category.actual.toString());
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            category.category,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: planned,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(labelText: 'Planned $currency'),
+                  onSubmitted: (_) => onChanged(
+                    category.copyWith(
+                      planned:
+                          int.tryParse(
+                            planned.text.replaceAll(RegExp(r'\D'), ''),
+                          ) ??
+                          category.planned,
+                      actual:
+                          int.tryParse(
+                            actual.text.replaceAll(RegExp(r'\D'), ''),
+                          ) ??
+                          category.actual,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: actual,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(labelText: 'Actual $currency'),
+                  onSubmitted: (_) => onChanged(
+                    category.copyWith(
+                      planned:
+                          int.tryParse(
+                            planned.text.replaceAll(RegExp(r'\D'), ''),
+                          ) ??
+                          category.planned,
+                      actual:
+                          int.tryParse(
+                            actual.text.replaceAll(RegExp(r'\D'), ''),
+                          ) ??
+                          category.actual,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -1585,7 +4922,9 @@ class ChatRoomScreen extends StatefulWidget {
 
 class _ChatRoomScreenState extends State<ChatRoomScreen> {
   late final List<ChatMessageModel> _messages;
+  final _assistant = TravelAssistantService();
   final _input = TextEditingController();
+  var _isSending = false;
 
   @override
   void initState() {
@@ -1597,9 +4936,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       ),
       if (widget.initialQuery.isNotEmpty)
         ChatMessageModel(true, widget.initialQuery),
-      if (widget.initialQuery.isNotEmpty)
-        ChatMessageModel(false, _aiReply(widget.initialQuery)),
     ];
+    if (widget.initialQuery.isNotEmpty) {
+      unawaited(_sendToAssistant(widget.initialQuery, addUserMessage: false));
+    }
   }
 
   @override
@@ -1638,16 +4978,23 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     foregroundColor: Colors.white,
                     fixedSize: const Size(54, 54),
                   ),
-                  onPressed: () {
-                    final text = _input.text.trim();
-                    if (text.isEmpty) return;
-                    setState(() {
-                      _messages.add(ChatMessageModel(true, text));
-                      _messages.add(ChatMessageModel(false, _aiReply(text)));
-                      _input.clear();
-                    });
-                  },
-                  icon: const Icon(Icons.send_rounded),
+                  onPressed: _isSending
+                      ? null
+                      : () {
+                          final text = _input.text.trim();
+                          if (text.isEmpty) return;
+                          _input.clear();
+                          unawaited(_sendToAssistant(text));
+                        },
+                  icon: _isSending
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.send_rounded),
                 ),
               ],
             ),
@@ -1656,20 +5003,43 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       ),
     );
   }
-}
 
-String _aiReply(String text) {
-  final lower = text.toLowerCase();
-  if (lower.contains('ramen') || lower.contains('food')) {
-    return 'Try Nishiki Market first, then save room for a late ramen stop near Gion. I would keep the food walk before the rain window.';
+  Future<void> _sendToAssistant(
+    String text, {
+    bool addUserMessage = true,
+  }) async {
+    setState(() {
+      if (addUserMessage) _messages.add(ChatMessageModel(true, text));
+      _isSending = true;
+    });
+
+    try {
+      final reply = await _assistant.sendMessage(text);
+      if (!mounted) return;
+      setState(() {
+        _messages.add(
+          ChatMessageModel(
+            false,
+            reply.isEmpty
+                ? 'I could not generate a travel suggestion right now.'
+                : reply,
+          ),
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _messages.add(
+          const ChatMessageModel(
+            false,
+            'AI chat is unavailable right now. Please try again in a moment.',
+          ),
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
   }
-  if (lower.contains('budget')) {
-    return 'Your Kyoto plan is trending under budget. Transport and hotel are the main fixed costs; food has room for one splurge dinner.';
-  }
-  if (lower.contains('pack')) {
-    return 'Pack passport, adapter, power bank, walking shoes, and a light rain jacket. Kyoto rain is expected after 2 PM.';
-  }
-  return 'I suggest moving outdoor stops earlier, keeping Nishiki Market for the wet window, and using train transfers from Kyoto Station.';
 }
 
 class ChatMessageModel {
@@ -2820,19 +6190,93 @@ class PlanningIdeaStrip extends StatelessWidget {
 }
 
 class DateRangeCard extends StatelessWidget {
-  const DateRangeCard({super.key});
+  const DateRangeCard({
+    required this.startDate,
+    required this.endDate,
+    required this.onPickStart,
+    required this.onPickEnd,
+    super.key,
+  });
+
+  final DateTime startDate;
+  final DateTime endDate;
+  final VoidCallback onPickStart;
+  final VoidCallback onPickEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      child: Row(
+        children: [
+          const IconBadge(icon: Icons.calendar_month_rounded, size: 46),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Trip dates',
+                  style: TextStyle(
+                    color: _secondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${_dateKey(startDate)} / ${_dateKey(endDate)}',
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Start date',
+            onPressed: onPickStart,
+            icon: const Icon(Icons.today_rounded),
+          ),
+          IconButton(
+            tooltip: 'End date',
+            onPressed: onPickEnd,
+            icon: const Icon(Icons.event_available_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class GeneratingTripPanel extends StatelessWidget {
+  const GeneratingTripPanel({super.key});
 
   @override
   Widget build(BuildContext context) {
     return const GlassPanel(
       child: Row(
         children: [
-          IconBadge(icon: Icons.calendar_month_rounded, size: 46),
-          SizedBox(width: 12),
+          SizedBox.square(
+            dimension: 36,
+            child: CircularProgressIndicator(strokeWidth: 3),
+          ),
+          SizedBox(width: 14),
           Expanded(
-            child: Text(
-              'Apr 16, 2026 / Apr 27, 2026',
-              style: TextStyle(fontWeight: FontWeight.w900),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Generating itinerary...',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'AI is shaping the route, bookings, budget, and packing list.',
+                  style: TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
