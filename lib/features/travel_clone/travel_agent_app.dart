@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _primary = Color(0xFF355872);
 const _secondary = Color(0xFF7AAACE);
@@ -54,7 +58,11 @@ class TravelAgentApp extends StatefulWidget {
 }
 
 class _TravelAgentAppState extends State<TravelAgentApp> {
+  static const _accountKey = 'travel_agent_account_id';
+
+  final _repository = TravelDataRepository(FirebaseFirestore.instance);
   var _showOnboarding = true;
+  var _isLoading = true;
   var _tab = _NavTab.home;
   var _screen = _Screen.dashboard;
   var _user = const UserProfile(name: '', email: '', interests: []);
@@ -62,6 +70,54 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   Trip? _selectedTrip;
   Trip? _activeTrip;
   String _initialChat = '';
+  String? _accountId;
+  String? _loadError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedState();
+  }
+
+  Future<void> _loadSavedState() async {
+    String? accountId;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      accountId = prefs.getString(_accountKey);
+    } catch (_) {
+      accountId = null;
+    }
+
+    if (accountId == null) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    try {
+      final profile = await _repository.loadUser(accountId);
+      final trips = await _repository.loadTrips(accountId);
+      if (!mounted) return;
+      setState(() {
+        _accountId = accountId;
+        _user =
+            profile ??
+            const UserProfile(name: 'Explorer', email: '', interests: []);
+        _trips
+          ..clear()
+          ..addAll(trips);
+        _activeTrip = _firstOngoingTrip(trips);
+        _showOnboarding = profile == null;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Could not load online trip data: $error';
+        _isLoading = false;
+      });
+    }
+  }
 
   void _openTrip(Trip trip) {
     setState(() {
@@ -71,16 +127,64 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     });
   }
 
-  void _createTrip(Trip trip) {
+  Future<void> _completeOnboarding(UserProfile profile) async {
+    final accountId = _accountId ?? _accountIdFor(profile);
+
+    setState(() {
+      _accountId = accountId;
+      _user = profile;
+      _showOnboarding = false;
+      _loadError = null;
+    });
+
+    await _trySaveAccountId(accountId);
+    try {
+      await _repository.saveUser(accountId, profile);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _loadError = 'Could not save profile online: $error');
+    }
+  }
+
+  Future<void> _trySaveAccountId(String accountId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_accountKey, accountId);
+    } catch (_) {
+      // The web build can still save online if browser/plugin storage is unavailable.
+    }
+  }
+
+  Future<void> _saveProfile(UserProfile profile) async {
+    setState(() {
+      _user = profile;
+      _loadError = null;
+    });
+
+    final accountId = _accountId;
+    if (accountId == null) return;
+    try {
+      await _repository.saveUser(accountId, profile);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _loadError = 'Could not save profile online: $error');
+    }
+  }
+
+  Future<void> _createTrip(Trip trip) async {
     setState(() {
       _trips.insert(0, trip);
       _selectedTrip = trip;
       _screen = _Screen.itinerary;
       _tab = _NavTab.trips;
+      _loadError = null;
     });
+
+    await _saveTripOnline(trip);
   }
 
-  void _startTrip(Trip trip) {
+  Future<void> _startTrip(Trip trip) async {
+    final previousActive = _activeTrip;
     setState(() {
       final started = trip.copyWith(status: TripStatus.ongoing);
       final index = _trips.indexWhere((item) => item.id == trip.id);
@@ -90,6 +194,25 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _screen = _Screen.dashboard;
       _tab = _NavTab.home;
     });
+
+    final started = _selectedTrip;
+    if (started != null) await _saveTripOnline(started);
+    if (previousActive != null && previousActive.id != trip.id) {
+      await _saveTripOnline(
+        previousActive.copyWith(status: TripStatus.upcoming),
+      );
+    }
+  }
+
+  Future<void> _saveTripOnline(Trip trip) async {
+    final accountId = _accountId;
+    if (accountId == null) return;
+    try {
+      await _repository.saveTrip(accountId, trip);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _loadError = 'Could not save trip online: $error');
+    }
   }
 
   @override
@@ -104,15 +227,10 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               resizeToAvoidBottomInset: false,
               body: SafeArea(
                 bottom: false,
-                child: _showOnboarding
-                    ? OnboardingScreen(
-                        onComplete: (profile) {
-                          setState(() {
-                            _user = profile;
-                            _showOnboarding = false;
-                          });
-                        },
-                      )
+                child: _isLoading
+                    ? const LoadingScreen()
+                    : _showOnboarding
+                    ? OnboardingScreen(onComplete: _completeOnboarding)
                     : Stack(
                         children: [
                           AnimatedSwitcher(
@@ -121,6 +239,13 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
                           ),
                           if (_screen != _Screen.create)
                             _BottomNav(tab: _tab, onSelect: _selectTab),
+                          if (_loadError != null)
+                            Positioned(
+                              left: 16,
+                              right: 16,
+                              top: 12,
+                              child: SyncBanner(message: _loadError!),
+                            ),
                         ],
                       ),
               ),
@@ -212,7 +337,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         return ProfileScreen(
           key: const ValueKey('profile'),
           user: _user,
-          onSave: (profile) => setState(() => _user = profile),
+          onSave: _saveProfile,
         );
       case _Screen.map:
         return MapScreen(
@@ -263,6 +388,24 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 }
 
+String _accountIdFor(UserProfile profile) {
+  final email = profile.email.trim().toLowerCase();
+  if (email.isNotEmpty) {
+    final id = email
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+        .replaceAll(RegExp(r'^-|-$'), '');
+    if (id.isNotEmpty) return id;
+  }
+  return 'explorer-${DateTime.now().millisecondsSinceEpoch}';
+}
+
+Trip? _firstOngoingTrip(List<Trip> trips) {
+  for (final trip in trips) {
+    if (trip.status == TripStatus.ongoing) return trip;
+  }
+  return null;
+}
+
 enum _Screen {
   dashboard,
   create,
@@ -291,6 +434,21 @@ class UserProfile {
   final String name;
   final String email;
   final List<String> interests;
+
+  Map<String, dynamic> toMap() => {
+    'name': name,
+    'email': email,
+    'interests': interests,
+    'updatedAt': FieldValue.serverTimestamp(),
+  };
+
+  static UserProfile fromMap(Map<String, dynamic> map) => UserProfile(
+    name: (map['name'] as String?) ?? 'Explorer',
+    email: (map['email'] as String?) ?? '',
+    interests: ((map['interests'] as List<dynamic>?) ?? const [])
+        .whereType<String>()
+        .toList(),
+  );
 }
 
 class Trip {
@@ -307,6 +465,10 @@ class Trip {
     required this.items,
     required this.bookings,
     required this.checklist,
+    this.placeId,
+    this.formattedAddress,
+    this.latitude,
+    this.longitude,
   });
 
   final String id;
@@ -321,6 +483,10 @@ class Trip {
   final List<ItineraryItem> items;
   final List<Booking> bookings;
   final List<ChecklistCategory> checklist;
+  final String? placeId;
+  final String? formattedAddress;
+  final double? latitude;
+  final double? longitude;
 
   Trip copyWith({TripStatus? status}) => Trip(
     id: id,
@@ -335,7 +501,69 @@ class Trip {
     items: items,
     bookings: bookings,
     checklist: checklist,
+    placeId: placeId,
+    formattedAddress: formattedAddress,
+    latitude: latitude,
+    longitude: longitude,
   );
+
+  Map<String, dynamic> toMap() => {
+    'destination': destination,
+    'placeId': placeId,
+    'formattedAddress': formattedAddress,
+    'latitude': latitude,
+    'longitude': longitude,
+    'startDate': startDate,
+    'endDate': endDate,
+    'budget': budget,
+    'spent': spent,
+    'groupType': groupType,
+    'status': status.name,
+    'images': images,
+    'items': items.map((item) => item.toMap()).toList(),
+    'bookings': bookings.map((booking) => booking.toMap()).toList(),
+    'checklist': checklist.map((category) => category.toMap()).toList(),
+    'updatedAt': FieldValue.serverTimestamp(),
+  };
+
+  static Trip fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final map = doc.data() ?? const <String, dynamic>{};
+    return Trip(
+      id: doc.id,
+      destination: (map['destination'] as String?) ?? 'Untitled trip',
+      placeId: map['placeId'] as String?,
+      formattedAddress: map['formattedAddress'] as String?,
+      latitude: (map['latitude'] as num?)?.toDouble(),
+      longitude: (map['longitude'] as num?)?.toDouble(),
+      startDate: (map['startDate'] as String?) ?? '',
+      endDate: (map['endDate'] as String?) ?? '',
+      budget: (map['budget'] as num?)?.toInt() ?? 0,
+      spent: (map['spent'] as num?)?.toInt() ?? 0,
+      groupType: (map['groupType'] as String?) ?? 'Solo',
+      status: TripStatus.values.firstWhere(
+        (status) => status.name == map['status'],
+        orElse: () => TripStatus.upcoming,
+      ),
+      images: ((map['images'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .toList(),
+      items: ((map['items'] as List<dynamic>?) ?? const [])
+          .whereType<Map>()
+          .map((item) => ItineraryItem.fromMap(Map<String, dynamic>.from(item)))
+          .toList(),
+      bookings: ((map['bookings'] as List<dynamic>?) ?? const [])
+          .whereType<Map>()
+          .map((item) => Booking.fromMap(Map<String, dynamic>.from(item)))
+          .toList(),
+      checklist: ((map['checklist'] as List<dynamic>?) ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) =>
+                ChecklistCategory.fromMap(Map<String, dynamic>.from(item)),
+          )
+          .toList(),
+    );
+  }
 }
 
 class ItineraryItem {
@@ -345,6 +573,22 @@ class ItineraryItem {
   final String activity;
   final IconData type;
   final int cost;
+
+  Map<String, dynamic> toMap() => {
+    'day': day,
+    'time': time,
+    'activity': activity,
+    'type': _iconToMap(type),
+    'cost': cost,
+  };
+
+  static ItineraryItem fromMap(Map<String, dynamic> map) => ItineraryItem(
+    (map['day'] as num?)?.toInt() ?? 1,
+    (map['time'] as String?) ?? '',
+    (map['activity'] as String?) ?? 'Activity',
+    _iconFromMap(map['type']),
+    (map['cost'] as num?)?.toInt() ?? 0,
+  );
 }
 
 class Booking {
@@ -362,12 +606,176 @@ class Booking {
   final String reference;
   final int cost;
   final IconData icon;
+
+  Map<String, dynamic> toMap() => {
+    'title': title,
+    'date': date,
+    'time': time,
+    'reference': reference,
+    'cost': cost,
+    'icon': _iconToMap(icon),
+  };
+
+  static Booking fromMap(Map<String, dynamic> map) => Booking(
+    (map['title'] as String?) ?? 'Booking',
+    (map['date'] as String?) ?? '',
+    (map['time'] as String?) ?? '',
+    (map['reference'] as String?) ?? '',
+    (map['cost'] as num?)?.toInt() ?? 0,
+    _iconFromMap(map['icon']),
+  );
 }
 
 class ChecklistCategory {
   const ChecklistCategory(this.category, this.items);
   final String category;
   final List<String> items;
+
+  Map<String, dynamic> toMap() => {'category': category, 'items': items};
+
+  static ChecklistCategory fromMap(Map<String, dynamic> map) =>
+      ChecklistCategory(
+        (map['category'] as String?) ?? 'Checklist',
+        ((map['items'] as List<dynamic>?) ?? const [])
+            .whereType<String>()
+            .toList(),
+      );
+}
+
+Map<String, dynamic> _iconToMap(IconData icon) => {'name': _iconName(icon)};
+
+IconData _iconFromMap(Object? value) {
+  if (value is! Map) return Icons.place_rounded;
+  final map = Map<String, dynamic>.from(value);
+  return _iconByName(map['name'] as String?);
+}
+
+String _iconName(IconData icon) {
+  if (icon == Icons.train_rounded) return 'train';
+  if (icon == Icons.restaurant_rounded) return 'restaurant';
+  if (icon == Icons.hiking_rounded) return 'hiking';
+  if (icon == Icons.temple_buddhist_rounded) return 'temple';
+  if (icon == Icons.directions_walk_rounded) return 'walk';
+  if (icon == Icons.flight_takeoff_rounded) return 'flight';
+  if (icon == Icons.hotel_rounded) return 'hotel';
+  return 'place';
+}
+
+IconData _iconByName(String? name) {
+  switch (name) {
+    case 'train':
+      return Icons.train_rounded;
+    case 'restaurant':
+      return Icons.restaurant_rounded;
+    case 'hiking':
+      return Icons.hiking_rounded;
+    case 'temple':
+      return Icons.temple_buddhist_rounded;
+    case 'walk':
+      return Icons.directions_walk_rounded;
+    case 'flight':
+      return Icons.flight_takeoff_rounded;
+    case 'hotel':
+      return Icons.hotel_rounded;
+    default:
+      return Icons.place_rounded;
+  }
+}
+
+class TravelDataRepository {
+  const TravelDataRepository(this._firestore);
+
+  final FirebaseFirestore _firestore;
+
+  DocumentReference<Map<String, dynamic>> _userDoc(String accountId) =>
+      _firestore.collection('travel_users').doc(accountId);
+
+  CollectionReference<Map<String, dynamic>> _tripsRef(String accountId) =>
+      _userDoc(accountId).collection('trips');
+
+  Future<UserProfile?> loadUser(String accountId) async {
+    final snapshot = await _userDoc(accountId).get();
+    if (!snapshot.exists) return null;
+    return UserProfile.fromMap(snapshot.data() ?? const <String, dynamic>{});
+  }
+
+  Future<void> saveUser(String accountId, UserProfile profile) =>
+      _userDoc(accountId).set(profile.toMap(), SetOptions(merge: true));
+
+  Future<List<Trip>> loadTrips(String accountId) async {
+    final snapshot = await _tripsRef(accountId).orderBy('updatedAt').get();
+    final trips = snapshot.docs.map(Trip.fromDoc).toList();
+    return trips.reversed.toList();
+  }
+
+  Future<void> saveTrip(String accountId, Trip trip) => _tripsRef(
+    accountId,
+  ).doc(trip.id).set(trip.toMap(), SetOptions(merge: true));
+}
+
+class PlaceSuggestion {
+  const PlaceSuggestion({
+    required this.name,
+    required this.formatted,
+    required this.latitude,
+    required this.longitude,
+    required this.placeId,
+    this.country,
+  });
+
+  final String name;
+  final String formatted;
+  final double latitude;
+  final double longitude;
+  final String placeId;
+  final String? country;
+
+  static PlaceSuggestion fromMap(Map<String, dynamic> map) {
+    final city =
+        map['city'] as String? ??
+        map['county'] as String? ??
+        map['state'] as String? ??
+        map['name'] as String?;
+    final country = map['country'] as String?;
+    final formatted = (map['formatted'] as String?) ?? city ?? 'Unknown place';
+    final name = city == null
+        ? formatted
+        : country == null
+        ? city
+        : '$city, $country';
+    return PlaceSuggestion(
+      name: name,
+      formatted: formatted,
+      latitude: (map['lat'] as num?)?.toDouble() ?? 0,
+      longitude: (map['lon'] as num?)?.toDouble() ?? 0,
+      placeId: (map['place_id'] as String?) ?? formatted,
+      country: country,
+    );
+  }
+}
+
+class GeoapifyPlacesService {
+  GeoapifyPlacesService({FirebaseFunctions? functions})
+    : _functions =
+          functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
+
+  final FirebaseFunctions _functions;
+
+  Future<List<PlaceSuggestion>> searchDestinations(String query) async {
+    final trimmed = query.trim();
+    if (trimmed.length < 3) return const [];
+
+    final callable = _functions.httpsCallable('searchPlaces');
+    final response = await callable.call<Map<String, dynamic>>({
+      'query': trimmed,
+    });
+    final results = (response.data['results'] as List<dynamic>?) ?? const [];
+    return results
+        .whereType<Map>()
+        .map((item) => PlaceSuggestion.fromMap(Map<String, dynamic>.from(item)))
+        .where((place) => place.latitude != 0 && place.longitude != 0)
+        .toList();
+  }
 }
 
 const destinations = [
@@ -376,6 +784,78 @@ const destinations = [
     'Bustling city meets serene temples and gardens.',
     'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=900',
     ['Culture', 'Zen'],
+  ),
+  Destination(
+    'Tokyo, Japan',
+    'Neon neighborhoods, food alleys, temples, and day trips.',
+    'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=900',
+    ['Food', 'City'],
+  ),
+  Destination(
+    'Seoul, South Korea',
+    'Palaces, cafes, street markets, skincare, and late-night food.',
+    'https://images.unsplash.com/photo-1538485399081-7191377e8241?q=80&w=900',
+    ['Culture', 'Shopping'],
+  ),
+  Destination(
+    'Taipei, Taiwan',
+    'Night markets, mountain views, hot springs, and easy transit.',
+    'https://images.unsplash.com/photo-1470004914212-05527e49370b?q=80&w=900',
+    ['Food', 'Nature'],
+  ),
+  Destination(
+    'Bangkok, Thailand',
+    'Temples, river boats, markets, rooftop views, and bold food.',
+    'https://images.unsplash.com/photo-1508009603885-50cf7c579365?q=80&w=900',
+    ['Food', 'Culture'],
+  ),
+  Destination(
+    'Singapore',
+    'Clean transit, gardens, hawker centers, and waterfront views.',
+    'https://images.unsplash.com/photo-1525625293386-3f8f99389edd?q=80&w=900',
+    ['Food', 'City'],
+  ),
+  Destination(
+    'Bali, Indonesia',
+    'Beaches, rice terraces, temples, waterfalls, and slow mornings.',
+    'https://images.unsplash.com/photo-1537996194471-e657df975ab4?q=80&w=900',
+    ['Relax', 'Nature'],
+  ),
+  Destination(
+    'Paris, France',
+    'Museums, cafes, gardens, architecture, and classic walks.',
+    'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=900',
+    ['Museums', 'Romantic'],
+  ),
+  Destination(
+    'London, United Kingdom',
+    'Museums, markets, parks, theatre, and historic neighborhoods.',
+    'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=900',
+    ['Museums', 'City'],
+  ),
+  Destination(
+    'New York City, USA',
+    'Iconic sights, food neighborhoods, parks, museums, and shows.',
+    'https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=900',
+    ['City', 'Food'],
+  ),
+  Destination(
+    'Los Angeles, USA',
+    'Beaches, studios, museums, hikes, and neighborhood food scenes.',
+    'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=900',
+    ['Scenic', 'City'],
+  ),
+  Destination(
+    'Hong Kong',
+    'Harbor views, dense streets, dim sum, hikes, and island escapes.',
+    'https://images.unsplash.com/photo-1536599018102-9f803c140fc1?q=80&w=900',
+    ['Food', 'Scenic'],
+  ),
+  Destination(
+    'Osaka, Japan',
+    'Street food, castles, shopping arcades, and easy Kansai day trips.',
+    'https://images.unsplash.com/photo-1590559899731-a382839e5549?q=80&w=900',
+    ['Food', 'Shopping'],
   ),
   Destination(
     'Amalfi Coast',
@@ -724,10 +1204,79 @@ class CreateTripScreen extends StatefulWidget {
 }
 
 class _CreateTripScreenState extends State<CreateTripScreen> {
-  final _destination = TextEditingController(text: 'Kyoto, Japan');
+  final _places = GeoapifyPlacesService();
+  final _destination = TextEditingController(text: 'Tokyo');
   final _budget = TextEditingController(text: '3500');
+  Timer? _searchTimer;
+  PlaceSuggestion? _selectedPlace;
+  List<PlaceSuggestion> _placeSuggestions = const [];
   var _group = 'Friends';
   var _mode = 0;
+  String? _formError;
+  var _isSearching = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchPlaces(_destination.text);
+  }
+
+  @override
+  void dispose() {
+    _searchTimer?.cancel();
+    _destination.dispose();
+    _budget.dispose();
+    super.dispose();
+  }
+
+  void _schedulePlaceSearch(String value) {
+    _searchTimer?.cancel();
+    setState(() {
+      _selectedPlace = null;
+      _formError = null;
+      _isSearching = value.trim().length >= 3;
+    });
+    _searchTimer = Timer(
+      const Duration(milliseconds: 450),
+      () => _searchPlaces(value),
+    );
+  }
+
+  Future<void> _searchPlaces(String value) async {
+    final query = value.trim();
+    if (query.length < 3) {
+      if (!mounted) return;
+      setState(() {
+        _isSearching = false;
+        _placeSuggestions = const [];
+      });
+      return;
+    }
+
+    try {
+      final suggestions = await _places.searchDestinations(query);
+      if (!mounted || _destination.text.trim() != query) return;
+      setState(() {
+        _placeSuggestions = suggestions;
+        _isSearching = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isSearching = false;
+        _formError = 'Could not search places right now: $error';
+      });
+    }
+  }
+
+  void _selectPlace(PlaceSuggestion place) {
+    setState(() {
+      _selectedPlace = place;
+      _destination.text = place.name;
+      _placeSuggestions = const [];
+      _formError = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -758,8 +1307,32 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           const SizedBox(height: 18),
           TextField(
             controller: _destination,
-            decoration: const InputDecoration(labelText: 'Destination'),
+            onChanged: _schedulePlaceSearch,
+            decoration: InputDecoration(
+              labelText: 'Destination',
+              hintText: 'Search a real city',
+              suffixIcon: _isSearching
+                  ? const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : const Icon(Icons.travel_explore_rounded),
+            ),
           ),
+          if (_selectedPlace != null) ...[
+            const SizedBox(height: 10),
+            SelectedPlaceCard(place: _selectedPlace!),
+          ] else if (_placeSuggestions.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            PlaceSuggestionList(
+              suggestions: _placeSuggestions,
+              onSelect: _selectPlace,
+            ),
+          ],
           const SizedBox(height: 12),
           const DateRangeCard(),
           const SizedBox(height: 12),
@@ -782,24 +1355,43 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ),
           const SizedBox(height: 22),
           const PlanningIdeaStrip(),
+          if (_formError != null) ...[
+            const SizedBox(height: 16),
+            FormNotice(message: _formError!),
+          ],
           const SizedBox(height: 24),
           PrimaryButton(
             label: 'Generate itinerary',
             icon: Icons.arrow_forward_rounded,
             onPressed: () {
+              final budget =
+                  int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+              if (budget <= 0) {
+                setState(() {
+                  _formError = 'Enter a budget greater than zero.';
+                });
+                return;
+              }
+              final place = _selectedPlace;
+              if (place == null) {
+                setState(() {
+                  _formError =
+                      'Choose a real destination from the search results first.';
+                });
+                return;
+              }
+
               widget.onGenerate(
                 Trip(
                   id: 't-${DateTime.now().millisecondsSinceEpoch}',
-                  destination: _destination.text.trim().isEmpty
-                      ? 'Kyoto, Japan'
-                      : _destination.text.trim(),
+                  destination: place.name,
+                  placeId: place.placeId,
+                  formattedAddress: place.formatted,
+                  latitude: place.latitude,
+                  longitude: place.longitude,
                   startDate: '2026-04-16',
                   endDate: '2026-04-27',
-                  budget:
-                      int.tryParse(
-                        _budget.text.replaceAll(RegExp(r'\D'), ''),
-                      ) ??
-                      3500,
+                  budget: budget,
                   spent: 0,
                   groupType: _group,
                   status: TripStatus.upcoming,
@@ -1477,6 +2069,97 @@ class _BottomNav extends StatelessWidget {
   }
 }
 
+class LoadingScreen extends StatelessWidget {
+  const LoadingScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const ScreenScaffold(
+      child: Center(child: CircularProgressIndicator(color: _primary)),
+    );
+  }
+}
+
+class SyncBanner extends StatelessWidget {
+  const SyncBanner({required this.message, super.key});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF7ED),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFFED7AA)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .08),
+              blurRadius: 24,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.cloud_off_rounded, color: Color(0xFFB45309)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF92400E),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  height: 1.25,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class FormNotice extends StatelessWidget {
+  const FormNotice({required this.message, super.key});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFECACA)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline_rounded, color: Color(0xFFB91C1C)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: Color(0xFF991B1B),
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                height: 1.25,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class ScreenScaffold extends StatelessWidget {
   const ScreenScaffold({
     required this.child,
@@ -1706,6 +2389,103 @@ class DestinationCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class PlaceSuggestionList extends StatelessWidget {
+  const PlaceSuggestionList({
+    required this.suggestions,
+    required this.onSelect,
+    super.key,
+  });
+  final List<PlaceSuggestion> suggestions;
+  final ValueChanged<PlaceSuggestion> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          for (final suggestion in suggestions)
+            InkWell(
+              onTap: () => onSelect(suggestion),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.place_rounded, color: _secondary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            suggestion.name,
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            suggestion.formatted,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _secondary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class SelectedPlaceCard extends StatelessWidget {
+  const SelectedPlaceCard({required this.place, super.key});
+  final PlaceSuggestion place;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      child: Row(
+        children: [
+          const IconBadge(icon: Icons.check_rounded, size: 42),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  place.name,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+                Text(
+                  place.formatted,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
