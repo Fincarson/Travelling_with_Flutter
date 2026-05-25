@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../features/auth/presentation/pages/account_gate.dart';
 import '../features/travel_clone/travel_agent_app.dart';
 
 class MyApp extends StatelessWidget {
@@ -11,7 +12,7 @@ class MyApp extends StatelessWidget {
       title: 'Remix Travel Agent',
       debugShowCheckedModeBanner: false,
       theme: TravelAgentTheme.light(),
-      home: const TravelAgentApp(),
+      home: AccountGate(),
     );
   }
 }
