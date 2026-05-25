@@ -6,9 +6,9 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/config/local_api_keys.dart';
+import '../auth/data/account_auth_service.dart';
 
 const _primary = Color(0xFF355872);
 const _secondary = Color(0xFF7AAACE);
@@ -52,19 +52,32 @@ class TravelAgentTheme {
       ),
     );
   }
+
+  static ThemeData dark() {
+    final base = light();
+    return base.copyWith(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: const Color(0xFF17232A),
+      colorScheme: base.colorScheme.copyWith(
+        brightness: Brightness.dark,
+        surface: const Color(0xFF22313A),
+      ),
+    );
+  }
 }
 
 class TravelAgentApp extends StatefulWidget {
-  const TravelAgentApp({super.key});
+  const TravelAgentApp({required this.account, super.key});
+
+  final AuthenticatedAccount account;
 
   @override
   State<TravelAgentApp> createState() => _TravelAgentAppState();
 }
 
 class _TravelAgentAppState extends State<TravelAgentApp> {
-  static const _accountKey = 'travel_agent_account_id';
-
   final _repository = TravelDataRepository(FirebaseFirestore.instance);
+  final _authService = AccountAuthService();
   var _showOnboarding = true;
   var _isLoading = true;
   var _tab = _NavTab.home;
@@ -84,19 +97,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   Future<void> _loadSavedState() async {
-    String? accountId;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      accountId = prefs.getString(_accountKey);
-    } catch (_) {
-      accountId = null;
-    }
-
-    if (accountId == null) {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-      return;
-    }
+    final accountId = widget.account.uid;
 
     try {
       final profile = await _repository.loadUser(accountId);
@@ -106,7 +107,14 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         _accountId = accountId;
         _user =
             profile ??
-            const UserProfile(name: 'Explorer', email: '', interests: []);
+            UserProfile(
+              name: widget.account.name,
+              email: widget.account.email ?? '',
+              interests: const [],
+              language: 'en',
+              notificationsEnabled: true,
+              themeMode: 'Light',
+            );
         _trips
           ..clear()
           ..addAll(trips);
@@ -132,7 +140,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   Future<void> _completeOnboarding(UserProfile profile) async {
-    final accountId = _accountId ?? _accountIdFor(profile);
+    final accountId = widget.account.uid;
 
     setState(() {
       _accountId = accountId;
@@ -141,21 +149,11 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _loadError = null;
     });
 
-    await _trySaveAccountId(accountId);
     try {
       await _repository.saveUser(accountId, profile);
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = 'Could not save profile online: $error');
-    }
-  }
-
-  Future<void> _trySaveAccountId(String accountId) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_accountKey, accountId);
-    } catch (_) {
-      // The web build can still save online if browser/plugin storage is unavailable.
     }
   }
 
@@ -231,39 +229,60 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     }
   }
 
+  Future<void> _deleteAccount() async {
+    final accountId = _accountId ?? widget.account.uid;
+    try {
+      _authService.ensureCanDeleteCurrentAccount();
+      await _repository.deleteUserData(accountId);
+      await _authService.deleteCurrentAccount();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _loadError = 'Could not delete account: $error');
+      rethrow;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: const Color(0xFFE5E7EB),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 430),
-          child: ClipRect(
-            child: Scaffold(
-              resizeToAvoidBottomInset: false,
-              body: SafeArea(
-                bottom: false,
-                child: _isLoading
-                    ? const LoadingScreen()
-                    : _showOnboarding
-                    ? OnboardingScreen(onComplete: _completeOnboarding)
-                    : Stack(
-                        children: [
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 220),
-                            child: _buildScreen(),
-                          ),
-                          if (_screen != _Screen.create)
-                            _BottomNav(tab: _tab, onSelect: _selectTab),
-                          if (_loadError != null)
-                            Positioned(
-                              left: 16,
-                              right: 16,
-                              top: 12,
-                              child: SyncBanner(message: _loadError!),
+    return Theme(
+      data: _user.themeMode == 'Dark'
+          ? TravelAgentTheme.dark()
+          : TravelAgentTheme.light(),
+      child: ColoredBox(
+        color: const Color(0xFFE5E7EB),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 430),
+            child: ClipRect(
+              child: Scaffold(
+                resizeToAvoidBottomInset: false,
+                body: SafeArea(
+                  bottom: false,
+                  child: _isLoading
+                      ? const LoadingScreen()
+                      : _showOnboarding
+                      ? OnboardingScreen(
+                          account: widget.account,
+                          onComplete: _completeOnboarding,
+                        )
+                      : Stack(
+                          children: [
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              child: _buildScreen(),
                             ),
-                        ],
-                      ),
+                            if (_screen != _Screen.create)
+                              _BottomNav(tab: _tab, onSelect: _selectTab),
+                            if (_loadError != null)
+                              Positioned(
+                                left: 16,
+                                right: 16,
+                                top: 12,
+                                child: SyncBanner(message: _loadError!),
+                              ),
+                          ],
+                        ),
+                ),
               ),
             ),
           ),
@@ -353,8 +372,11 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       case _Screen.profile:
         return ProfileScreen(
           key: const ValueKey('profile'),
+          account: widget.account,
           user: _user,
           onSave: _saveProfile,
+          onSignOut: _authService.signOut,
+          onDeleteAccount: _deleteAccount,
         );
       case _Screen.map:
         return MapScreen(
@@ -405,17 +427,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 }
 
-String _accountIdFor(UserProfile profile) {
-  final email = profile.email.trim().toLowerCase();
-  if (email.isNotEmpty) {
-    final id = email
-        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-        .replaceAll(RegExp(r'^-|-$'), '');
-    if (id.isNotEmpty) return id;
-  }
-  return 'explorer-${DateTime.now().millisecondsSinceEpoch}';
-}
-
 Trip? _firstOngoingTrip(List<Trip> trips) {
   for (final trip in trips) {
     if (trip.status == TripStatus.ongoing) return trip;
@@ -447,25 +458,183 @@ class UserProfile {
     required this.name,
     required this.email,
     required this.interests,
+    this.language = 'en',
+    this.notificationsEnabled = true,
+    this.themeMode = 'Light',
   });
   final String name;
   final String email;
   final List<String> interests;
+  final String language;
+  final bool notificationsEnabled;
+  final String themeMode;
 
   Map<String, dynamic> toMap() => {
     'name': name,
     'email': email,
     'interests': interests,
+    'settings': {
+      'language': language,
+      'notificationsEnabled': notificationsEnabled,
+      'themeMode': themeMode,
+    },
     'updatedAt': FieldValue.serverTimestamp(),
   };
 
-  static UserProfile fromMap(Map<String, dynamic> map) => UserProfile(
-    name: (map['name'] as String?) ?? 'Explorer',
-    email: (map['email'] as String?) ?? '',
-    interests: ((map['interests'] as List<dynamic>?) ?? const [])
-        .whereType<String>()
-        .toList(),
-  );
+  static UserProfile fromMap(Map<String, dynamic> map) {
+    final settings = Map<String, dynamic>.from(
+      (map['settings'] as Map?) ?? const <String, dynamic>{},
+    );
+    return UserProfile(
+      name: (map['name'] as String?) ?? 'Explorer',
+      email: (map['email'] as String?) ?? '',
+      interests: ((map['interests'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .toList(),
+      language: (settings['language'] as String?) ?? 'en',
+      notificationsEnabled: (settings['notificationsEnabled'] as bool?) ?? true,
+      themeMode: (settings['themeMode'] as String?) ?? 'Light',
+    );
+  }
+}
+
+String _languageLabel(String language) {
+  return switch (language) {
+    'id' => 'Indonesian',
+    'zh' => 'Chinese (Traditional)',
+    'ja' => 'Japanese',
+    'ko' => 'Korean',
+    'es' => 'Spanish',
+    'fr' => 'French',
+    'de' => 'German',
+    'it' => 'Italian',
+    'pt' => 'Portuguese',
+    'th' => 'Thai',
+    'vi' => 'Vietnamese',
+    'ar' => 'Arabic',
+    _ => 'English (US)',
+  };
+}
+
+String _profileText(String language, String key) {
+  const values = {
+    'en': {
+      'welcome': 'Welcome Back',
+      'currentTrip': 'Current trip',
+      'language': 'Language',
+      'notifications': 'Notifications',
+      'theme': 'Theme',
+      'interests': 'Travel interests',
+      'account': 'Account',
+      'saveProfile': 'Save profile',
+      'signOut': 'Sign out',
+      'deleteAccount': 'Delete account',
+      'deleteQuestion': 'Delete account?',
+      'deleteMessage':
+          'This deletes your sign-in account, profile, and saved trips. This cannot be undone.',
+      'cancel': 'Cancel',
+      'delete': 'Delete',
+      'close': 'Close',
+      'saveInterests': 'Save interests',
+      'customInterest': 'Add custom interest',
+      'interestBlocked': 'That interest is not allowed.',
+      'on': 'On',
+      'off': 'Off',
+    },
+    'id': {
+      'welcome': 'Selamat Datang',
+      'currentTrip': 'Perjalanan aktif',
+      'language': 'Bahasa',
+      'notifications': 'Notifikasi',
+      'theme': 'Tema',
+      'interests': 'Minat perjalanan',
+      'account': 'Akun',
+      'saveProfile': 'Simpan profil',
+      'signOut': 'Keluar',
+      'deleteAccount': 'Hapus akun',
+      'deleteQuestion': 'Hapus akun?',
+      'deleteMessage':
+          'Ini menghapus akun masuk, profil, dan perjalanan tersimpan. Tidak dapat dibatalkan.',
+      'cancel': 'Batal',
+      'delete': 'Hapus',
+      'close': 'Tutup',
+      'saveInterests': 'Simpan minat',
+      'customInterest': 'Tambah minat',
+      'interestBlocked': 'Minat itu tidak diizinkan.',
+      'on': 'Aktif',
+      'off': 'Mati',
+    },
+    'zh': {
+      'welcome': '歡迎回來',
+      'currentTrip': '目前旅程',
+      'language': '語言',
+      'notifications': '通知',
+      'theme': '主題',
+      'interests': '旅行興趣',
+      'account': '帳戶',
+      'saveProfile': '儲存個人資料',
+      'signOut': '登出',
+      'deleteAccount': '刪除帳戶',
+      'deleteQuestion': '刪除帳戶？',
+      'deleteMessage': '這會刪除登入帳戶、個人資料和已儲存旅程，且無法復原。',
+      'cancel': '取消',
+      'delete': '刪除',
+      'close': '關閉',
+      'saveInterests': '儲存興趣',
+      'customInterest': '新增興趣',
+      'interestBlocked': '不允許使用此興趣。',
+      'on': '開',
+      'off': '關',
+    },
+  };
+  if (!values.containsKey(language)) return values['en']![key] ?? key;
+  return values[language]?[key] ?? values['en']![key] ?? key;
+}
+
+String _localizedSettingValue(String language, String key) {
+  if (language == 'en' || language == 'id' || language == 'zh') {
+    return _profileText(language, key);
+  }
+  return _profileText('en', key);
+}
+
+String? _cleanInterest(String value) {
+  final cleaned = value
+      .trim()
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .replaceAll(RegExp(r'[^a-zA-Z0-9 &/+-]'), '');
+  if (cleaned.length < 2 || cleaned.length > 28) return null;
+  return cleaned
+      .split(' ')
+      .map(
+        (part) => part.isEmpty
+            ? part
+            : '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
+      )
+      .join(' ');
+}
+
+bool _isBlockedInterest(String value) {
+  final normalized = value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+  const blocked = [
+    'porn',
+    'porno',
+    'sex',
+    'sexy',
+    'nude',
+    'nudes',
+    'nudity',
+    'xxx',
+    'hentai',
+    'fetish',
+    'escort',
+    'brothel',
+    'prostitute',
+    'prostitution',
+    'onlyfans',
+    'nsfw',
+  ];
+  return blocked.any(normalized.contains);
 }
 
 class Trip {
@@ -816,6 +985,16 @@ class TravelDataRepository {
   Future<void> saveTrip(String accountId, Trip trip) => _tripsRef(
     accountId,
   ).doc(trip.id).set(trip.toMap(), SetOptions(merge: true));
+
+  Future<void> deleteUserData(String accountId) async {
+    final trips = await _tripsRef(accountId).get();
+    final batch = _firestore.batch();
+    for (final trip in trips.docs) {
+      batch.delete(trip.reference);
+    }
+    batch.delete(_userDoc(accountId));
+    await batch.commit();
+  }
 }
 
 class PlaceSuggestion {
@@ -1500,7 +1679,13 @@ const mockKyotoTrip = Trip(
 );
 
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({required this.onComplete, super.key});
+  const OnboardingScreen({
+    required this.account,
+    required this.onComplete,
+    super.key,
+  });
+
+  final AuthenticatedAccount account;
   final ValueChanged<UserProfile> onComplete;
 
   @override
@@ -1508,8 +1693,6 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  final _name = TextEditingController();
-  final _email = TextEditingController();
   final _selected = <String>{};
 
   @override
@@ -1529,29 +1712,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const IconBadge(icon: Icons.travel_explore_rounded, size: 64),
           const SizedBox(height: 24),
           Text(
-            'Plan smarter adventures',
+            'Pick your travel style',
             style: Theme.of(
               context,
             ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 10),
           const Text(
-            'Tell the AI agent who you are so every route, packing list, and budget starts with your style.',
+            'Choose the things you usually look for so routes, packing lists, and budgets start closer to your taste.',
             style: TextStyle(
               color: _secondary,
               fontWeight: FontWeight.w700,
               height: 1.45,
             ),
-          ),
-          const SizedBox(height: 24),
-          TextField(
-            controller: _name,
-            decoration: const InputDecoration(labelText: 'Name'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _email,
-            decoration: const InputDecoration(labelText: 'Email'),
           ),
           const SizedBox(height: 22),
           const LabelText('Travel interests'),
@@ -1587,10 +1760,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             icon: Icons.arrow_forward_rounded,
             onPressed: () => widget.onComplete(
               UserProfile(
-                name: _name.text.trim().isEmpty
-                    ? 'Explorer'
-                    : _name.text.trim(),
-                email: _email.text.trim(),
+                name: widget.account.name,
+                email: widget.account.email ?? '',
                 interests: _selected.toList(),
               ),
             ),
@@ -1645,7 +1816,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const LabelText('Welcome Back'),
+                    LabelText(_profileText(widget.user.language, 'welcome')),
                     Text(
                       '${widget.user.name.isEmpty ? 'Explorer' : widget.user.name}!',
                       style: Theme.of(context).textTheme.headlineSmall
@@ -1654,10 +1825,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ),
-              const Stack(
+              Stack(
                 children: [
-                  IconSquare(icon: Icons.notifications_none_rounded),
-                  Positioned(right: 10, top: 10, child: Dot()),
+                  const IconSquare(icon: Icons.notifications_none_rounded),
+                  if (widget.user.notificationsEnabled)
+                    const Positioned(right: 10, top: 10, child: Dot()),
                 ],
               ),
             ],
@@ -1672,9 +1844,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             },
           ),
           const SizedBox(height: 10),
-          const AlertRail(),
+          if (widget.user.notificationsEnabled) const AlertRail(),
           const SizedBox(height: 28),
-          const LabelText('Current trip'),
+          LabelText(_profileText(widget.user.language, 'currentTrip')),
           const SizedBox(height: 8),
           CurrentTripCard(trip: trip, onTap: () => widget.onOpenTrip(trip)),
           const SizedBox(height: 22),
@@ -5049,9 +5221,20 @@ class ChatMessageModel {
 }
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({required this.user, required this.onSave, super.key});
+  const ProfileScreen({
+    required this.account,
+    required this.user,
+    required this.onSave,
+    required this.onSignOut,
+    required this.onDeleteAccount,
+    super.key,
+  });
+
+  final AuthenticatedAccount account;
   final UserProfile user;
   final ValueChanged<UserProfile> onSave;
+  final Future<void> Function() onSignOut;
+  final Future<void> Function() onDeleteAccount;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -5061,9 +5244,271 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late final TextEditingController _name = TextEditingController(
     text: widget.user.name,
   );
-  late final TextEditingController _email = TextEditingController(
-    text: widget.user.email,
+
+  var _isSigningOut = false;
+  var _isDeleting = false;
+  late final Set<String> _interests = {...widget.user.interests};
+  late var _language = widget.user.language;
+  late var _notificationsEnabled = widget.user.notificationsEnabled;
+  late var _themeMode = widget.user.themeMode;
+  final _customInterest = TextEditingController();
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _customInterest.dispose();
+    super.dispose();
+  }
+
+  Future<void> _signOut() async {
+    setState(() => _isSigningOut = true);
+    await widget.onSignOut();
+  }
+
+  UserProfile _draftProfile() => UserProfile(
+    name: _name.text,
+    email: widget.account.email ?? widget.user.email,
+    interests: _interests.toList(),
+    language: _language,
+    notificationsEnabled: _notificationsEnabled,
+    themeMode: _themeMode,
   );
+
+  void _saveDraft() => widget.onSave(_draftProfile());
+
+  Future<void> _editInterests() async {
+    final draft = {..._interests};
+    String? interestError;
+    final selected = await showModalBottomSheet<Set<String>>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Travel interests',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final tag in const [
+                      'Culture',
+                      'Food',
+                      'Nature',
+                      'Shopping',
+                      'Museums',
+                      'Hidden Gems',
+                    ])
+                      ChoiceChip(
+                        label: Text(tag),
+                        selected: draft.contains(tag),
+                        selectedColor: _accent,
+                        labelStyle: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: _primary,
+                        ),
+                        onSelected: (_) => setSheetState(
+                          () => draft.contains(tag)
+                              ? draft.remove(tag)
+                              : draft.add(tag),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _customInterest,
+                        decoration: InputDecoration(
+                          labelText: _profileText(_language, 'customInterest'),
+                          errorText: interestError,
+                        ),
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _addCustomInterest(
+                          draft,
+                          setSheetState,
+                          (message) => interestError = message,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      tooltip: _profileText(_language, 'customInterest'),
+                      onPressed: () => _addCustomInterest(
+                        draft,
+                        setSheetState,
+                        (message) => interestError = message,
+                      ),
+                      icon: const Icon(Icons.add_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                PrimaryButton(
+                  label: _profileText(_language, 'saveInterests'),
+                  icon: Icons.check_rounded,
+                  onPressed: () => Navigator.of(context).pop(draft),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (selected != null) {
+      setState(() {
+        _interests
+          ..clear()
+          ..addAll(selected);
+      });
+      _saveDraft();
+    }
+  }
+
+  void _addCustomInterest(
+    Set<String> draft,
+    void Function(void Function()) setSheetState,
+    ValueChanged<String?> setError,
+  ) {
+    final interest = _cleanInterest(_customInterest.text);
+    setSheetState(() {
+      if (interest == null || _isBlockedInterest(interest)) {
+        setError(_profileText(_language, 'interestBlocked'));
+        return;
+      }
+      setError(null);
+      draft.add(interest);
+      _customInterest.clear();
+    });
+  }
+
+  void _pickLanguage() {
+    _showSettingPicker<String>(
+      title: _profileText(_language, 'language'),
+      value: _language,
+      options: const [
+        'en',
+        'id',
+        'zh',
+        'ja',
+        'ko',
+        'es',
+        'fr',
+        'de',
+        'it',
+        'pt',
+        'th',
+        'vi',
+        'ar',
+      ],
+      labelFor: _languageLabel,
+      onSelected: (value) {
+        setState(() => _language = value);
+        _saveDraft();
+      },
+    );
+  }
+
+  void _pickTheme() {
+    _showSettingPicker<String>(
+      title: _profileText(_language, 'theme'),
+      value: _themeMode,
+      options: const ['Light', 'Dark'],
+      labelFor: (value) => value,
+      onSelected: (value) {
+        setState(() => _themeMode = value);
+        _saveDraft();
+      },
+    );
+  }
+
+  Future<void> _showSettingPicker<T>({
+    required String title,
+    required T value,
+    required List<T> options,
+    required String Function(T value) labelFor,
+    required ValueChanged<T> onSelected,
+  }) async {
+    final selected = await showModalBottomSheet<T>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          children: [
+            Text(
+              title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 8),
+            for (final option in options)
+              ListTile(
+                onTap: () => Navigator.of(context).pop(option),
+                title: Text(labelFor(option)),
+                trailing: option == value
+                    ? const Icon(Icons.check_rounded, color: _primary)
+                    : null,
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null) onSelected(selected);
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_profileText(_language, 'deleteQuestion')),
+        content: Text(_profileText(_language, 'deleteMessage')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(_profileText(_language, 'cancel')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(_profileText(_language, 'delete')),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete != true) return;
+    setState(() => _isDeleting = true);
+    try {
+      await widget.onDeleteAccount();
+    } catch (error) {
+      if (!mounted) return;
+      final message = error.toString().contains('requires-recent-login')
+          ? 'Please sign out, sign in again, then delete the account.'
+          : 'Could not delete account. $error';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      setState(() => _isDeleting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -5084,42 +5529,82 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const SizedBox(height: 22),
+          Center(
+            child: Text(
+              widget.account.contactLabel,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: _secondary,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(height: 22),
           TextField(
             controller: _name,
             decoration: const InputDecoration(labelText: 'Name'),
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _email,
-            decoration: const InputDecoration(labelText: 'Email'),
-          ),
           const SizedBox(height: 18),
-          const SettingsTile(
+          SettingsTile(
             icon: Icons.language_rounded,
-            title: 'Language',
-            value: 'English (US)',
+            title: _profileText(_language, 'language'),
+            value: _languageLabel(_language),
+            onTap: _pickLanguage,
           ),
-          const SettingsTile(
+          SettingsTile(
             icon: Icons.notifications_none_rounded,
-            title: 'Notifications',
-            value: 'On',
+            title: _profileText(_language, 'notifications'),
+            value: _notificationsEnabled
+                ? _localizedSettingValue(_language, 'on')
+                : _localizedSettingValue(_language, 'off'),
+            onTap: () {
+              setState(() => _notificationsEnabled = !_notificationsEnabled);
+              _saveDraft();
+            },
           ),
-          const SettingsTile(
+          SettingsTile(
             icon: Icons.palette_outlined,
-            title: 'Theme',
-            value: 'Light',
+            title: _profileText(_language, 'theme'),
+            value: _themeMode,
+            onTap: _pickTheme,
+          ),
+          SettingsTile(
+            icon: Icons.explore_outlined,
+            title: _profileText(_language, 'interests'),
+            value: _interests.isEmpty ? 'None' : '${_interests.length}',
+            onTap: _editInterests,
           ),
           const SizedBox(height: 20),
           PrimaryButton(
-            label: 'Save profile',
+            label: _profileText(_language, 'saveProfile'),
             icon: Icons.check_rounded,
-            onPressed: () => widget.onSave(
-              UserProfile(
-                name: _name.text,
-                email: _email.text,
-                interests: widget.user.interests,
-              ),
+            onPressed: _saveDraft,
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _isSigningOut ? null : _signOut,
+            icon: _isSigningOut
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.logout_rounded),
+            label: Text(_profileText(_language, 'signOut').toUpperCase()),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.redAccent,
+              side: const BorderSide(color: Colors.redAccent),
             ),
+            onPressed: _isDeleting ? null : _confirmDeleteAccount,
+            icon: _isDeleting
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.delete_outline_rounded),
+            label: Text(_profileText(_language, 'deleteAccount').toUpperCase()),
           ),
         ],
       ),
@@ -5542,7 +6027,7 @@ class ScreenScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
-      color: _bg,
+      color: Theme.of(context).scaffoldBackgroundColor,
       child: Padding(
         padding: EdgeInsets.only(bottom: bottomPadding),
         child: child,
@@ -6379,35 +6864,48 @@ class SettingsTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.value,
+    this.onTap,
     super.key,
   });
   final IconData icon;
   final String title;
   final String value;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: GlassPanel(
-        child: Row(
-          children: [
-            IconBadge(icon: icon, size: 44),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: onTap,
+          child: GlassPanel(
+            child: Row(
+              children: [
+                IconBadge(icon: icon, size: 44),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (onTap != null) ...[
+                  const SizedBox(width: 6),
+                  const Icon(Icons.chevron_right_rounded, color: _secondary),
+                ],
+              ],
             ),
-            Text(
-              value,
-              style: const TextStyle(
-                color: _secondary,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
