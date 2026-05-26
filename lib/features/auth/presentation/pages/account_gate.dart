@@ -4,31 +4,51 @@ import 'package:flutter/material.dart';
 import '../../../travel_clone/travel_agent_app.dart';
 import '../../data/account_auth_service.dart';
 
-class AccountGate extends StatelessWidget {
+class AccountGate extends StatefulWidget {
   AccountGate({super.key, AccountAuthService? authService})
     : _authService = authService ?? AccountAuthService();
 
   final AccountAuthService _authService;
 
   @override
+  State<AccountGate> createState() => _AccountGateState();
+}
+
+class _AccountGateState extends State<AccountGate> {
+  late final Future<AuthenticatedAccount?> _rememberedAccount;
+
+  AccountAuthService get _authService => widget._authService;
+
+  @override
+  void initState() {
+    super.initState();
+    _rememberedAccount = _authService.restoreRememberedAccount();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return StreamBuilder<AuthenticatedAccount?>(
-      stream: _authService.accountChanges,
-      initialData: _authService.currentAccount,
+    return FutureBuilder<AuthenticatedAccount?>(
+      future: _rememberedAccount,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
           return const _AuthFrame(child: _AuthLoading());
         }
 
-        final account = snapshot.data;
-        if (account == null) {
-          return _AuthFrame(
-            child: AccountSignInPage(authService: _authService),
-          );
-        }
+        return StreamBuilder<AuthenticatedAccount?>(
+          stream: _authService.accountChanges,
+          initialData: snapshot.data,
+          builder: (context, snapshot) {
+            final account = snapshot.data;
+            if (account == null) {
+              return _AuthFrame(
+                child: AccountSignInPage(authService: _authService),
+              );
+            }
 
-        return TravelAgentApp(key: ValueKey(account.uid), account: account);
+            return TravelAgentApp(key: ValueKey(account.uid), account: account);
+          },
+        );
       },
     );
   }
@@ -55,6 +75,7 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
   var _mode = _AccountMode.email;
   var _isCreatingAccount = false;
   var _isBusy = false;
+  var _rememberMe = true;
   String? _message;
   PhoneSignInSession? _phoneSession;
 
@@ -107,6 +128,7 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
           password: _password.text,
         );
       }
+      await widget.authService.rememberCurrentSession(remember: _rememberMe);
     });
   }
 
@@ -136,7 +158,11 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
 
     await _runAuth(() async {
       final session = await widget.authService.sendPhoneCode(phone);
-      if (!mounted || session.autoVerified) return;
+      if (!mounted) return;
+      if (session.autoVerified) {
+        await widget.authService.rememberCurrentSession(remember: _rememberMe);
+        return;
+      }
       setState(() {
         _phoneSession = session;
         _smsCode.clear();
@@ -155,11 +181,12 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
       return;
     }
 
-    await _runAuth(() {
-      return widget.authService.confirmPhoneCode(
+    await _runAuth(() async {
+      await widget.authService.confirmPhoneCode(
         session: session,
         smsCode: _smsCode.text,
       );
+      await widget.authService.rememberCurrentSession(remember: _rememberMe);
     });
   }
 
@@ -226,6 +253,22 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                   ? _buildEmailForm()
                   : _buildPhoneForm(),
             ),
+            const SizedBox(height: 10),
+            CheckboxListTile(
+              value: _rememberMe,
+              onChanged: _isBusy
+                  ? null
+                  : (value) => setState(() => _rememberMe = value ?? true),
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'Remember me for 30 days',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: const Text(
+                'Useful while debugging. Sign out anytime from Profile.',
+              ),
+            ),
             const SizedBox(height: 18),
             Row(
               children: [
@@ -247,7 +290,12 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             OutlinedButton.icon(
               onPressed: _isBusy
                   ? null
-                  : () => _runAuth(widget.authService.signInWithGoogle),
+                  : () => _runAuth(() async {
+                      await widget.authService.signInWithGoogle();
+                      await widget.authService.rememberCurrentSession(
+                        remember: _rememberMe,
+                      );
+                    }),
               icon: const Icon(Icons.g_mobiledata_rounded, size: 30),
               label: const Text('Continue with Google'),
             ),

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthenticatedAccount {
   const AuthenticatedAccount({
@@ -90,6 +91,9 @@ class AccountAuthService {
   final FirebaseAuth _auth;
 
   static Future<void>? _googleInit;
+  static const rememberDuration = Duration(days: 30);
+  static const _rememberedUidKey = 'account_auth.remembered_uid';
+  static const _rememberUntilKey = 'account_auth.remember_until';
 
   Stream<AuthenticatedAccount?> get accountChanges {
     return _auth.userChanges().map((user) {
@@ -102,6 +106,43 @@ class AccountAuthService {
     final user = _auth.currentUser;
     if (user == null) return null;
     return AuthenticatedAccount.fromFirebaseUser(user);
+  }
+
+  Future<AuthenticatedAccount?> restoreRememberedAccount() async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+
+    final prefs = await SharedPreferences.getInstance();
+    final rememberedUid = prefs.getString(_rememberedUidKey);
+    final rememberUntilText = prefs.getString(_rememberUntilKey);
+    final rememberUntil = rememberUntilText == null
+        ? null
+        : DateTime.tryParse(rememberUntilText)?.toUtc();
+    final isRemembered =
+        rememberedUid == user.uid &&
+        rememberUntil != null &&
+        DateTime.now().toUtc().isBefore(rememberUntil);
+
+    if (!isRemembered) {
+      await signOut();
+      return null;
+    }
+
+    return AuthenticatedAccount.fromFirebaseUser(user);
+  }
+
+  Future<void> rememberCurrentSession({required bool remember}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final user = _auth.currentUser;
+    if (!remember || user == null) {
+      await prefs.remove(_rememberedUidKey);
+      await prefs.remove(_rememberUntilKey);
+      return;
+    }
+
+    final rememberUntil = DateTime.now().toUtc().add(rememberDuration);
+    await prefs.setString(_rememberedUidKey, user.uid);
+    await prefs.setString(_rememberUntilKey, rememberUntil.toIso8601String());
   }
 
   Future<void> signInWithEmail({
@@ -238,6 +279,9 @@ class AccountAuthService {
   }
 
   Future<void> signOut() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_rememberedUidKey);
+    await prefs.remove(_rememberUntilKey);
     await _auth.signOut();
     if (!kIsWeb) {
       try {

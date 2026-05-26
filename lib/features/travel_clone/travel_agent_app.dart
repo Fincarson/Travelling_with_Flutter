@@ -931,9 +931,11 @@ IconData _iconByName(String? name) {
   switch (name) {
     case 'train':
       return Icons.train_rounded;
+    case 'food':
     case 'restaurant':
       return Icons.restaurant_rounded;
     case 'hiking':
+    case 'nature':
       return Icons.hiking_rounded;
     case 'temple':
       return Icons.temple_buddhist_rounded;
@@ -951,6 +953,8 @@ IconData _iconByName(String? name) {
       return Icons.local_cafe_rounded;
     case 'shopping':
       return Icons.shopping_bag_rounded;
+    case 'place':
+      return Icons.place_rounded;
     default:
       return Icons.place_rounded;
   }
@@ -1177,7 +1181,29 @@ class TravelAssistantService {
     String flightConfirmation = '',
   }) async {
     if (!LocalApiKeys.hasOpenAiApiKey) {
-      throw Exception('OpenAI API key is missing.');
+      final callable = _functions.httpsCallable('generateTripPlan');
+      final response = await callable.call<Map<String, dynamic>>({
+        'place': {
+          'name': place.name,
+          'formatted': place.formatted,
+          'latitude': place.latitude,
+          'longitude': place.longitude,
+          'placeId': place.placeId,
+          'country': place.country,
+        },
+        'startDate': _dateKey(startDate),
+        'endDate': _dateKey(endDate),
+        'budget': budget,
+        'groupType': groupType,
+        'preferences': preferences,
+        'currency': currency,
+        'airline': airline,
+        'flightConfirmation': flightConfirmation,
+      });
+      final data = response.data['plan'] is Map
+          ? Map<String, dynamic>.from(response.data['plan'] as Map)
+          : response.data;
+      return GeneratedTripPlan.fromMap(data);
     }
 
     final response = await http.post(
@@ -1234,7 +1260,7 @@ class TravelAssistantService {
         }),
         'store': false,
         'reasoning': {'effort': 'low'},
-        'text': {'verbosity': 'low'},
+        'text': {'verbosity': 'low', 'format': _tripPlanTextFormat()},
       }),
     );
 
@@ -1254,7 +1280,27 @@ class TravelAssistantService {
     required List<CreateTripChatMessage> history,
   }) async {
     if (!LocalApiKeys.hasOpenAiApiKey) {
-      throw Exception('OpenAI API key is missing.');
+      final callable = _functions.httpsCallable('createTripReply');
+      final response = await callable.call<Map<String, dynamic>>({
+        'message': message,
+        'currentDraft': currentDraft.toAiMap(),
+        'history': history.reversed
+            .take(8)
+            .toList()
+            .reversed
+            .map(
+              (item) => {
+                'role': item.fromUser ? 'user' : 'assistant',
+                'text': item.text,
+              },
+            )
+            .toList(),
+        'today': _dateKey(DateTime.now()),
+      });
+      final data = response.data['reply'] is Map
+          ? Map<String, dynamic>.from(response.data['reply'] as Map)
+          : response.data;
+      return CreateTripAiResponse.fromMap(data, fallbackDraft: currentDraft);
     }
 
     final response = await http.post(
@@ -1273,13 +1319,16 @@ class TravelAssistantService {
           'Widget option values must be short user messages the app can send back.',
           'Required final fields: destination, startDate, endDate, budget, groupType.',
           'Dates must be ISO yyyy-MM-dd. groupType must be Solo, Friends, Family, or Tour.',
+          'If the user names a currency, set currency to USD, TWD, IDR, JPY, or EUR.',
           'Return only JSON matching the schema.',
         ].join(' '),
         'input': jsonEncode({
           'latestMessage': message,
           'currentDraft': currentDraft.toAiMap(),
-          'recentHistory': history
+          'recentHistory': history.reversed
               .take(8)
+              .toList()
+              .reversed
               .map(
                 (item) => {
                   'role': item.fromUser ? 'user' : 'assistant',
@@ -1293,75 +1342,7 @@ class TravelAssistantService {
         'reasoning': {'effort': 'low'},
         'text': {
           'verbosity': 'low',
-          'format': {
-            'type': 'json_schema',
-            'name': 'create_trip_reply',
-            'strict': true,
-            'schema': {
-              'type': 'object',
-              'additionalProperties': false,
-              'properties': {
-                'message': {'type': 'string'},
-                'draft': {
-                  'type': 'object',
-                  'additionalProperties': false,
-                  'properties': {
-                    'destination': {
-                      'type': ['string', 'null'],
-                    },
-                    'startDate': {
-                      'type': ['string', 'null'],
-                    },
-                    'endDate': {
-                      'type': ['string', 'null'],
-                    },
-                    'budget': {
-                      'type': ['string', 'null'],
-                    },
-                    'groupType': {
-                      'type': ['string', 'null'],
-                    },
-                    'preferences': {
-                      'type': 'array',
-                      'items': {'type': 'string'},
-                    },
-                  },
-                  'required': [
-                    'destination',
-                    'startDate',
-                    'endDate',
-                    'budget',
-                    'groupType',
-                    'preferences',
-                  ],
-                },
-                'widget': {
-                  'type': ['object', 'null'],
-                  'additionalProperties': false,
-                  'properties': {
-                    'title': {'type': 'string'},
-                    'options': {
-                      'type': 'array',
-                      'minItems': 2,
-                      'maxItems': 4,
-                      'items': {
-                        'type': 'object',
-                        'additionalProperties': false,
-                        'properties': {
-                          'label': {'type': 'string'},
-                          'value': {'type': 'string'},
-                          'description': {'type': 'string'},
-                        },
-                        'required': ['label', 'value', 'description'],
-                      },
-                    },
-                  },
-                  'required': ['title', 'options'],
-                },
-              },
-              'required': ['message', 'draft', 'widget'],
-            },
-          },
+          'format': {..._createTripReplyTextFormat()},
         },
       }),
     );
@@ -1375,6 +1356,165 @@ class TravelAssistantService {
     return CreateTripAiResponse.fromMap(data, fallbackDraft: currentDraft);
   }
 }
+
+Map<String, dynamic> _tripPlanTextFormat() => {
+  'type': 'json_schema',
+  'name': 'generated_trip_plan',
+  'strict': true,
+  'schema': {
+    'type': 'object',
+    'additionalProperties': false,
+    'properties': {
+      'items': {
+        'type': 'array',
+        'minItems': 3,
+        'maxItems': 12,
+        'items': {
+          'type': 'object',
+          'additionalProperties': false,
+          'properties': {
+            'day': {'type': 'integer'},
+            'time': {'type': 'string'},
+            'activity': {'type': 'string'},
+            'type': {
+              'type': 'string',
+              'enum': [
+                'place',
+                'food',
+                'restaurant',
+                'walk',
+                'museum',
+                'beach',
+                'shopping',
+                'train',
+                'flight',
+                'hotel',
+                'cafe',
+                'hiking',
+                'temple',
+              ],
+            },
+            'cost': {'type': 'integer'},
+          },
+          'required': ['day', 'time', 'activity', 'type', 'cost'],
+        },
+      },
+      'bookings': {
+        'type': 'array',
+        'maxItems': 4,
+        'items': {
+          'type': 'object',
+          'additionalProperties': false,
+          'properties': {
+            'title': {'type': 'string'},
+            'date': {'type': 'string'},
+            'time': {'type': 'string'},
+            'reference': {'type': 'string'},
+            'cost': {'type': 'integer'},
+            'type': {
+              'type': 'string',
+              'enum': ['hotel', 'flight', 'train', 'place'],
+            },
+          },
+          'required': ['title', 'date', 'time', 'reference', 'cost', 'type'],
+        },
+      },
+      'checklist': {
+        'type': 'array',
+        'maxItems': 5,
+        'items': {
+          'type': 'object',
+          'additionalProperties': false,
+          'properties': {
+            'category': {'type': 'string'},
+            'items': {
+              'type': 'array',
+              'minItems': 1,
+              'maxItems': 8,
+              'items': {'type': 'string'},
+            },
+          },
+          'required': ['category', 'items'],
+        },
+      },
+    },
+    'required': ['items', 'bookings', 'checklist'],
+  },
+};
+
+Map<String, dynamic> _createTripReplyTextFormat() => {
+  'type': 'json_schema',
+  'name': 'create_trip_reply',
+  'strict': true,
+  'schema': {
+    'type': 'object',
+    'additionalProperties': false,
+    'properties': {
+      'message': {'type': 'string'},
+      'draft': {
+        'type': 'object',
+        'additionalProperties': false,
+        'properties': {
+          'destination': {
+            'type': ['string', 'null'],
+          },
+          'startDate': {
+            'type': ['string', 'null'],
+          },
+          'endDate': {
+            'type': ['string', 'null'],
+          },
+          'budget': {
+            'type': ['string', 'null'],
+          },
+          'currency': {
+            'type': ['string', 'null'],
+          },
+          'groupType': {
+            'type': ['string', 'null'],
+          },
+          'preferences': {
+            'type': 'array',
+            'items': {'type': 'string'},
+          },
+        },
+        'required': [
+          'destination',
+          'startDate',
+          'endDate',
+          'budget',
+          'currency',
+          'groupType',
+          'preferences',
+        ],
+      },
+      'widget': {
+        'type': ['object', 'null'],
+        'additionalProperties': false,
+        'properties': {
+          'title': {'type': 'string'},
+          'options': {
+            'type': 'array',
+            'minItems': 2,
+            'maxItems': 4,
+            'items': {
+              'type': 'object',
+              'additionalProperties': false,
+              'properties': {
+                'label': {'type': 'string'},
+                'value': {'type': 'string'},
+                'description': {'type': 'string'},
+              },
+              'required': ['label', 'value', 'description'],
+            },
+          },
+        },
+        'required': ['title', 'options'],
+      },
+    },
+    'required': ['message', 'draft', 'widget'],
+  },
+};
 
 class GeneratedTripPlan {
   const GeneratedTripPlan({
@@ -1936,6 +2076,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _isThinking = false;
   var _usedFallbackPlan = false;
   var _pendingDraftConfirmed = false;
+  String? _lastAiError;
   DateTime _startDate = DateTime.now().add(const Duration(days: 30));
   DateTime _endDate = DateTime.now().add(const Duration(days: 35));
   String? _selectedImage;
@@ -1955,7 +2096,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     'Walking',
   ];
 
-  static const _currencyOptions = ['USD', 'TWD', 'JPY', 'EUR'];
+  static const _currencyOptions = ['USD', 'TWD', 'IDR', 'JPY', 'EUR'];
+  static const _twdToIdrFallbackRate = 562.0;
 
   static const _galleryOptions = [
     'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=600',
@@ -2136,15 +2278,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     setState(() {
       _mode = 3;
       _formError = null;
-      if (_chatMessages.isEmpty) {
-        _chatMessages.add(
-          const CreateTripChatMessage(
-            fromUser: false,
-            text:
-                'Hello, where would you like to go? Pick a suggestion or describe the full trip.',
-          ),
-        );
-      }
     });
   }
 
@@ -2182,15 +2315,19 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     try {
       aiResponse = await _assistant.createTripReply(
         message: text,
-        currentDraft: _pendingDraft ?? const CreateTripDraft(),
+        currentDraft: _pendingDraft ?? CreateTripDraft(currency: _currency),
         history: _chatMessages,
       );
-    } catch (_) {
+      _lastAiError = null;
+    } catch (error) {
       final fallbackDraft = _parseTripDraft(text, _pendingDraft);
       final missing = _missingDraftFields(fallbackDraft);
+      final conversionMessage = _conversionMessage(text, fallbackDraft);
+      _lastAiError = _friendlyAiError(error);
       aiResponse = CreateTripAiResponse(
         message: missing.isEmpty
-            ? 'I prepared a draft plan. Review it first, then confirm it when you are ready.'
+            ? conversionMessage ??
+                  'I prepared a draft plan. Review it first, then confirm it when you are ready.'
             : _questionForMissingField(missing.first),
         draft: fallbackDraft,
         widget: _fallbackWidgetForMissingField(
@@ -2204,14 +2341,33 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     setState(() {
       _isThinking = false;
       _pendingDraft = aiResponse.draft;
+      final currency = aiResponse.draft.currency;
+      if (currency != null) _currency = currency;
       _chatMessages.add(
         CreateTripChatMessage(
           fromUser: false,
-          text: aiResponse.message,
+          text: _lastAiError == null
+              ? aiResponse.message
+              : '${_lastAiError!}\n\n${aiResponse.message}',
           widget: aiResponse.widget,
         ),
       );
     });
+  }
+
+  String _friendlyAiError(Object error) {
+    final text = error.toString();
+    if (text.contains('not-found') ||
+        text.contains('NOT_FOUND') ||
+        text.contains('generateTripPlan') ||
+        text.contains('createTripReply')) {
+      return 'AI is not connected yet. Deploy the Firebase Functions or run Flutter with an OPENAI_API_KEY dart define. I used the local draft parser for now.';
+    }
+    if (text.contains('unauthenticated') ||
+        text.contains('permission-denied')) {
+      return 'AI could not be reached because the backend rejected the request. I used the local draft parser for now.';
+    }
+    return 'AI is unavailable right now. I used the local draft parser for now.';
   }
 
   CreateTripDraft _parseTripDraft(String text, CreateTripDraft? current) {
@@ -2229,7 +2385,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           caseSensitive: false,
         ).firstMatch(text);
     if (destinationMatch != null) {
-      destination = destinationMatch.group(1)?.trim().replaceAll(',', '');
+      final candidate = destinationMatch.group(1)?.trim().replaceAll(',', '');
+      if (_normalCurrencyCode(candidate) == null) {
+        destination = candidate;
+      }
     }
 
     String? groupType = draft.groupType;
@@ -2238,7 +2397,17 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     if (lower.contains('family')) groupType = 'Family';
     if (lower.contains('tour')) groupType = 'Tour';
 
+    final currency = _currencyFromText(text) ?? draft.currency ?? _currency;
     String? budget = draft.budget;
+    final currencyAmount = _currencyAmountFromText(text);
+    if (currencyAmount != null) {
+      budget = _budgetInCurrency(
+        amount: currencyAmount.amount,
+        fromCurrency: currencyAmount.currency,
+        toCurrency: currency,
+      ).toString();
+    }
+
     final budgetMatch = RegExp(
       r'\$\s?(\d{2,7})|(?:budget|under|around|about|usd|dollars?)\D{0,12}(\d{2,7})|(\d{2,7})\s?(?:usd|dollars?)',
       caseSensitive: false,
@@ -2248,25 +2417,35 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         budgetMatch?.group(2) ??
         budgetMatch?.group(3) ??
         budget;
+    _currency = currency;
 
     DateTime? startDate = draft.startDate;
     DateTime? endDate = draft.endDate;
+    final isoRangeMatch = RegExp(
+      r'(\d{4}-\d{2}-\d{2})\s*(?:-|to|until|through)\s*(\d{4}-\d{2}-\d{2})',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (isoRangeMatch != null) {
+      startDate = _parseIsoDate(isoRangeMatch.group(1));
+      endDate = _parseIsoDate(isoRangeMatch.group(2));
+    }
+
     final rangeMatch = RegExp(
       r'(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?\s*(?:-|to|until|through)\s*(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?',
       caseSensitive: false,
     ).firstMatch(text);
-    if (rangeMatch != null) {
+    if (rangeMatch != null && (startDate == null || endDate == null)) {
       final year = _fullYear(rangeMatch.group(3) ?? rangeMatch.group(6));
       final endYear = _fullYear(rangeMatch.group(6) ?? rangeMatch.group(3));
-      startDate = DateTime(
+      startDate = _dateFromNumericParts(
         year,
-        int.parse(rangeMatch.group(2)!),
         int.parse(rangeMatch.group(1)!),
+        int.parse(rangeMatch.group(2)!),
       );
-      endDate = DateTime(
+      endDate = _dateFromNumericParts(
         endYear,
-        int.parse(rangeMatch.group(5)!),
         int.parse(rangeMatch.group(4)!),
+        int.parse(rangeMatch.group(5)!),
       );
     }
 
@@ -2296,14 +2475,70 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       startDate: startDate,
       endDate: endDate,
       budget: budget,
+      currency: currency,
       groupType: groupType,
       preferences: preferenceAdds.toList(),
     );
   }
 
+  ({int amount, String currency})? _currencyAmountFromText(String text) {
+    final match = RegExp(
+      r'(?:\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b\s*([0-9][0-9,._]*))|(?:([0-9][0-9,._]*)\s*\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b)',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (match == null) return null;
+
+    final currency = _normalCurrencyCode(match.group(1) ?? match.group(4));
+    final amountText = match.group(2) ?? match.group(3);
+    final amount = int.tryParse(
+      (amountText ?? '').replaceAll(RegExp(r'[^0-9]'), ''),
+    );
+    if (currency == null || amount == null) return null;
+    return (amount: amount, currency: currency);
+  }
+
+  String? _currencyFromText(String text) {
+    final match = RegExp(
+      r'\b(idr|rupiah|rp|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    return _normalCurrencyCode(match?.group(1));
+  }
+
+  int _budgetInCurrency({
+    required int amount,
+    required String fromCurrency,
+    required String toCurrency,
+  }) {
+    if (fromCurrency == toCurrency) return amount;
+    if (fromCurrency == 'TWD' && toCurrency == 'IDR') {
+      return (amount * _twdToIdrFallbackRate).round();
+    }
+    if (fromCurrency == 'IDR' && toCurrency == 'TWD') {
+      return (amount / _twdToIdrFallbackRate).round();
+    }
+    return amount;
+  }
+
+  String? _conversionMessage(String text, CreateTripDraft draft) {
+    final source = _currencyAmountFromText(text);
+    final target = draft.currency;
+    final budget = int.tryParse((draft.budget ?? '').replaceAll(',', ''));
+    if (source == null || target == null || budget == null) return null;
+    if (source.currency == target) return null;
+    return '${source.currency} ${_formatWholeNumber(source.amount)} is about '
+        '$target ${_formatWholeNumber(budget)}. I added that as your trip budget.';
+  }
+
   int _fullYear(String? value) {
-    final year = int.tryParse(value ?? '') ?? 2026;
+    final year = int.tryParse(value ?? '') ?? DateTime.now().year;
     return year < 100 ? 2000 + year : year;
+  }
+
+  DateTime _dateFromNumericParts(int year, int first, int second) {
+    final month = second > 12 && first <= 12 ? first : second;
+    final day = second > 12 && first <= 12 ? second : first;
+    return DateTime(year, month, day);
   }
 
   List<String> _missingDraftFields(CreateTripDraft draft) {
@@ -2320,9 +2555,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       case 'destination':
         return 'Where would you like to go? Pick one or type your own.';
       case 'dates':
-        return 'Choose a date range, like 15/05/2026 to 20/05/2026, or say 5 days.';
+        return 'Choose a date range, like 15/06/2026 to 20/06/2026, or say 5 days.';
       case 'total budget':
-        return 'What total budget should I plan around?';
+        return 'What total budget should I plan around in $_currency?';
       case 'who is coming':
         return 'Who is coming with you: Solo, Friends, Family, or Tour?';
       default:
@@ -2354,46 +2589,44 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ],
         );
       case 'dates':
-        return const CreateTripChoiceWidget(
+        final base = DateTime.now().add(const Duration(days: 21));
+        final threeDayEnd = base.add(const Duration(days: 2));
+        final fiveDayEnd = base.add(const Duration(days: 4));
+        final sevenDayEnd = base.add(const Duration(days: 6));
+        return CreateTripChoiceWidget(
           title: 'Trip length',
           options: [
             CreateTripChoiceOption(
               label: '3 days',
-              value: '15/05/2026 to 17/05/2026',
+              value: '${_dateKey(base)} to ${_dateKey(threeDayEnd)}',
               description: 'Fast weekend plan',
             ),
             CreateTripChoiceOption(
               label: '5 days',
-              value: '15/05/2026 to 19/05/2026',
+              value: '${_dateKey(base)} to ${_dateKey(fiveDayEnd)}',
               description: 'Balanced pace',
             ),
             CreateTripChoiceOption(
               label: '7 days',
-              value: '15/05/2026 to 21/05/2026',
+              value: '${_dateKey(base)} to ${_dateKey(sevenDayEnd)}',
               description: 'More room for day trips',
             ),
           ],
         );
       case 'total budget':
-        return const CreateTripChoiceWidget(
+        final options = _budgetOptionsForCurrency(_currency);
+        return CreateTripChoiceWidget(
           title: 'Total budget',
-          options: [
-            CreateTripChoiceOption(
-              label: '\$1,500',
-              value: 'budget 1500 dollars',
-              description: 'Lean and efficient',
-            ),
-            CreateTripChoiceOption(
-              label: '\$3,500',
-              value: 'budget 3500 dollars',
-              description: 'Comfortable mid-range',
-            ),
-            CreateTripChoiceOption(
-              label: '\$5,000',
-              value: 'budget 5000 dollars',
-              description: 'More flexible picks',
-            ),
-          ],
+          options: options
+              .map(
+                (option) => CreateTripChoiceOption(
+                  label:
+                      '${option.currency} ${_formatWholeNumber(option.amount)}',
+                  value: 'budget ${option.amount} ${option.currency}',
+                  description: option.description,
+                ),
+              )
+              .toList(),
         );
       case 'who is coming':
         return const CreateTripChoiceWidget(
@@ -2421,6 +2654,69 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
   }
 
+  List<({String currency, int amount, String description})>
+  _budgetOptionsForCurrency(String currency) {
+    switch (currency) {
+      case 'IDR':
+        return const [
+          (currency: 'IDR', amount: 8000000, description: 'Lean and efficient'),
+          (
+            currency: 'IDR',
+            amount: 16860000,
+            description: 'Comfortable mid-range',
+          ),
+          (
+            currency: 'IDR',
+            amount: 25000000,
+            description: 'More flexible picks',
+          ),
+        ];
+      case 'TWD':
+        return const [
+          (currency: 'TWD', amount: 15000, description: 'Lean and efficient'),
+          (
+            currency: 'TWD',
+            amount: 30000,
+            description: 'Comfortable mid-range',
+          ),
+          (currency: 'TWD', amount: 50000, description: 'More flexible picks'),
+        ];
+      case 'JPY':
+        return const [
+          (currency: 'JPY', amount: 75000, description: 'Lean and efficient'),
+          (
+            currency: 'JPY',
+            amount: 175000,
+            description: 'Comfortable mid-range',
+          ),
+          (currency: 'JPY', amount: 250000, description: 'More flexible picks'),
+        ];
+      case 'EUR':
+        return const [
+          (currency: 'EUR', amount: 1400, description: 'Lean and efficient'),
+          (currency: 'EUR', amount: 3200, description: 'Comfortable mid-range'),
+          (currency: 'EUR', amount: 4600, description: 'More flexible picks'),
+        ];
+      default:
+        return const [
+          (currency: 'USD', amount: 1500, description: 'Lean and efficient'),
+          (currency: 'USD', amount: 3500, description: 'Comfortable mid-range'),
+          (currency: 'USD', amount: 5000, description: 'More flexible picks'),
+        ];
+    }
+  }
+
+  String _formatWholeNumber(int value) {
+    final text = value.toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < text.length; i++) {
+      final remaining = text.length - i;
+      buffer.write(text[i]);
+      if (remaining > 1 && remaining % 3 == 1) buffer.write(',');
+    }
+    return buffer.toString();
+  }
+
   void _applyDraftToForm(CreateTripDraft draft) {
     final destination = draft.destination?.trim();
     if (destination != null && destination.isNotEmpty) {
@@ -2433,6 +2729,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     if (endDate != null) _endDate = endDate;
     final budget = draft.budget?.trim();
     if (budget != null && budget.isNotEmpty) _budget.text = budget;
+    final currency = draft.currency;
+    if (currency != null && _currencyOptions.contains(currency)) {
+      _currency = currency;
+    }
     final groupType = draft.groupType;
     if (groupType != null && groupType.isNotEmpty) _group = groupType;
     _preferences
@@ -2688,6 +2988,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                 budget: budget.text
                                     .replaceAll(RegExp(r'\D'), '')
                                     .trim(),
+                                currency: draft.currency ?? _currency,
                                 groupType: groupType,
                                 preferences: preferences.toList(),
                               ),
@@ -2723,6 +3024,29 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
   }
 
+  Future<PlaceSuggestion?> _resolvePlaceForGeneration(String typed) async {
+    if (_selectedPlace != null) return _selectedPlace;
+    if (typed.length < 2) return null;
+
+    try {
+      final suggestions = await _places.searchDestinations(typed);
+      if (suggestions.isNotEmpty) {
+        return suggestions.first;
+      }
+    } catch (_) {
+      if (_mode == 1) rethrow;
+    }
+
+    if (_mode == 1) return null;
+    return PlaceSuggestion(
+      name: typed,
+      formatted: typed,
+      latitude: 0,
+      longitude: 0,
+      placeId: typed.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-'),
+    );
+  }
+
   Future<void> _generateTrip() async {
     final budget =
         int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
@@ -2732,20 +3056,16 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
 
     final typedDestination = _destination.text.trim();
-    final place =
-        _selectedPlace ??
-        (typedDestination.length >= 2
-            ? PlaceSuggestion(
-                name: typedDestination,
-                formatted: typedDestination,
-                latitude: 0,
-                longitude: 0,
-                placeId: typedDestination.toLowerCase().replaceAll(
-                  RegExp(r'[^a-z0-9]+'),
-                  '-',
-                ),
-              )
-            : null);
+    PlaceSuggestion? place;
+    try {
+      place = await _resolvePlaceForGeneration(typedDestination);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _formError = 'Could not verify that destination right now: $error';
+      });
+      return;
+    }
     if (place == null) {
       setState(() {
         _formError = _mode == 1
@@ -2843,8 +3163,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       Trip(
         id: 't-${DateTime.now().millisecondsSinceEpoch}',
         destination: mockKyotoTrip.destination,
-        startDate: '2026-05-15',
-        endDate: '2026-05-20',
+        startDate: '2026-06-15',
+        endDate: '2026-06-20',
         budget: mockKyotoTrip.budget,
         spent: 0,
         groupType: mockKyotoTrip.groupType,
@@ -2911,6 +3231,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       final pendingDraft = _pendingDraft;
       final canUsePlan =
           pendingDraft != null && _missingDraftFields(pendingDraft).isEmpty;
+      final isChatFresh = _chatMessages.isEmpty;
       return ScreenScaffold(
         child: Column(
           children: [
@@ -2925,7 +3246,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(24, 10, 24, 18),
                 children: [
-                  if (_chatMessages.length <= 1) ...[
+                  if (isChatFresh) ...[
                     const AnimatedGlobe(),
                     const SizedBox(height: 16),
                     Text(
@@ -2967,6 +3288,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                               )
                               .toList(),
                     ),
+                    const SizedBox(height: 18),
                   ],
                   for (final message in _chatMessages)
                     CreateTripChatTurn(
@@ -2995,7 +3317,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_chatMessages.length <= 1)
+                    if (isChatFresh)
                       SizedBox(
                         height: 38,
                         child: ListView(
@@ -3004,7 +3326,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                             CreateTripPromptChip(
                               label: 'Kyoto',
                               prompt:
-                                  'Trip to Kyoto with friends, 15/05/2026 to 20/05/2026, budget \$3500',
+                                  'Trip to Kyoto with friends, 15/06/2026 to 20/06/2026, budget \$3500',
                               onTap: _sendCreateTripChat,
                             ),
                             CreateTripPromptChip(
@@ -3022,7 +3344,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                           ],
                         ),
                       ),
-                    if (_chatMessages.length <= 1) const SizedBox(height: 8),
+                    if (isChatFresh) const SizedBox(height: 8),
                     Row(
                       children: [
                         Expanded(
@@ -3363,6 +3685,7 @@ class CreateTripDraft {
     this.startDate,
     this.endDate,
     this.budget,
+    this.currency,
     this.groupType,
     this.preferences = const [],
   });
@@ -3371,6 +3694,7 @@ class CreateTripDraft {
   final DateTime? startDate;
   final DateTime? endDate;
   final String? budget;
+  final String? currency;
   final String? groupType;
   final List<String> preferences;
 
@@ -3379,6 +3703,7 @@ class CreateTripDraft {
     DateTime? startDate,
     DateTime? endDate,
     String? budget,
+    String? currency,
     String? groupType,
     List<String>? preferences,
   }) {
@@ -3387,6 +3712,7 @@ class CreateTripDraft {
       startDate: startDate ?? this.startDate,
       endDate: endDate ?? this.endDate,
       budget: budget ?? this.budget,
+      currency: currency ?? this.currency,
       groupType: groupType ?? this.groupType,
       preferences: preferences ?? this.preferences,
     );
@@ -3397,6 +3723,7 @@ class CreateTripDraft {
     'startDate': startDate == null ? null : _dateKey(startDate!),
     'endDate': endDate == null ? null : _dateKey(endDate!),
     'budget': budget,
+    'currency': currency,
     'groupType': groupType,
     'preferences': preferences,
   };
@@ -3410,6 +3737,7 @@ class CreateTripDraft {
       startDate: _parseIsoDate(map['startDate']) ?? fallback.startDate,
       endDate: _parseIsoDate(map['endDate']) ?? fallback.endDate,
       budget: _nonEmptyString(map['budget']) ?? fallback.budget,
+      currency: _normalCurrencyCode(map['currency']) ?? fallback.currency,
       groupType: _normalGroupType(map['groupType']) ?? fallback.groupType,
       preferences: ((map['preferences'] as List<dynamic>?) ?? const [])
           .whereType<String>()
@@ -3511,6 +3839,31 @@ String? _nonEmptyString(Object? value) {
   if (value is! String) return null;
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+String? _normalCurrencyCode(Object? value) {
+  final text = _nonEmptyString(value)?.toLowerCase();
+  if (text == null) return null;
+  if (text == 'idr' || text == 'rp' || text == 'rupiah') return 'IDR';
+  if (text == 'twd' || text == 'ntd' || text == r'nt$' || text == 'nt') {
+    return 'TWD';
+  }
+  if (text == 'usd' || text == 'dollar' || text == 'dollars') return 'USD';
+  if (text == 'jpy' || text == 'yen') return 'JPY';
+  if (text == 'eur' || text == 'euro' || text == 'euros') return 'EUR';
+  return null;
+}
+
+String _formatAmountText(String value) {
+  final digits = value.replaceAll(RegExp(r'[^0-9]'), '');
+  if (digits.isEmpty) return value;
+  final buffer = StringBuffer();
+  for (var i = 0; i < digits.length; i++) {
+    final remaining = digits.length - i;
+    buffer.write(digits[i]);
+    if (remaining > 1 && remaining % 3 == 1) buffer.write(',');
+  }
+  return buffer.toString();
 }
 
 DateTime? _parseIsoDate(Object? value) {
@@ -3765,7 +4118,9 @@ class CreateTripDraftCard extends StatelessWidget {
               Expanded(
                 child: DraftStat(
                   label: 'Budget',
-                  value: draft.budget == null ? 'TBD' : '\$${draft.budget}',
+                  value: draft.budget == null
+                      ? 'TBD'
+                      : '${draft.currency ?? 'USD'} ${_formatAmountText(draft.budget!)}',
                 ),
               ),
               const SizedBox(width: 8),
@@ -4109,7 +4464,6 @@ List<BudgetCategory> _defaultBudgetCategories({
   required List<ItineraryItem> items,
   required List<Booking> bookings,
 }) {
-  final bookingCost = bookings.fold<int>(0, (total, item) => total + item.cost);
   final activityCost = items.fold<int>(0, (total, item) => total + item.cost);
   final transportCost = bookings
       .where(
@@ -4125,37 +4479,38 @@ List<BudgetCategory> _defaultBudgetCategories({
       .where((item) => item.type == Icons.restaurant_rounded)
       .fold<int>(0, (total, item) => total + item.cost);
   final fallback = math.max(0, budget - transportCost - stayCost - foodCost);
+  final otherActual = math.max(0, actual);
 
   return [
     BudgetCategory(
       id: 'transport',
       category: 'Transport',
       planned: math.max(transportCost, (budget * .25).round()),
-      actual: transportCost,
+      actual: 0,
     ),
     BudgetCategory(
       id: 'stay',
       category: 'Stay',
       planned: math.max(stayCost, (budget * .28).round()),
-      actual: stayCost,
+      actual: 0,
     ),
     BudgetCategory(
       id: 'food',
       category: 'Food',
       planned: math.max(foodCost, (budget * .18).round()),
-      actual: foodCost,
+      actual: 0,
     ),
     BudgetCategory(
       id: 'activities',
       category: 'Activities',
       planned: math.max(activityCost, fallback ~/ 2),
-      actual: math.max(0, activityCost - foodCost),
+      actual: 0,
     ),
     BudgetCategory(
       id: 'other',
       category: 'Other',
       planned: math.max(0, budget ~/ 10),
-      actual: math.max(0, actual - bookingCost - activityCost),
+      actual: otherActual,
     ),
   ];
 }
@@ -5739,12 +6094,18 @@ class BudgetScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final categories = [
-      ('Transport', 1000, 850, _primary),
-      ('Stay', 900, 420, _secondary),
-      ('Food', 650, 45, _accent),
-      ('Activities', 550, 15, Colors.blueGrey.shade200),
-    ];
+    final categories = trip.budgetCategories.isEmpty
+        ? _defaultBudgetCategories(
+            budget: trip.budget,
+            actual: trip.spent,
+            items: trip.items,
+            bookings: trip.bookings,
+          )
+        : trip.budgetCategories;
+    final actual = categories.fold<int>(
+      0,
+      (total, item) => total + item.actual,
+    );
     return SimpleToolScreen(
       title: 'Budget',
       onBack: onBack,
@@ -5755,7 +6116,7 @@ class BudgetScreen extends StatelessWidget {
             children: [
               const LabelText('Spent'),
               Text(
-                '\$${trip.spent} of \$${trip.budget}',
+                '${trip.currency} $actual of ${trip.currency} ${trip.budget}',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.w900,
                 ),
@@ -5764,7 +6125,9 @@ class BudgetScreen extends StatelessWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(99),
                 child: LinearProgressIndicator(
-                  value: trip.spent / trip.budget,
+                  value: trip.budget == 0
+                      ? 0
+                      : (actual / trip.budget).clamp(0.0, 1.0),
                   minHeight: 10,
                   backgroundColor: _primary.withValues(alpha: .12),
                   color: _accent,
@@ -5773,15 +6136,29 @@ class BudgetScreen extends StatelessWidget {
             ],
           ),
         ),
-        for (final item in categories)
+        for (final category in categories)
           BudgetBar(
-            name: item.$1,
-            planned: item.$2,
-            actual: item.$3,
-            color: item.$4,
+            name: category.category,
+            planned: category.planned,
+            actual: category.actual,
+            currency: trip.currency,
+            color: _budgetColor(category.id),
           ),
       ],
     );
+  }
+}
+
+Color _budgetColor(String id) {
+  switch (id) {
+    case 'transport':
+      return _primary;
+    case 'stay':
+      return _secondary;
+    case 'food':
+      return _accent;
+    default:
+      return Colors.blueGrey.shade200;
   }
 }
 
@@ -6101,8 +6478,8 @@ class CurrentTripCard extends StatelessWidget {
               Expanded(
                 child: StatCard(
                   title: 'Budget',
-                  value: '\$${trip.spent}',
-                  detail: 'of \$${trip.budget}',
+                  value: '${trip.currency} ${trip.spent}',
+                  detail: 'of ${trip.currency} ${trip.budget}',
                   trailing: Icons.add_rounded,
                 ),
               ),
@@ -6917,12 +7294,14 @@ class BudgetBar extends StatelessWidget {
     required this.name,
     required this.planned,
     required this.actual,
+    required this.currency,
     required this.color,
     super.key,
   });
   final String name;
   final int planned;
   final int actual;
+  final String currency;
   final Color color;
 
   @override
@@ -6940,7 +7319,7 @@ class BudgetBar extends StatelessWidget {
                 ),
               ),
               Text(
-                '\$$actual / \$$planned',
+                '$currency $actual / $currency $planned',
                 style: const TextStyle(fontWeight: FontWeight.w800),
               ),
             ],
@@ -6949,7 +7328,7 @@ class BudgetBar extends StatelessWidget {
           ClipRRect(
             borderRadius: BorderRadius.circular(99),
             child: LinearProgressIndicator(
-              value: actual / planned,
+              value: planned == 0 ? 0 : (actual / planned).clamp(0.0, 1.0),
               minHeight: 9,
               backgroundColor: color.withValues(alpha: .18),
               color: color,
