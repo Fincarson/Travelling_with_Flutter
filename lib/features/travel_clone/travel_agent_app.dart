@@ -7,7 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
-import '../../core/config/local_api_keys.dart';
+import '../../core/config/api_keys.dart';
 import '../auth/data/account_auth_service.dart';
 
 const _primary = Color(0xFF355872);
