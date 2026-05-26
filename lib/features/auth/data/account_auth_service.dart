@@ -91,6 +91,9 @@ class AccountAuthService {
   final FirebaseAuth _auth;
 
   static Future<void>? _googleInit;
+  static const _googleServerClientId = String.fromEnvironment(
+    'GOOGLE_SERVER_CLIENT_ID',
+  );
   static const rememberDuration = Duration(days: 30);
   static const _rememberedUidKey = 'account_auth.remembered_uid';
   static const _rememberUntilKey = 'account_auth.remember_until';
@@ -261,8 +264,7 @@ class AccountAuthService {
       return;
     }
 
-    _googleInit ??= GoogleSignIn.instance.initialize();
-    await _googleInit;
+    await _initializeGoogleSignIn();
 
     if (!GoogleSignIn.instance.supportsAuthenticate()) {
       throw const AccountAuthException(
@@ -285,8 +287,7 @@ class AccountAuthService {
     await _auth.signOut();
     if (!kIsWeb) {
       try {
-        _googleInit ??= GoogleSignIn.instance.initialize();
-        await _googleInit;
+        await _initializeGoogleSignIn();
         await GoogleSignIn.instance.signOut();
       } catch (_) {
         // Firebase sign-out is the source of truth for this app.
@@ -320,5 +321,13 @@ class AccountAuthService {
         'Please sign out, sign in again, then delete the account.',
       );
     }
+  }
+
+  static Future<void> _initializeGoogleSignIn() {
+    return _googleInit ??= GoogleSignIn.instance.initialize(
+      serverClientId: _googleServerClientId.isEmpty
+          ? null
+          : _googleServerClientId,
+    );
   }
 }
