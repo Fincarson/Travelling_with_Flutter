@@ -76,10 +76,7 @@ class _LanguageButton extends StatelessWidget {
     final isSelected = locale == selectedLocale;
 
     if (isSelected) {
-      return AppButton(
-        text: label,
-        onPressed: () {},
-      );
+      return AppButton(text: label, onPressed: () {});
     }
 
     return AppButton.outlined(

@@ -18,6 +18,7 @@ class ResponsivePage extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final horizontalPadding = switch (constraints.maxWidth) {
+            < 360 => 12.0,
             < AppBreakpoints.compact => AppSpacing.screenCompact,
             < AppBreakpoints.medium => AppSpacing.screenMedium,
             _ => AppSpacing.screenExpanded,

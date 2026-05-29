@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
 
-enum AppButtonVariant {
-  filled,
-  outlined,
-  text,
-}
+enum AppButtonVariant { filled, outlined, text }
 
 class AppButton extends StatelessWidget {
   static const _minimumSize = Size(64, 48);
@@ -45,54 +41,39 @@ class AppButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final child = _ButtonContent(
-      text: text,
-      icon: icon,
-    );
+    final child = _ButtonContent(text: text, icon: icon);
 
     final button = switch (variant) {
       AppButtonVariant.filled => FilledButton(
-          onPressed: onPressed,
-          style: FilledButton.styleFrom(
-            minimumSize: _minimumSize,
-            shape: _shape,
-          ),
-          child: child,
-        ),
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(minimumSize: _minimumSize, shape: _shape),
+        child: child,
+      ),
       AppButtonVariant.outlined => OutlinedButton(
-          onPressed: onPressed,
-          style: OutlinedButton.styleFrom(
-            minimumSize: _minimumSize,
-            shape: _shape,
-          ),
-          child: child,
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          minimumSize: _minimumSize,
+          shape: _shape,
         ),
+        child: child,
+      ),
       AppButtonVariant.text => TextButton(
-          onPressed: onPressed,
-          style: TextButton.styleFrom(
-            minimumSize: _minimumSize,
-            shape: _shape,
-          ),
-          child: child,
-        ),
+        onPressed: onPressed,
+        style: TextButton.styleFrom(minimumSize: _minimumSize, shape: _shape),
+        child: child,
+      ),
     };
 
     if (!fullWidth) {
       return button;
     }
 
-    return SizedBox(
-      width: double.infinity,
-      child: button,
-    );
+    return SizedBox(width: double.infinity, child: button);
   }
 }
 
 class _ButtonContent extends StatelessWidget {
-  const _ButtonContent({
-    required this.text,
-    this.icon,
-  });
+  const _ButtonContent({required this.text, this.icon});
 
   final String text;
   final IconData? icon;
@@ -100,7 +81,7 @@ class _ButtonContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (icon == null) {
-      return Text(text);
+      return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
     }
 
     return Row(
@@ -109,7 +90,9 @@ class _ButtonContent extends StatelessWidget {
       children: [
         Icon(icon, size: 18),
         const SizedBox(width: 8),
-        Flexible(child: Text(text)),
+        Flexible(
+          child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
       ],
     );
   }

@@ -17,35 +17,51 @@ class ProfileViewSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ProfilePhotoButton.viewing(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final photo = ProfilePhotoButton.viewing(
           photoUrl: profile.photoUrl,
           onPressed: onPhotoPressed,
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                profile.displayName,
-                style: textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+        );
+        final details = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              profile.displayName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w700,
               ),
-              if (profile.bio.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  profile.bio,
-                  style: textTheme.bodyMedium,
-                ),
-              ],
+            ),
+            if (profile.bio.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                profile.bio,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.bodyMedium,
+              ),
             ],
-          ),
-        ),
-      ],
+          ],
+        );
+
+        if (constraints.maxWidth < 360) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [photo, const SizedBox(height: 16), details],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            photo,
+            const SizedBox(width: 16),
+            Expanded(child: details),
+          ],
+        );
+      },
     );
   }
 }

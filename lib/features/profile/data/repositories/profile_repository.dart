@@ -4,9 +4,6 @@ class ProfileRepository {
   Future<UserProfile> loadCurrentProfile() async {
     await Future.delayed(const Duration(milliseconds: 350));
 
-    return const UserProfile(
-      displayName: 'User123',
-      bio: '',
-    );
+    return const UserProfile(displayName: 'User123', bio: '');
   }
 }

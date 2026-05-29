@@ -1,0 +1,51 @@
+library travel_agent_app;
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+import '../core/config/api_keys.dart';
+import '../core/debug/app_debug_logger.dart';
+import '../core/performance/app_performance.dart';
+import '../core/theme/app_theme.dart';
+import '../features/auth/data/account_auth_service.dart';
+
+part 'travel_agent_shell.dart';
+part '../features/profile/domain/entities/user_profile.dart';
+part '../features/itinerary/domain/entities/trip.dart';
+part '../features/itinerary/domain/entities/create_trip_draft.dart';
+part '../features/itinerary/data/repositories/travel_data_repository.dart';
+part '../features/search/data/models/place_suggestion.dart';
+part '../features/search/data/services/geoapify_places_service.dart';
+part '../features/chat/data/services/travel_assistant_service.dart';
+part '../features/itinerary/data/mock/travel_seed_data.dart';
+part '../features/itinerary/data/mock/trip_generation_helpers.dart';
+part '../features/auth/presentation/pages/onboarding_page.dart';
+part '../features/home/presentation/pages/home_page.dart';
+part '../features/itinerary/presentation/pages/new_itinerary_page.dart';
+part '../features/itinerary/presentation/pages/itinerary_page.dart';
+part '../features/itinerary/presentation/pages/trips_page.dart';
+part '../features/chat/presentation/pages/chat_page.dart';
+part '../features/profile/presentation/pages/profile_page.dart';
+part '../features/settings/presentation/pages/performance_settings_page.dart';
+part '../features/itinerary/presentation/pages/travel_tools_pages.dart';
+part '../features/itinerary/presentation/widgets/create_trip_widgets.dart';
+part '../shared/navigation/app_navigation_shell.dart';
+part '../shared/widgets/travel_scaffold_widgets.dart';
+part '../features/itinerary/presentation/widgets/trip_widgets.dart';
+part '../features/search/presentation/widgets/discovery_widgets.dart';
+part '../features/chat/presentation/widgets/message_bubble.dart';
+part '../features/profile/presentation/widgets/settings_tile.dart';
+part '../features/itinerary/presentation/widgets/budget_widgets.dart';
+part '../shared/widgets/travel_common_widgets.dart';
+part '../shared/widgets/travel_painters.dart';
+
+const _primary = TravelAgentColors.primary;
+const _secondary = TravelAgentColors.secondary;
+const _accent = TravelAgentColors.accent;
+const _bg = TravelAgentColors.background;

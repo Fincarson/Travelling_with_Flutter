@@ -9,6 +9,67 @@ class AppColors {
   static const Color signalCyan = Color(0xff62f4ff);
 }
 
+class TravelAgentColors {
+  static const Color primary = Color(0xFF355872);
+  static const Color secondary = Color(0xFF7AAACE);
+  static const Color accent = Color(0xFF9CD5FF);
+  static const Color background = Color(0xFFF7F8F0);
+}
+
+class TravelAgentTheme {
+  static ThemeData light() {
+    final base = ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: TravelAgentColors.primary,
+        primary: TravelAgentColors.primary,
+        secondary: TravelAgentColors.secondary,
+        surface: Colors.white,
+      ),
+      scaffoldBackgroundColor: TravelAgentColors.background,
+      fontFamily: 'Roboto',
+    );
+
+    return base.copyWith(
+      textTheme: base.textTheme.apply(
+        bodyColor: TravelAgentColors.primary,
+        displayColor: TravelAgentColors.primary,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(color: Color(0xFFEFF3F6)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(color: Color(0xFFEFF3F6)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(
+            color: TravelAgentColors.accent,
+            width: 2,
+          ),
+        ),
+      ),
+    );
+  }
+
+  static ThemeData dark() {
+    final base = light();
+    return base.copyWith(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: const Color(0xFF17232A),
+      colorScheme: base.colorScheme.copyWith(
+        brightness: Brightness.dark,
+        surface: const Color(0xFF22313A),
+      ),
+    );
+  }
+}
+
 class MaterialTheme {
   const MaterialTheme(this.textTheme);
 
@@ -127,9 +188,7 @@ class MaterialTheme {
           backgroundColor: colorScheme.primary,
           foregroundColor: colorScheme.onPrimary,
           minimumSize: const Size.fromHeight(48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
@@ -137,23 +196,16 @@ class MaterialTheme {
           backgroundColor: colorScheme.primary,
           foregroundColor: colorScheme.onPrimary,
           minimumSize: const Size.fromHeight(48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: colorScheme.surfaceContainerLow,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(
-            color: colorScheme.primary,
-            width: 2,
-          ),
+          borderSide: BorderSide(color: colorScheme.primary, width: 2),
         ),
       ),
       cardTheme: CardThemeData(

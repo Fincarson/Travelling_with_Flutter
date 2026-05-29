@@ -1,13 +1,1623 @@
-import 'package:flutter/material.dart';
+part of travel_agent_app;
 
-import '../../../../core/localization/app_localizations_extension.dart';
-import '../../../../shared/widgets/page_placeholder.dart';
+class CreateTripScreen extends StatefulWidget {
+  const CreateTripScreen({
+    required this.onBack,
+    required this.onGenerate,
+    super.key,
+  });
+  final VoidCallback onBack;
+  final ValueChanged<Trip> onGenerate;
 
-class NewItineraryPage extends StatelessWidget {
-  const NewItineraryPage({super.key});
+  @override
+  State<CreateTripScreen> createState() => _CreateTripScreenState();
+}
+
+class _CreateTripScreenState extends State<CreateTripScreen> {
+  final _places = GeoapifyPlacesService();
+  final _assistant = TravelAssistantService();
+  final _destination = TextEditingController(text: 'Tokyo');
+  final _budget = TextEditingController(text: '3500');
+  final _chatInput = TextEditingController();
+  final _customPreference = TextEditingController();
+  final _airline = TextEditingController();
+  final _flightConfirmation = TextEditingController();
+  Timer? _searchTimer;
+  PlaceSuggestion? _selectedPlace;
+  List<PlaceSuggestion> _placeSuggestions = const [];
+  final List<CreateTripChatMessage> _chatMessages = [];
+  CreateTripDraft? _pendingDraft;
+  var _group = 'Friends';
+  var _currency = 'USD';
+  var _mode = 0;
+  String? _formError;
+  var _isSearching = false;
+  var _isGenerating = false;
+  var _isThinking = false;
+  var _usedFallbackPlan = false;
+  var _pendingDraftConfirmed = false;
+  String? _lastAiError;
+  DateTime _startDate = DateTime.now().add(const Duration(days: 30));
+  DateTime _endDate = DateTime.now().add(const Duration(days: 35));
+  String? _selectedImage;
+  final Set<String> _preferences = {'Culture', 'Food'};
+
+  static const _preferenceOptions = [
+    'Culture',
+    'Food',
+    'Nature',
+    'Shopping',
+    'Relax',
+    'Nightlife',
+    'Museums',
+    'Adventure',
+    'Budget-friendly',
+    'Luxury',
+    'Walking',
+  ];
+
+  static const _currencyOptions = ['USD', 'TWD', 'IDR', 'JPY', 'EUR'];
+  static const _twdToIdrFallbackRate = 562.0;
+
+  static const _galleryOptions = [
+    'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=600',
+    'https://images.unsplash.com/photo-1542051841857-5f90071e7989?q=80&w=600',
+    'https://images.unsplash.com/photo-1492571350019-22de08371fd3?q=80&w=600',
+    'https://images.unsplash.com/photo-1464817739973-0128fe72aa1b?q=80&w=600',
+    'https://images.unsplash.com/photo-1454391304352-2bf4678b1a7a?q=80&w=600',
+    'https://images.unsplash.com/photo-1533105079780-92b9be482077?q=80&w=600',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _searchPlaces(_destination.text);
+  }
+
+  @override
+  void dispose() {
+    _searchTimer?.cancel();
+    _destination.dispose();
+    _budget.dispose();
+    _chatInput.dispose();
+    _customPreference.dispose();
+    _airline.dispose();
+    _flightConfirmation.dispose();
+    super.dispose();
+  }
+
+  void _schedulePlaceSearch(String value) {
+    _searchTimer?.cancel();
+    setState(() {
+      _selectedPlace = null;
+      _formError = null;
+      _isSearching = value.trim().length >= 3;
+    });
+    _searchTimer = Timer(
+      const Duration(milliseconds: 450),
+      () => _searchPlaces(value),
+    );
+  }
+
+  Future<void> _searchPlaces(String value) async {
+    final query = value.trim();
+    if (query.length < 3) {
+      if (!mounted) return;
+      setState(() {
+        _isSearching = false;
+        _placeSuggestions = const [];
+      });
+      return;
+    }
+
+    try {
+      final suggestions = await _places.searchDestinations(query);
+      if (!mounted || _destination.text.trim() != query) return;
+      setState(() {
+        _placeSuggestions = suggestions;
+        _isSearching = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isSearching = false;
+        _formError = 'Could not search places right now: $error';
+      });
+    }
+  }
+
+  void _selectPlace(PlaceSuggestion place) {
+    setState(() {
+      _selectedPlace = place;
+      _destination.text = place.name;
+      _placeSuggestions = const [];
+      _formError = null;
+    });
+  }
+
+  Future<void> _pickStartDate() async {
+    final today = DateTime.now();
+    final firstDate = DateTime(today.year, today.month, today.day);
+    final initialDate = _startDate.isBefore(firstDate) ? firstDate : _startDate;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: DateTime(2028, 12, 31),
+    );
+    if (date == null) return;
+    setState(() {
+      _startDate = date;
+      if (_endDate.isBefore(_startDate)) {
+        _endDate = _startDate.add(const Duration(days: 4));
+      }
+      _formError = null;
+    });
+  }
+
+  Future<void> _pickEndDate() async {
+    final today = DateTime.now();
+    final firstDate = _startDate.isBefore(today)
+        ? DateTime(today.year, today.month, today.day)
+        : _startDate;
+    final initialDate = _endDate.isBefore(firstDate) ? firstDate : _endDate;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: DateTime(2028, 12, 31),
+    );
+    if (date == null) return;
+    setState(() {
+      _endDate = date;
+      _formError = null;
+    });
+  }
+
+  void _togglePreference(String preference) {
+    setState(() {
+      if (_preferences.contains(preference)) {
+        _preferences.remove(preference);
+      } else {
+        _preferences.add(preference);
+      }
+      _formError = null;
+    });
+  }
+
+  void _addCustomPreference() {
+    final tag = _customPreference.text.trim();
+    if (tag.isEmpty) return;
+    setState(() {
+      _preferences.add(tag);
+      _customPreference.clear();
+      _formError = null;
+    });
+  }
+
+  Future<void> _showImagePicker() async {
+    final image = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 620),
+            child: Container(
+              margin: EdgeInsets.all(_responsiveHorizontalPadding(context)),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(28),
+              ),
+              child: SizedBox(
+                height: math.min(MediaQuery.sizeOf(context).height * .7, 520),
+                child: GridView.builder(
+                  itemCount: _galleryOptions.length,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: MediaQuery.sizeOf(context).width < 380
+                        ? 1
+                        : 2,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    childAspectRatio: 1.35,
+                  ),
+                  itemBuilder: (context, index) {
+                    final option = _galleryOptions[index];
+                    return GestureDetector(
+                      onTap: () => Navigator.of(context).pop(option),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: Image.network(
+                          option,
+                          fit: BoxFit.cover,
+                          filterQuality: PerformanceScope.maybeSettingsOf(
+                            context,
+                          ).filterQuality,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (image == null) return;
+    setState(() => _selectedImage = image);
+  }
+
+  void _startAiChat() {
+    setState(() {
+      _mode = 3;
+      _formError = null;
+    });
+  }
+
+  Future<void> _sendCreateTripChat([String? value]) async {
+    final text = (value ?? _chatInput.text).trim();
+    if (text.isEmpty || _isThinking || _isGenerating) return;
+
+    _chatInput.clear();
+
+    if (_pendingDraft != null &&
+        RegExp(
+          r'^(confirm|confirmed|approve|approved|yes|use it|looks good)$',
+          caseSensitive: false,
+        ).hasMatch(text)) {
+      setState(() {
+        _pendingDraftConfirmed = true;
+        _chatMessages.add(CreateTripChatMessage(fromUser: true, text: text));
+        _chatMessages.add(
+          const CreateTripChatMessage(
+            fromUser: false,
+            text: 'Confirmed. I will use this draft for the itinerary.',
+          ),
+        );
+      });
+      return;
+    }
+
+    setState(() {
+      _isThinking = true;
+      _pendingDraftConfirmed = false;
+      _chatMessages.add(CreateTripChatMessage(fromUser: true, text: text));
+    });
+
+    CreateTripAiResponse aiResponse;
+    try {
+      aiResponse = await _assistant.createTripReply(
+        message: text,
+        currentDraft: _pendingDraft ?? CreateTripDraft(currency: _currency),
+        history: _chatMessages,
+      );
+      _lastAiError = null;
+    } catch (error) {
+      final fallbackDraft = _parseTripDraft(text, _pendingDraft);
+      final missing = _missingDraftFields(fallbackDraft);
+      final conversionMessage = _conversionMessage(text, fallbackDraft);
+      _lastAiError = _friendlyAiError(error);
+      aiResponse = CreateTripAiResponse(
+        message: missing.isEmpty
+            ? conversionMessage ??
+                  'I prepared a draft plan. Review it first, then confirm it when you are ready.'
+            : _questionForMissingField(missing.first),
+        draft: fallbackDraft,
+        widget: _fallbackWidgetForMissingField(
+          missing.isEmpty ? null : missing.first,
+        ),
+      );
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _isThinking = false;
+      _pendingDraft = aiResponse.draft;
+      final currency = aiResponse.draft.currency;
+      if (currency != null) _currency = currency;
+      _chatMessages.add(
+        CreateTripChatMessage(
+          fromUser: false,
+          text: _lastAiError == null
+              ? aiResponse.message
+              : '${_lastAiError!}\n\n${aiResponse.message}',
+          widget: aiResponse.widget,
+        ),
+      );
+    });
+  }
+
+  String _friendlyAiError(Object error) {
+    final text = error.toString();
+    if (text.contains('not-found') ||
+        text.contains('NOT_FOUND') ||
+        text.contains('generateTripPlan') ||
+        text.contains('createTripReply')) {
+      return 'AI is not connected yet. Deploy the Firebase Functions or run Flutter with an OPENAI_API_KEY dart define. I used the local draft parser for now.';
+    }
+    if (text.contains('unauthenticated') ||
+        text.contains('permission-denied')) {
+      return 'AI could not be reached because the backend rejected the request. I used the local draft parser for now.';
+    }
+    return 'AI is unavailable right now. I used the local draft parser for now.';
+  }
+
+  CreateTripDraft _parseTripDraft(String text, CreateTripDraft? current) {
+    final lower = text.toLowerCase();
+    final draft = (current ?? const CreateTripDraft()).copyWith();
+
+    String? destination = draft.destination;
+    final destinationMatch =
+        RegExp(
+          r'(?:to|in|for)\s+([A-Za-z][A-Za-z\s.,-]+?)(?:\s+(?:from|on|with|for|under|budget|solo|family|friends|tour)|[.!?]|$)',
+          caseSensitive: false,
+        ).firstMatch(text) ??
+        RegExp(
+          r'^(?:plan\s+)?(?:a\s+)?(?:trip\s+)?([A-Za-z][A-Za-z\s.,-]{2,50})(?:\s+\d|\s+for|\s+with|[.!?]|$)',
+          caseSensitive: false,
+        ).firstMatch(text);
+    if (destinationMatch != null) {
+      final candidate = destinationMatch.group(1)?.trim().replaceAll(',', '');
+      if (_normalCurrencyCode(candidate) == null) {
+        destination = candidate;
+      }
+    }
+
+    String? groupType = draft.groupType;
+    if (lower.contains('solo')) groupType = 'Solo';
+    if (lower.contains('friend')) groupType = 'Friends';
+    if (lower.contains('family')) groupType = 'Family';
+    if (lower.contains('tour')) groupType = 'Tour';
+
+    final currency = _currencyFromText(text) ?? draft.currency ?? _currency;
+    String? budget = draft.budget;
+    final currencyAmount = _currencyAmountFromText(text);
+    if (currencyAmount != null) {
+      budget = _budgetInCurrency(
+        amount: currencyAmount.amount,
+        fromCurrency: currencyAmount.currency,
+        toCurrency: currency,
+      ).toString();
+    }
+
+    final budgetMatch = RegExp(
+      r'\$\s?(\d{2,7})|(?:budget|under|around|about|usd|dollars?)\D{0,12}(\d{2,7})|(\d{2,7})\s?(?:usd|dollars?)',
+      caseSensitive: false,
+    ).firstMatch(text);
+    budget =
+        budgetMatch?.group(1) ??
+        budgetMatch?.group(2) ??
+        budgetMatch?.group(3) ??
+        budget;
+    _currency = currency;
+
+    DateTime? startDate = draft.startDate;
+    DateTime? endDate = draft.endDate;
+    final isoRangeMatch = RegExp(
+      r'(\d{4}-\d{2}-\d{2})\s*(?:-|to|until|through)\s*(\d{4}-\d{2}-\d{2})',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (isoRangeMatch != null) {
+      startDate = _parseIsoDate(isoRangeMatch.group(1));
+      endDate = _parseIsoDate(isoRangeMatch.group(2));
+    }
+
+    final rangeMatch = RegExp(
+      r'(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?\s*(?:-|to|until|through)\s*(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (rangeMatch != null && (startDate == null || endDate == null)) {
+      final year = _fullYear(rangeMatch.group(3) ?? rangeMatch.group(6));
+      final endYear = _fullYear(rangeMatch.group(6) ?? rangeMatch.group(3));
+      startDate = _dateFromNumericParts(
+        year,
+        int.parse(rangeMatch.group(1)!),
+        int.parse(rangeMatch.group(2)!),
+      );
+      endDate = _dateFromNumericParts(
+        endYear,
+        int.parse(rangeMatch.group(4)!),
+        int.parse(rangeMatch.group(5)!),
+      );
+    }
+
+    final durationMatch = RegExp(
+      r'\b(\d{1,2})\s*(?:days?|nights?)\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (durationMatch != null && (startDate == null || endDate == null)) {
+      final duration = math.max(1, int.parse(durationMatch.group(1)!));
+      final today = DateTime.now();
+      startDate = lower.contains('tomorrow')
+          ? today.add(const Duration(days: 1))
+          : today;
+      endDate = startDate.add(Duration(days: duration - 1));
+    }
+
+    final preferenceAdds = <String>{...draft.preferences};
+    for (final option in _preferenceOptions) {
+      if (lower.contains(option.toLowerCase())) preferenceAdds.add(option);
+    }
+    if (lower.contains('cheap') || lower.contains('budget')) {
+      preferenceAdds.add('Budget-friendly');
+    }
+
+    return draft.copyWith(
+      destination: destination,
+      startDate: startDate,
+      endDate: endDate,
+      budget: budget,
+      currency: currency,
+      groupType: groupType,
+      preferences: preferenceAdds.toList(),
+    );
+  }
+
+  ({int amount, String currency})? _currencyAmountFromText(String text) {
+    final match = RegExp(
+      r'(?:\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b\s*([0-9][0-9,._]*))|(?:([0-9][0-9,._]*)\s*\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b)',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (match == null) return null;
+
+    final currency = _normalCurrencyCode(match.group(1) ?? match.group(4));
+    final amountText = match.group(2) ?? match.group(3);
+    final amount = int.tryParse(
+      (amountText ?? '').replaceAll(RegExp(r'[^0-9]'), ''),
+    );
+    if (currency == null || amount == null) return null;
+    return (amount: amount, currency: currency);
+  }
+
+  String? _currencyFromText(String text) {
+    final match = RegExp(
+      r'\b(idr|rupiah|rp|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    return _normalCurrencyCode(match?.group(1));
+  }
+
+  int _budgetInCurrency({
+    required int amount,
+    required String fromCurrency,
+    required String toCurrency,
+  }) {
+    if (fromCurrency == toCurrency) return amount;
+    if (fromCurrency == 'TWD' && toCurrency == 'IDR') {
+      return (amount * _twdToIdrFallbackRate).round();
+    }
+    if (fromCurrency == 'IDR' && toCurrency == 'TWD') {
+      return (amount / _twdToIdrFallbackRate).round();
+    }
+    return amount;
+  }
+
+  String? _conversionMessage(String text, CreateTripDraft draft) {
+    final source = _currencyAmountFromText(text);
+    final target = draft.currency;
+    final budget = int.tryParse((draft.budget ?? '').replaceAll(',', ''));
+    if (source == null || target == null || budget == null) return null;
+    if (source.currency == target) return null;
+    return '${source.currency} ${_formatWholeNumber(source.amount)} is about '
+        '$target ${_formatWholeNumber(budget)}. I added that as your trip budget.';
+  }
+
+  int _fullYear(String? value) {
+    final year = int.tryParse(value ?? '') ?? DateTime.now().year;
+    return year < 100 ? 2000 + year : year;
+  }
+
+  DateTime _dateFromNumericParts(int year, int first, int second) {
+    final month = second > 12 && first <= 12 ? first : second;
+    final day = second > 12 && first <= 12 ? second : first;
+    return DateTime(year, month, day);
+  }
+
+  List<String> _missingDraftFields(CreateTripDraft draft) {
+    final missing = <String>[];
+    if ((draft.destination ?? '').trim().isEmpty) missing.add('destination');
+    if (draft.startDate == null || draft.endDate == null) missing.add('dates');
+    if ((draft.budget ?? '').trim().isEmpty) missing.add('total budget');
+    if ((draft.groupType ?? '').trim().isEmpty) missing.add('who is coming');
+    return missing;
+  }
+
+  String _questionForMissingField(String field) {
+    switch (field) {
+      case 'destination':
+        return 'Where would you like to go? Pick one or type your own.';
+      case 'dates':
+        return 'Choose a date range, like 15/06/2026 to 20/06/2026, or say 5 days.';
+      case 'total budget':
+        return 'What total budget should I plan around in $_currency?';
+      case 'who is coming':
+        return 'Who is coming with you: Solo, Friends, Family, or Tour?';
+      default:
+        return 'Tell me one more detail for the trip.';
+    }
+  }
+
+  CreateTripChoiceWidget? _fallbackWidgetForMissingField(String? field) {
+    switch (field) {
+      case 'destination':
+        return const CreateTripChoiceWidget(
+          title: 'Popular starting points',
+          options: [
+            CreateTripChoiceOption(
+              label: 'Kyoto',
+              value: 'Kyoto, Japan',
+              description: 'Culture, temples, food streets',
+            ),
+            CreateTripChoiceOption(
+              label: 'Tokyo',
+              value: 'Tokyo, Japan',
+              description: 'City energy, shopping, day trips',
+            ),
+            CreateTripChoiceOption(
+              label: 'Bali',
+              value: 'Bali, Indonesia',
+              description: 'Beaches, villas, relaxed pace',
+            ),
+          ],
+        );
+      case 'dates':
+        final base = DateTime.now().add(const Duration(days: 21));
+        final threeDayEnd = base.add(const Duration(days: 2));
+        final fiveDayEnd = base.add(const Duration(days: 4));
+        final sevenDayEnd = base.add(const Duration(days: 6));
+        return CreateTripChoiceWidget(
+          title: 'Trip length',
+          options: [
+            CreateTripChoiceOption(
+              label: '3 days',
+              value: '${_dateKey(base)} to ${_dateKey(threeDayEnd)}',
+              description: 'Fast weekend plan',
+            ),
+            CreateTripChoiceOption(
+              label: '5 days',
+              value: '${_dateKey(base)} to ${_dateKey(fiveDayEnd)}',
+              description: 'Balanced pace',
+            ),
+            CreateTripChoiceOption(
+              label: '7 days',
+              value: '${_dateKey(base)} to ${_dateKey(sevenDayEnd)}',
+              description: 'More room for day trips',
+            ),
+          ],
+        );
+      case 'total budget':
+        final options = _budgetOptionsForCurrency(_currency);
+        return CreateTripChoiceWidget(
+          title: 'Total budget',
+          options: options
+              .map(
+                (option) => CreateTripChoiceOption(
+                  label:
+                      '${option.currency} ${_formatWholeNumber(option.amount)}',
+                  value: 'budget ${option.amount} ${option.currency}',
+                  description: option.description,
+                ),
+              )
+              .toList(),
+        );
+      case 'who is coming':
+        return const CreateTripChoiceWidget(
+          title: 'Travel party',
+          options: [
+            CreateTripChoiceOption(
+              label: 'Solo',
+              value: 'Solo',
+              description: 'Personal route and pace',
+            ),
+            CreateTripChoiceOption(
+              label: 'Friends',
+              value: 'Friends',
+              description: 'Shared plans and votes',
+            ),
+            CreateTripChoiceOption(
+              label: 'Family',
+              value: 'Family',
+              description: 'Comfortable timing',
+            ),
+          ],
+        );
+      default:
+        return null;
+    }
+  }
+
+  List<({String currency, int amount, String description})>
+  _budgetOptionsForCurrency(String currency) {
+    switch (currency) {
+      case 'IDR':
+        return const [
+          (currency: 'IDR', amount: 8000000, description: 'Lean and efficient'),
+          (
+            currency: 'IDR',
+            amount: 16860000,
+            description: 'Comfortable mid-range',
+          ),
+          (
+            currency: 'IDR',
+            amount: 25000000,
+            description: 'More flexible picks',
+          ),
+        ];
+      case 'TWD':
+        return const [
+          (currency: 'TWD', amount: 15000, description: 'Lean and efficient'),
+          (
+            currency: 'TWD',
+            amount: 30000,
+            description: 'Comfortable mid-range',
+          ),
+          (currency: 'TWD', amount: 50000, description: 'More flexible picks'),
+        ];
+      case 'JPY':
+        return const [
+          (currency: 'JPY', amount: 75000, description: 'Lean and efficient'),
+          (
+            currency: 'JPY',
+            amount: 175000,
+            description: 'Comfortable mid-range',
+          ),
+          (currency: 'JPY', amount: 250000, description: 'More flexible picks'),
+        ];
+      case 'EUR':
+        return const [
+          (currency: 'EUR', amount: 1400, description: 'Lean and efficient'),
+          (currency: 'EUR', amount: 3200, description: 'Comfortable mid-range'),
+          (currency: 'EUR', amount: 4600, description: 'More flexible picks'),
+        ];
+      default:
+        return const [
+          (currency: 'USD', amount: 1500, description: 'Lean and efficient'),
+          (currency: 'USD', amount: 3500, description: 'Comfortable mid-range'),
+          (currency: 'USD', amount: 5000, description: 'More flexible picks'),
+        ];
+    }
+  }
+
+  String _formatWholeNumber(int value) {
+    final text = value.toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < text.length; i++) {
+      final remaining = text.length - i;
+      buffer.write(text[i]);
+      if (remaining > 1 && remaining % 3 == 1) buffer.write(',');
+    }
+    return buffer.toString();
+  }
+
+  void _applyDraftToForm(CreateTripDraft draft) {
+    final destination = draft.destination?.trim();
+    if (destination != null && destination.isNotEmpty) {
+      _destination.text = destination;
+      _selectedPlace = null;
+    }
+    final startDate = draft.startDate;
+    final endDate = draft.endDate;
+    if (startDate != null) _startDate = startDate;
+    if (endDate != null) _endDate = endDate;
+    final budget = draft.budget?.trim();
+    if (budget != null && budget.isNotEmpty) _budget.text = budget;
+    final currency = draft.currency;
+    if (currency != null && _currencyOptions.contains(currency)) {
+      _currency = currency;
+    }
+    final groupType = draft.groupType;
+    if (groupType != null && groupType.isNotEmpty) _group = groupType;
+    _preferences
+      ..clear()
+      ..addAll(
+        draft.preferences.isEmpty ? ['Culture', 'Food'] : draft.preferences,
+      );
+  }
+
+  Future<void> _usePendingDraft() async {
+    final draft = _pendingDraft;
+    if (draft == null) return;
+    final missing = _missingDraftFields(draft);
+    if (missing.isNotEmpty) {
+      setState(() {
+        _chatMessages.add(
+          CreateTripChatMessage(
+            fromUser: false,
+            text: _questionForMissingField(missing.first),
+          ),
+        );
+      });
+      return;
+    }
+
+    setState(() {
+      _applyDraftToForm(draft);
+      _mode = 1;
+    });
+    await _generateTrip();
+  }
+
+  Future<void> _editPendingDraft() async {
+    final draft = _pendingDraft;
+    if (draft == null) return;
+
+    final destination = TextEditingController(text: draft.destination ?? '');
+    final budget = TextEditingController(text: draft.budget ?? '');
+    final customTag = TextEditingController();
+    var startDate = draft.startDate ?? _startDate;
+    var endDate = draft.endDate ?? _endDate;
+    var groupType = draft.groupType ?? _group;
+    final preferences = <String>{...draft.preferences};
+
+    try {
+      final edited = await showModalBottomSheet<CreateTripDraft>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setSheetState) {
+              Future<void> pickStart() async {
+                final today = DateTime.now();
+                final firstDate = DateTime(today.year, today.month, today.day);
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: startDate.isBefore(firstDate)
+                      ? firstDate
+                      : startDate,
+                  firstDate: firstDate,
+                  lastDate: DateTime(2028, 12, 31),
+                );
+                if (date == null) return;
+                setSheetState(() {
+                  startDate = date;
+                  if (endDate.isBefore(startDate)) {
+                    endDate = startDate.add(const Duration(days: 4));
+                  }
+                });
+              }
+
+              Future<void> pickEnd() async {
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: endDate.isBefore(startDate)
+                      ? startDate
+                      : endDate,
+                  firstDate: startDate,
+                  lastDate: DateTime(2028, 12, 31),
+                );
+                if (date == null) return;
+                setSheetState(() => endDate = date);
+              }
+
+              void addTag() {
+                final tag = customTag.text.trim();
+                if (tag.isEmpty) return;
+                setSheetState(() {
+                  preferences.add(tag);
+                  customTag.clear();
+                });
+              }
+
+              return SafeArea(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 620),
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        left: _responsiveHorizontalPadding(context),
+                        right: _responsiveHorizontalPadding(context),
+                        top: 16,
+                        bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(28),
+                        ),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const IconBadge(
+                                    icon: Icons.tune_rounded,
+                                    size: 42,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  const Expanded(
+                                    child: Text(
+                                      'Customize AI Draft',
+                                      style: TextStyle(
+                                        color: _primary,
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(),
+                                    icon: const Icon(Icons.close_rounded),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              TextField(
+                                controller: destination,
+                                decoration: const InputDecoration(
+                                  labelText: 'Destination',
+                                  prefixIcon: Icon(Icons.place_rounded),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              ResponsiveSplit(
+                                children: [
+                                  DraftEditButton(
+                                    label: 'Start',
+                                    value: _dateKey(startDate),
+                                    onTap: pickStart,
+                                  ),
+                                  DraftEditButton(
+                                    label: 'End',
+                                    value: _dateKey(endDate),
+                                    onTap: pickEnd,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: budget,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'Total budget',
+                                  prefixText: '\$ ',
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              DropdownButtonFormField<String>(
+                                initialValue: groupType,
+                                decoration: const InputDecoration(
+                                  labelText: 'Who is coming',
+                                ),
+                                items:
+                                    const ['Solo', 'Family', 'Friends', 'Tour']
+                                        .map(
+                                          (item) => DropdownMenuItem(
+                                            value: item,
+                                            child: Text(item),
+                                          ),
+                                        )
+                                        .toList(),
+                                onChanged: (value) => setSheetState(
+                                  () => groupType = value ?? groupType,
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              const LabelText('Trip tags'),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  for (final option in _preferenceOptions)
+                                    FilterChip(
+                                      selected: preferences.contains(option),
+                                      label: Text(option),
+                                      onSelected: (_) => setSheetState(() {
+                                        preferences.contains(option)
+                                            ? preferences.remove(option)
+                                            : preferences.add(option);
+                                      }),
+                                    ),
+                                  for (final tag in preferences.where(
+                                    (tag) => !_preferenceOptions.contains(tag),
+                                  ))
+                                    InputChip(
+                                      label: Text(tag),
+                                      onDeleted: () => setSheetState(
+                                        () => preferences.remove(tag),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: customTag,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Add custom tag',
+                                      ),
+                                      onSubmitted: (_) => addTag(),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  IconButton.filled(
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: _primary,
+                                      foregroundColor: Colors.white,
+                                      fixedSize: const Size(54, 54),
+                                    ),
+                                    onPressed: addTag,
+                                    icon: const Icon(Icons.add_rounded),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 18),
+                              PrimaryButton(
+                                label: 'Save draft edits',
+                                icon: Icons.check_rounded,
+                                onPressed: () => Navigator.of(context).pop(
+                                  CreateTripDraft(
+                                    destination: destination.text.trim(),
+                                    startDate: startDate,
+                                    endDate: endDate,
+                                    budget: budget.text
+                                        .replaceAll(RegExp(r'\D'), '')
+                                        .trim(),
+                                    currency: draft.currency ?? _currency,
+                                    groupType: groupType,
+                                    preferences: preferences.toList(),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+
+      if (edited == null || !mounted) return;
+      setState(() {
+        _pendingDraft = edited;
+        _pendingDraftConfirmed = false;
+        _chatMessages.add(
+          const CreateTripChatMessage(
+            fromUser: false,
+            text:
+                'Draft updated. Review the custom version, then confirm it when it looks right.',
+          ),
+        );
+      });
+    } finally {
+      destination.dispose();
+      budget.dispose();
+      customTag.dispose();
+    }
+  }
+
+  Future<PlaceSuggestion?> _resolvePlaceForGeneration(String typed) async {
+    if (_selectedPlace != null) return _selectedPlace;
+    if (typed.length < 2) return null;
+
+    try {
+      final suggestions = await _places.searchDestinations(typed);
+      if (suggestions.isNotEmpty) {
+        return suggestions.first;
+      }
+    } catch (_) {
+      if (_mode == 1) rethrow;
+    }
+
+    if (_mode == 1) return null;
+    return PlaceSuggestion(
+      name: typed,
+      formatted: typed,
+      latitude: 0,
+      longitude: 0,
+      placeId: typed.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-'),
+    );
+  }
+
+  Future<void> _generateTrip() async {
+    final budget =
+        int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+    if (budget <= 0) {
+      setState(() => _formError = 'Enter a budget greater than zero.');
+      return;
+    }
+
+    final typedDestination = _destination.text.trim();
+    PlaceSuggestion? place;
+    try {
+      place = await _resolvePlaceForGeneration(typedDestination);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _formError = 'Could not verify that destination right now: $error';
+      });
+      return;
+    }
+    if (place == null) {
+      setState(() {
+        _formError = _mode == 1
+            ? 'Choose a real destination from the search results first.'
+            : 'Enter a destination.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isGenerating = true;
+      _usedFallbackPlan = false;
+      _formError = null;
+    });
+
+    GeneratedTripPlan plan;
+    try {
+      plan = await _assistant.generateTripPlan(
+        place: place,
+        startDate: _startDate,
+        endDate: _endDate,
+        budget: budget,
+        groupType: _group,
+        preferences: _preferences.toList(),
+        currency: _currency,
+        airline: _airline.text.trim(),
+        flightConfirmation: _flightConfirmation.text.trim(),
+      );
+      if (plan.items.isEmpty) {
+        throw Exception('AI returned no itinerary items.');
+      }
+    } catch (_) {
+      plan = _fallbackTripPlan(
+        place: place,
+        startDate: _startDate,
+        budget: budget,
+        preferences: _preferences.toList(),
+      );
+      _usedFallbackPlan = true;
+    }
+
+    if (!mounted) return;
+    setState(() => _isGenerating = false);
+
+    widget.onGenerate(
+      Trip(
+        id: 't-${DateTime.now().millisecondsSinceEpoch}',
+        destination: place.name,
+        placeId: place.placeId,
+        formattedAddress: place.formatted,
+        latitude: place.latitude,
+        longitude: place.longitude,
+        startDate: _dateKey(_startDate),
+        endDate: _dateKey(_endDate),
+        budget: budget,
+        spent: 0,
+        groupType: _group,
+        currency: _currency,
+        status: TripStatus.upcoming,
+        images: [
+          if (_selectedImage != null) _selectedImage!,
+          ..._imagesForDestination(place.name),
+        ],
+        items: plan.items,
+        bookings: _bookingsWithManualDetails(plan.bookings),
+        checklist: plan.checklist,
+        preferences: _preferences.toList(),
+        budgetCategories: _defaultBudgetCategories(
+          budget: budget,
+          actual: 0,
+          items: plan.items,
+          bookings: plan.bookings,
+        ),
+      ),
+    );
+  }
+
+  List<Booking> _bookingsWithManualDetails(List<Booking> generated) {
+    final airline = _airline.text.trim();
+    final confirmation = _flightConfirmation.text.trim();
+    if (airline.isEmpty && confirmation.isEmpty) return generated;
+    final manualFlight = Booking(
+      airline.isEmpty ? 'Flight booking' : airline,
+      _dateKey(_startDate),
+      'TBD',
+      confirmation.isEmpty ? 'CONFIRMATION-TBD' : confirmation,
+      0,
+      Icons.flight_takeoff_rounded,
+    );
+    return [manualFlight, ...generated];
+  }
+
+  void _useTemplateTrip() {
+    widget.onGenerate(
+      Trip(
+        id: 't-${DateTime.now().millisecondsSinceEpoch}',
+        destination: mockKyotoTrip.destination,
+        startDate: '2026-06-15',
+        endDate: '2026-06-20',
+        budget: mockKyotoTrip.budget,
+        spent: 0,
+        groupType: mockKyotoTrip.groupType,
+        currency: mockKyotoTrip.currency,
+        status: TripStatus.upcoming,
+        images: mockKyotoTrip.images,
+        items: mockKyotoTrip.items,
+        bookings: mockKyotoTrip.bookings,
+        checklist: mockKyotoTrip.checklist,
+        preferences: mockKyotoTrip.preferences,
+        budgetCategories: mockKyotoTrip.budgetCategories,
+        placeId: mockKyotoTrip.placeId,
+        formattedAddress: mockKyotoTrip.formattedAddress,
+        latitude: mockKyotoTrip.latitude,
+        longitude: mockKyotoTrip.longitude,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return PagePlaceholder(title: context.l10n.newItineraryPage);
+    if (_mode == 0) {
+      return ScreenScaffold(
+        child: ListView(
+          padding: _responsivePagePadding(context, top: 18),
+          children: [
+            TopBar(title: 'How do you want to start?', onBack: widget.onBack),
+            const SizedBox(height: 18),
+            const AnimatedGlobe(),
+            const SizedBox(height: 22),
+            CreateOptionCard(
+              icon: Icons.explore_rounded,
+              title: 'Plan Step-by-Step',
+              text: 'Explore ideas, compare pacing, then let AI draft it.',
+              onTap: () => setState(() => _mode = 1),
+            ),
+            const SizedBox(height: 12),
+            CreateOptionCard(
+              icon: Icons.auto_awesome_rounded,
+              title: 'Plan with AI',
+              text: 'Search a real city, choose dates, tags, and generate.',
+              onTap: _startAiChat,
+            ),
+            const SizedBox(height: 12),
+            CreateOptionCard(
+              icon: Icons.edit_note_rounded,
+              title: 'Create Manually',
+              text: 'Enter destination, dates, budget, people, and tags.',
+              onTap: () => setState(() => _mode = 2),
+            ),
+            const SizedBox(height: 12),
+            CreateOptionCard(
+              icon: Icons.work_rounded,
+              title: 'Use Saved Trip Template',
+              text: 'Start from a polished Kyoto sample and edit later.',
+              onTap: _useTemplateTrip,
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_mode == 3) {
+      final pendingDraft = _pendingDraft;
+      final canUsePlan =
+          pendingDraft != null && _missingDraftFields(pendingDraft).isEmpty;
+      final isChatFresh = _chatMessages.isEmpty;
+      return ScreenScaffold(
+        child: Column(
+          children: [
+            Padding(
+              padding: _responsivePagePadding(context, top: 18, bottom: 8),
+              child: TopBar(
+                title: 'Plan with AI',
+                onBack: () => setState(() => _mode = 0),
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: _responsivePagePadding(context, top: 10, bottom: 18),
+                children: [
+                  if (isChatFresh) ...[
+                    const AnimatedGlobe(),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Hello, where would you like to go?',
+                      style: Theme.of(context).textTheme.headlineMedium
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Choose guided suggestions or describe the full trip.',
+                      style: TextStyle(
+                        color: _secondary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children:
+                          [
+                                'Kyoto, Japan',
+                                'Tokyo, Japan',
+                                'Bali, Indonesia',
+                                'Paris, France',
+                              ]
+                              .map(
+                                (prompt) => ActionChip(
+                                  label: Text(prompt),
+                                  onPressed: () => _sendCreateTripChat(prompt),
+                                  labelStyle: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                  backgroundColor: const Color(0xFFF8FAFC),
+                                  side: const BorderSide(
+                                    color: Color(0xFFEFF3F6),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                    ),
+                    const SizedBox(height: 18),
+                  ],
+                  for (final message in _chatMessages)
+                    CreateTripChatTurn(
+                      message: message,
+                      onSelect: _sendCreateTripChat,
+                    ),
+                  if (_isThinking) const CreateTripThinkingBubble(),
+                  if (pendingDraft != null && canUsePlan) ...[
+                    const SizedBox(height: 12),
+                    CreateTripDraftCard(
+                      draft: pendingDraft,
+                      confirmed: _pendingDraftConfirmed,
+                      onConfirm: () => _sendCreateTripChat('confirm'),
+                      onEdit: _editPendingDraft,
+                      onUse: _pendingDraftConfirmed ? _usePendingDraft : null,
+                      onChange: _sendCreateTripChat,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: _responsivePagePadding(context, top: 8, bottom: 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isChatFresh)
+                      SizedBox(
+                        height: 38,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            CreateTripPromptChip(
+                              label: 'Kyoto',
+                              prompt:
+                                  'Trip to Kyoto with friends, 15/06/2026 to 20/06/2026, budget \$3500',
+                              onTap: _sendCreateTripChat,
+                            ),
+                            CreateTripPromptChip(
+                              label: 'Beach',
+                              prompt:
+                                  'Trip to Bali with family, 10/07/2026 to 16/07/2026, budget \$5000',
+                              onTap: _sendCreateTripChat,
+                            ),
+                            CreateTripPromptChip(
+                              label: 'Solo',
+                              prompt:
+                                  'Solo trip to Tokyo, 01/06/2026 to 05/06/2026, budget \$2500',
+                              onTap: _sendCreateTripChat,
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (isChatFresh) const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _chatInput,
+                            enabled: !_isThinking && !_isGenerating,
+                            decoration: InputDecoration(
+                              hintText: pendingDraft == null
+                                  ? 'Describe the trip...'
+                                  : 'Type changes or confirm...',
+                            ),
+                            onSubmitted: _sendCreateTripChat,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        IconButton.filled(
+                          style: IconButton.styleFrom(
+                            backgroundColor: _primary,
+                            foregroundColor: Colors.white,
+                            fixedSize: const Size(54, 54),
+                          ),
+                          onPressed: _isThinking || _isGenerating
+                              ? null
+                              : () => _sendCreateTripChat(),
+                          icon: const Icon(Icons.send_rounded),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ScreenScaffold(
+      child: ListView(
+        padding: _responsivePagePadding(context, top: 18),
+        children: [
+          TopBar(
+            title: _mode == 1 ? 'Plan with AI' : 'Create Manually',
+            onBack: () => setState(() => _mode = 0),
+          ),
+          const SizedBox(height: 18),
+          SegmentedButton<int>(
+            segments: const [
+              ButtonSegment(
+                value: 1,
+                label: Text('AI Flow'),
+                icon: Icon(Icons.auto_awesome_rounded),
+              ),
+              ButtonSegment(
+                value: 2,
+                label: Text('Manual'),
+                icon: Icon(Icons.edit_note_rounded),
+              ),
+            ],
+            selected: {_mode},
+            onSelectionChanged: (value) => setState(() => _mode = value.first),
+          ),
+          const SizedBox(height: 18),
+          if (_mode == 1) ...[
+            const AnimatedGlobe(),
+            const SizedBox(height: 14),
+            const FormNotice(
+              message:
+                  'Tell AI the basics below. It will build stops, bookings, and a packing list.',
+            ),
+          ],
+          const SizedBox(height: 18),
+          GestureDetector(
+            onTap: _showImagePicker,
+            child: SizedBox(
+              height: 128,
+              child: _selectedImage == null
+                  ? const GlassPanel(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.add_photo_alternate_rounded,
+                            color: _accent,
+                            size: 30,
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            'ADD PRIMARY PHOTO',
+                            style: TextStyle(
+                              color: _secondary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Image.network(
+                            _selectedImage!,
+                            fit: BoxFit.cover,
+                            filterQuality: PerformanceScope.maybeSettingsOf(
+                              context,
+                            ).filterQuality,
+                          ),
+                          Container(color: Colors.black.withValues(alpha: .18)),
+                          const Center(
+                            child: Icon(
+                              Icons.add_photo_alternate_rounded,
+                              color: Colors.white,
+                              size: 32,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _destination,
+            onChanged: _schedulePlaceSearch,
+            decoration: InputDecoration(
+              labelText: 'Destination',
+              hintText: 'Search a real city',
+              suffixIcon: _isSearching
+                  ? const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : const Icon(Icons.travel_explore_rounded),
+            ),
+          ),
+          if (_selectedPlace != null) ...[
+            const SizedBox(height: 10),
+            SelectedPlaceCard(place: _selectedPlace!),
+          ] else if (_placeSuggestions.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            PlaceSuggestionList(
+              suggestions: _placeSuggestions,
+              onSelect: _selectPlace,
+            ),
+          ],
+          const SizedBox(height: 12),
+          DateRangeCard(
+            startDate: _startDate,
+            endDate: _endDate,
+            onPickStart: _pickStartDate,
+            onPickEnd: _pickEndDate,
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth < 430) {
+                return DropdownButtonFormField<String>(
+                  initialValue: _currency,
+                  decoration: const InputDecoration(labelText: 'Currency'),
+                  items: _currencyOptions
+                      .map(
+                        (currency) => DropdownMenuItem(
+                          value: currency,
+                          child: Text(currency),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) =>
+                      setState(() => _currency = value ?? _currency),
+                );
+              }
+
+              return SegmentedButton<String>(
+                segments: _currencyOptions
+                    .map(
+                      (currency) =>
+                          ButtonSegment(value: currency, label: Text(currency)),
+                    )
+                    .toList(),
+                selected: {_currency},
+                onSelectionChanged: (value) =>
+                    setState(() => _currency = value.first),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _budget,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Total budget',
+              prefixText: '\$ ',
+            ),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _group,
+            decoration: const InputDecoration(labelText: 'Who is coming'),
+            items: const ['Solo', 'Family', 'Friends', 'Tour']
+                .map((item) => DropdownMenuItem(value: item, child: Text(item)))
+                .toList(),
+            onChanged: (value) => setState(() => _group = value ?? _group),
+          ),
+          const SizedBox(height: 12),
+          ResponsiveSplit(
+            children: [
+              TextField(
+                controller: _airline,
+                decoration: const InputDecoration(
+                  labelText: 'Airline optional',
+                  prefixIcon: Icon(Icons.flight_takeoff_rounded),
+                ),
+              ),
+              TextField(
+                controller: _flightConfirmation,
+                decoration: const InputDecoration(
+                  labelText: 'Confirmation',
+                  prefixIcon: Icon(Icons.confirmation_number_rounded),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _preferenceOptions.map((preference) {
+              final selected = _preferences.contains(preference);
+              return FilterChip(
+                selected: selected,
+                label: Text(preference),
+                onSelected: (_) => _togglePreference(preference),
+                selectedColor: _accent.withValues(alpha: .35),
+                checkmarkColor: _primary,
+                labelStyle: const TextStyle(fontWeight: FontWeight.w800),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _customPreference,
+                  decoration: const InputDecoration(
+                    labelText: 'Add custom tag',
+                    hintText: 'e.g. anime, halal food, wheelchair access',
+                  ),
+                  onSubmitted: (_) => _addCustomPreference(),
+                ),
+              ),
+              const SizedBox(width: 10),
+              IconButton.filled(
+                style: IconButton.styleFrom(
+                  backgroundColor: _primary,
+                  foregroundColor: Colors.white,
+                  fixedSize: const Size(54, 54),
+                ),
+                onPressed: _addCustomPreference,
+                icon: const Icon(Icons.add_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          const PlanningIdeaStrip(),
+          if (_usedFallbackPlan) ...[
+            const SizedBox(height: 16),
+            const FormNotice(
+              message:
+                  'AI generation was unavailable, so a local draft plan was created.',
+            ),
+          ],
+          if (_formError != null) ...[
+            const SizedBox(height: 16),
+            FormNotice(message: _formError!),
+          ],
+          const SizedBox(height: 24),
+          if (_isGenerating)
+            const GeneratingTripPanel()
+          else
+            PrimaryButton(
+              label: _mode == 1 ? 'Generate with AI' : 'Create itinerary',
+              icon: _mode == 1
+                  ? Icons.auto_awesome_rounded
+                  : Icons.arrow_forward_rounded,
+              onPressed: _generateTrip,
+            ),
+        ],
+      ),
+    );
   }
 }

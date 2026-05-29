@@ -1,7 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import '../../../travel_clone/travel_agent_app.dart';
+import '../../../../app/travel_agent_app.dart';
+import '../../../../core/performance/app_performance.dart';
 import '../../data/account_auth_service.dart';
 
 class AccountGate extends StatefulWidget {
@@ -198,7 +199,7 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
       resizeToAvoidBottomInset: true,
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+          padding: _authPagePadding(context),
           children: [
             const SizedBox(height: 10),
             const Icon(
@@ -248,7 +249,9 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             ),
             const SizedBox(height: 20),
             AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
+              duration: PerformanceScope.maybeSettingsOf(
+                context,
+              ).transitionDuration,
               child: _mode == _AccountMode.email
                   ? _buildEmailForm()
                   : _buildPhoneForm(),
@@ -536,12 +539,7 @@ class _AuthFrame extends StatelessWidget {
   Widget build(BuildContext context) {
     return ColoredBox(
       color: const Color(0xFFE5E7EB),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 430),
-          child: ClipRect(child: child),
-        ),
-      ),
+      child: ClipRect(child: child),
     );
   }
 }
@@ -584,6 +582,16 @@ enum _AccountMode { email, phone }
 
 bool _looksLikeEmail(String value) {
   return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value.trim());
+}
+
+EdgeInsets _authPagePadding(BuildContext context) {
+  final width = MediaQuery.sizeOf(context).width;
+  final horizontal = width < 340
+      ? 12.0
+      : width < 420
+      ? 16.0
+      : 24.0;
+  return EdgeInsets.fromLTRB(horizontal, 28, horizontal, 28);
 }
 
 String _firebaseMessage(FirebaseAuthException error) {
