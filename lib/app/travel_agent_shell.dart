@@ -37,18 +37,19 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       final profile = await _repository.loadUser(accountId);
       final trips = await _repository.loadTrips(accountId);
       if (!mounted) return;
+      final user =
+          profile ??
+          UserProfile(
+            name: widget.account.name,
+            email: widget.account.email ?? '',
+            interests: const [],
+            language: 'en',
+            notificationsEnabled: true,
+            themeMode: 'Light',
+          );
       setState(() {
         _accountId = accountId;
-        _user =
-            profile ??
-            UserProfile(
-              name: widget.account.name,
-              email: widget.account.email ?? '',
-              interests: const [],
-              language: 'en',
-              notificationsEnabled: true,
-              themeMode: 'Light',
-            );
+        _user = user;
         _trips
           ..clear()
           ..addAll(trips);
@@ -56,6 +57,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         _showOnboarding = profile == null;
         _isLoading = false;
       });
+      AppLocaleController.setProfileLanguage(user.language);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -82,6 +84,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _showOnboarding = false;
       _loadError = null;
     });
+    AppLocaleController.setProfileLanguage(profile.language);
 
     try {
       await _repository.saveUser(accountId, profile);
@@ -96,6 +99,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _user = profile;
       _loadError = null;
     });
+    AppLocaleController.setProfileLanguage(profile.language);
 
     final accountId = _accountId;
     if (accountId == null) return;
@@ -467,7 +471,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         _NavTab.chat => _Screen.chatList,
         _NavTab.profile => _Screen.profile,
       };
-      AppDebugLogger.logStateChange('TravelAgentApp', 'selected tab $tab');
     });
   }
 }

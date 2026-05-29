@@ -16,6 +16,14 @@ class TravelAgentColors {
   static const Color background = Color(0xFFF7F8F0);
 }
 
+class AppFontSource {
+  static const String assetDirectory = 'assets/fonts/';
+
+  // Keep null to use Flutter's default platform font. Add a font family in
+  // pubspec.yaml and set this value when a custom asset font is available.
+  static const String? family = null;
+}
+
 class TravelAgentTheme {
   static ThemeData light() {
     final base = ThemeData(
@@ -27,7 +35,7 @@ class TravelAgentTheme {
         surface: Colors.white,
       ),
       scaffoldBackgroundColor: TravelAgentColors.background,
-      fontFamily: 'Roboto',
+      fontFamily: AppFontSource.family,
     );
 
     return base.copyWith(
@@ -146,6 +154,7 @@ class MaterialTheme {
       colorScheme: colorScheme,
       scaffoldBackgroundColor: colorScheme.surface,
       canvasColor: colorScheme.surface,
+      fontFamily: AppFontSource.family,
       textTheme: textTheme.apply(
         bodyColor: colorScheme.onSurface,
         displayColor: colorScheme.onSurface,

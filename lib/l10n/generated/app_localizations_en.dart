@@ -88,5 +88,5 @@ class AppLocalizationsEn extends AppLocalizations {
   String get english => 'English';
 
   @override
-  String get indonesian => 'Indonesian';
+  String get traditionalChineseTaiwan => 'Chinese (Taiwan / Traditional)';
 }

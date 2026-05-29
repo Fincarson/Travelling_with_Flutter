@@ -9,6 +9,7 @@ class UserProfile {
     this.notificationsEnabled = true,
     this.themeMode = 'Light',
   });
+
   final String name;
   final String email;
   final List<String> interests;
@@ -48,7 +49,7 @@ class UserProfile {
 String _languageLabel(String language) {
   return switch (language) {
     'id' => 'Indonesian',
-    'zh' => 'Chinese (Traditional)',
+    'zh' || 'zh_Hant_TW' || 'zh-TW' => 'Chinese (Taiwan / Traditional)',
     'ja' => 'Japanese',
     'ko' => 'Korean',
     'es' => 'Spanish',
@@ -88,29 +89,6 @@ String _profileText(String language, String key) {
       'on': 'On',
       'off': 'Off',
     },
-    'id': {
-      'welcome': 'Selamat Datang',
-      'currentTrip': 'Perjalanan aktif',
-      'language': 'Bahasa',
-      'notifications': 'Notifikasi',
-      'theme': 'Tema',
-      'interests': 'Minat perjalanan',
-      'account': 'Akun',
-      'saveProfile': 'Simpan profil',
-      'signOut': 'Keluar',
-      'deleteAccount': 'Hapus akun',
-      'deleteQuestion': 'Hapus akun?',
-      'deleteMessage':
-          'Ini menghapus akun masuk, profil, dan perjalanan tersimpan. Tidak dapat dibatalkan.',
-      'cancel': 'Batal',
-      'delete': 'Hapus',
-      'close': 'Tutup',
-      'saveInterests': 'Simpan minat',
-      'customInterest': 'Tambah minat',
-      'interestBlocked': 'Minat itu tidak diizinkan.',
-      'on': 'Aktif',
-      'off': 'Mati',
-    },
     'zh': {
       'welcome': '歡迎回來',
       'currentTrip': '目前旅程',
@@ -123,23 +101,24 @@ String _profileText(String language, String key) {
       'signOut': '登出',
       'deleteAccount': '刪除帳戶',
       'deleteQuestion': '刪除帳戶？',
-      'deleteMessage': '這會刪除登入帳戶、個人資料和已儲存旅程，且無法復原。',
+      'deleteMessage': '這會刪除你的登入帳戶、個人資料和已儲存旅程，且無法復原。',
       'cancel': '取消',
       'delete': '刪除',
       'close': '關閉',
       'saveInterests': '儲存興趣',
-      'customInterest': '新增興趣',
-      'interestBlocked': '不允許使用此興趣。',
-      'on': '開',
-      'off': '關',
+      'customInterest': '新增自訂興趣',
+      'interestBlocked': '不允許使用這個興趣。',
+      'on': '開啟',
+      'off': '關閉',
     },
   };
-  if (!values.containsKey(language)) return values['en']![key] ?? key;
-  return values[language]?[key] ?? values['en']![key] ?? key;
+  final normalized = language.startsWith('zh') ? 'zh' : language;
+  if (!values.containsKey(normalized)) return values['en']![key] ?? key;
+  return values[normalized]?[key] ?? values['en']![key] ?? key;
 }
 
 String _localizedSettingValue(String language, String key) {
-  if (language == 'en' || language == 'id' || language == 'zh') {
+  if (language == 'en' || language.startsWith('zh')) {
     return _profileText(language, key);
   }
   return _profileText('en', key);

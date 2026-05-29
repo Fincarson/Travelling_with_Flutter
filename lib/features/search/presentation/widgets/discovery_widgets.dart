@@ -21,7 +21,7 @@ class SearchBox extends StatelessWidget {
           icon: const Icon(Icons.auto_awesome_rounded, color: _accent),
           onPressed: onSubmit,
         ),
-        hintText: hint,
+        hintText: appText(context, hint),
       ),
     );
   }
@@ -71,7 +71,7 @@ class AlertRail extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Text(
-                              alerts[index].$1,
+                              appText(context, alerts[index].$1),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -79,7 +79,7 @@ class AlertRail extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              alerts[index].$2,
+                              appText(context, alerts[index].$2),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -115,7 +115,7 @@ class _AnimatedGlobeState extends State<AnimatedGlobe>
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(seconds: 8),
-  )..repeat();
+  );
 
   @override
   void didChangeDependencies() {

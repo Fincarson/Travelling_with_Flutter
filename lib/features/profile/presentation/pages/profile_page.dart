@@ -82,7 +82,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Travel interests',
+                        appText(context, 'Travel interests'),
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           fontWeight: FontWeight.w900,
                         ),
@@ -101,7 +101,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             'Hidden Gems',
                           ])
                             ChoiceChip(
-                              label: Text(tag),
+                              label: Text(appText(context, tag)),
                               selected: draft.contains(tag),
                               selectedColor: _accent,
                               labelStyle: const TextStyle(
@@ -213,6 +213,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       labelFor: _languageLabel,
       onSelected: (value) {
         setState(() => _language = value);
+        AppLocaleController.setProfileLanguage(value);
         _saveDraft();
       },
     );
@@ -223,7 +224,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       title: _profileText(_language, 'theme'),
       value: _themeMode,
       options: const ['Light', 'Dark'],
-      labelFor: (value) => value,
+      labelFor: (value) => appText(context, value),
       onSelected: (value) {
         setState(() => _themeMode = value);
         _saveDraft();
@@ -256,7 +257,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             for (final option in options)
               ListTile(
                 onTap: () => Navigator.of(context).pop(option),
-                title: Text(labelFor(option)),
+                title: Text(appText(context, labelFor(option))),
                 trailing: option == value
                     ? const Icon(Icons.check_rounded, color: _primary)
                     : null,
@@ -339,7 +340,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 22),
           TextField(
             controller: _name,
-            decoration: const InputDecoration(labelText: 'Name'),
+            decoration: InputDecoration(labelText: appText(context, 'Name')),
           ),
           const SizedBox(height: 18),
           SettingsTile(
@@ -367,14 +368,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           SettingsTile(
             icon: Icons.speed_rounded,
-            title: 'Performance',
-            value: PerformanceScope.settingsOf(context).preset.label,
+            title: appText(context, 'Performance'),
+            value: appText(
+              context,
+              PerformanceScope.settingsOf(context).preset.label,
+            ),
             onTap: widget.onOpenPerformance,
           ),
           SettingsTile(
             icon: Icons.explore_outlined,
             title: _profileText(_language, 'interests'),
-            value: _interests.isEmpty ? 'None' : '${_interests.length}',
+            value: _interests.isEmpty
+                ? appText(context, 'None')
+                : '${_interests.length}',
             onTap: _editInterests,
           ),
           const SizedBox(height: 20),

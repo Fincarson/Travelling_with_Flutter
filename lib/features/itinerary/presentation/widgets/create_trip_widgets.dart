@@ -17,38 +17,88 @@ class CreateOptionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: GlassPanel(
+        child: SizedBox(
+          width: double.infinity,
+          child: Row(
+            children: [
+              IconBadge(icon: icon, size: 48),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      appText(context, title),
+                      style: const TextStyle(
+                        color: _primary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      appText(context, text),
+                      style: const TextStyle(
+                        color: _secondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_rounded, color: _secondary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class FullTapDropdownField extends StatelessWidget {
+  const FullTapDropdownField({
+    required this.label,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+    super.key,
+  });
+
+  final String label;
+  final String value;
+  final List<String> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      onSelected: onChanged,
+      position: PopupMenuPosition.under,
+      itemBuilder: (context) => [
+        for (final option in options)
+          PopupMenuItem<String>(
+            value: option,
+            child: Text(appText(context, option)),
+          ),
+      ],
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: appText(context, label),
+          suffixIcon: const Icon(Icons.expand_more_rounded),
+        ),
         child: Row(
           children: [
-            IconBadge(icon: icon, size: 48),
-            const SizedBox(width: 14),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: _primary,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    text,
-                    style: const TextStyle(
-                      color: _secondary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      height: 1.3,
-                    ),
-                  ),
-                ],
+              child: Text(
+                appText(context, value),
+                style: const TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
-            const Icon(Icons.arrow_forward_rounded, color: _secondary),
           ],
         ),
       ),
@@ -118,7 +168,7 @@ class CreateTripChatBubble extends StatelessWidget {
               : Border.all(color: const Color(0xFFEFF3F6)),
         ),
         child: Text(
-          message.text,
+          message.fromUser ? message.text : appText(context, message.text),
           style: TextStyle(
             color: message.fromUser ? Colors.white : _primary,
             fontWeight: FontWeight.w800,
@@ -135,19 +185,22 @@ class CreateTripThinkingBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Align(
+    return Align(
       alignment: Alignment.centerLeft,
       child: GlassPanel(
-        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox.square(
+            const SizedBox.square(
               dimension: 16,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
-            SizedBox(width: 10),
-            Text('Thinking...', style: TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(width: 10),
+            Text(
+              appText(context, 'Thinking...'),
+              style: const TextStyle(fontWeight: FontWeight.w900),
+            ),
           ],
         ),
       ),
@@ -173,7 +226,7 @@ class CreateTripChoicePanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            widget.title,
+            appText(context, widget.title),
             style: const TextStyle(
               color: _primary,
               fontWeight: FontWeight.w900,
@@ -201,7 +254,7 @@ class CreateTripChoicePanel extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              option.label,
+                              appText(context, option.label),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -212,7 +265,7 @@ class CreateTripChoicePanel extends StatelessWidget {
                             if (option.description.isNotEmpty) ...[
                               const SizedBox(height: 3),
                               Text(
-                                option.description,
+                                appText(context, option.description),
                                 maxLines: 3,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -274,7 +327,7 @@ class CreateTripDraftCard extends StatelessWidget {
                   children: [
                     const LabelText('AI Prepared'),
                     Text(
-                      draft.destination ?? 'New trip',
+                      appText(context, draft.destination ?? 'New trip'),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -357,8 +410,8 @@ class CreateTripDraftCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(18),
                   ),
                 ),
-                child: const Text(
-                  'CUSTOMIZE',
+                child: Text(
+                  appText(context, 'CUSTOMIZE'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -373,7 +426,7 @@ class CreateTripDraftCard extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  confirmed ? 'CONFIRMED' : 'CONFIRM',
+                  appText(context, confirmed ? 'CONFIRMED' : 'CONFIRM'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -392,8 +445,8 @@ class CreateTripDraftCard extends StatelessWidget {
               ),
             ),
             icon: const Icon(Icons.auto_awesome_rounded),
-            label: const Text(
-              'USE CUSTOMIZED PLAN',
+            label: Text(
+              appText(context, 'USE CUSTOMIZED PLAN'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -432,7 +485,7 @@ class DraftEditButton extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              label.toUpperCase(),
+              appText(context, label).toUpperCase(),
               style: const TextStyle(
                 color: _secondary,
                 fontSize: 9,
@@ -472,7 +525,7 @@ class DraftStat extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            label.toUpperCase(),
+            appText(context, label).toUpperCase(),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -483,7 +536,7 @@ class DraftStat extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            value,
+            appText(context, value),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -515,7 +568,7 @@ class CreateTripPromptChip extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: ActionChip(
-        label: Text(label),
+        label: Text(appText(context, label)),
         onPressed: () => onTap(prompt),
         labelStyle: const TextStyle(fontWeight: FontWeight.w900),
         backgroundColor: const Color(0xFFF8FAFC),
@@ -529,6 +582,7 @@ class DateRangeCard extends StatelessWidget {
   const DateRangeCard({
     required this.startDate,
     required this.endDate,
+    required this.onPickRange,
     required this.onPickStart,
     required this.onPickEnd,
     super.key,
@@ -536,87 +590,92 @@ class DateRangeCard extends StatelessWidget {
 
   final DateTime startDate;
   final DateTime endDate;
+  final VoidCallback onPickRange;
   final VoidCallback onPickStart;
   final VoidCallback onPickEnd;
 
   @override
   Widget build(BuildContext context) {
-    return GlassPanel(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final content = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Trip dates',
-                style: TextStyle(
-                  color: _secondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${_dateKey(startDate)} / ${_dateKey(endDate)}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ],
-          );
-
-          if (constraints.maxWidth < 340) {
-            return Column(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onPickRange,
+      child: GlassPanel(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final content = Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    const IconBadge(
-                      icon: Icons.calendar_month_rounded,
-                      size: 46,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(child: content),
-                  ],
+                Text(
+                  appText(context, 'Trip dates'),
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    IconButton(
-                      tooltip: 'Start date',
-                      onPressed: onPickStart,
-                      icon: const Icon(Icons.today_rounded),
-                    ),
-                    IconButton(
-                      tooltip: 'End date',
-                      onPressed: onPickEnd,
-                      icon: const Icon(Icons.event_available_rounded),
-                    ),
-                  ],
+                const SizedBox(height: 4),
+                Text(
+                  '${_dateKey(startDate)} / ${_dateKey(endDate)}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
               ],
             );
-          }
 
-          return Row(
-            children: [
-              const IconBadge(icon: Icons.calendar_month_rounded, size: 46),
-              const SizedBox(width: 12),
-              Expanded(child: content),
-              IconButton(
-                tooltip: 'Start date',
-                onPressed: onPickStart,
-                icon: const Icon(Icons.today_rounded),
-              ),
-              IconButton(
-                tooltip: 'End date',
-                onPressed: onPickEnd,
-                icon: const Icon(Icons.event_available_rounded),
-              ),
-            ],
-          );
-        },
+            if (constraints.maxWidth < 340) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const IconBadge(
+                        icon: Icons.calendar_month_rounded,
+                        size: 46,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: content),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      IconButton(
+                        tooltip: appText(context, 'Start date'),
+                        onPressed: onPickStart,
+                        icon: const Icon(Icons.today_rounded),
+                      ),
+                      IconButton(
+                        tooltip: appText(context, 'End date'),
+                        onPressed: onPickEnd,
+                        icon: const Icon(Icons.event_available_rounded),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            }
+
+            return Row(
+              children: [
+                const IconBadge(icon: Icons.calendar_month_rounded, size: 46),
+                const SizedBox(width: 12),
+                Expanded(child: content),
+                IconButton(
+                  tooltip: appText(context, 'Start date'),
+                  onPressed: onPickStart,
+                  icon: const Icon(Icons.today_rounded),
+                ),
+                IconButton(
+                  tooltip: appText(context, 'End date'),
+                  onPressed: onPickEnd,
+                  icon: const Icon(Icons.event_available_rounded),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -627,26 +686,29 @@ class GeneratingTripPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const GlassPanel(
+    return GlassPanel(
       child: Row(
         children: [
-          SizedBox.square(
+          const SizedBox.square(
             dimension: 36,
             child: CircularProgressIndicator(strokeWidth: 3),
           ),
-          SizedBox(width: 14),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Generating itinerary...',
-                  style: TextStyle(fontWeight: FontWeight.w900),
+                  appText(context, 'Generating itinerary...'),
+                  style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
-                SizedBox(height: 4),
+                const SizedBox(height: 4),
                 Text(
-                  'AI is shaping the route, bookings, budget, and packing list.',
-                  style: TextStyle(
+                  appText(
+                    context,
+                    'AI is shaping the route, bookings, budget, and packing list.',
+                  ),
+                  style: const TextStyle(
                     color: _secondary,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,

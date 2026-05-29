@@ -49,7 +49,10 @@ class MapScreen extends StatelessWidget {
                         right: 18,
                         child: GlassPanel(
                           child: Text(
-                            '${trip.destination} route / ${trip.items.length} stops',
+                            appText(
+                              context,
+                              '${trip.destination} route / ${trip.items.length} stops',
+                            ),
                             style: const TextStyle(fontWeight: FontWeight.w900),
                           ),
                         ),
@@ -220,7 +223,7 @@ class PackingScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  group.category,
+                  appText(context, group.category),
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
@@ -234,7 +237,7 @@ class PackingScreen extends StatelessWidget {
                     onChanged: (_) {},
                     activeColor: _primary,
                     title: Text(
-                      item,
+                      appText(context, item),
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),

@@ -100,9 +100,9 @@ class _EditableItineraryScreenState extends State<_EditableItineraryScreen> {
               child: HeroTripCard(trip: _trip),
             ),
             const SizedBox(height: 8),
-            const SingleChildScrollView(
+            SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              padding: EdgeInsets.symmetric(horizontal: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
               child: TabBar(
                 isScrollable: true,
                 tabAlignment: TabAlignment.start,
@@ -110,13 +110,13 @@ class _EditableItineraryScreenState extends State<_EditableItineraryScreen> {
                 unselectedLabelColor: _secondary,
                 indicatorColor: _accent,
                 tabs: [
-                  Tab(text: 'Overview'),
-                  Tab(text: 'Itinerary'),
-                  Tab(text: 'Budget'),
-                  Tab(text: 'Map'),
-                  Tab(text: 'Checklist'),
-                  Tab(text: 'Booking'),
-                  Tab(text: 'Chat'),
+                  Tab(text: appText(context, 'Overview')),
+                  Tab(text: appText(context, 'Itinerary')),
+                  Tab(text: appText(context, 'Budget')),
+                  Tab(text: appText(context, 'Map')),
+                  Tab(text: appText(context, 'Checklist')),
+                  Tab(text: appText(context, 'Booking')),
+                  Tab(text: appText(context, 'Chat')),
                 ],
               ),
             ),
@@ -224,29 +224,35 @@ class EditableItineraryTab extends StatelessWidget {
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: const Text('Add stop'),
+            title: Text(appText(context, 'Add stop')),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TextField(
                     controller: activity,
-                    decoration: const InputDecoration(labelText: 'Activity'),
+                    decoration: InputDecoration(
+                      labelText: appText(context, 'Activity'),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: time,
-                    decoration: const InputDecoration(labelText: 'Time'),
+                    decoration: InputDecoration(
+                      labelText: appText(context, 'Time'),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: cost,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Cost'),
+                    decoration: InputDecoration(
+                      labelText: appText(context, 'Cost'),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   StepperControl(
-                    label: 'Day $day',
+                    label: '${appText(context, 'Day')} $day',
                     onMinus: () =>
                         setDialogState(() => day = math.max(1, day - 1)),
                     onPlus: () => setDialogState(() => day += 1),
@@ -257,7 +263,7 @@ class EditableItineraryTab extends StatelessWidget {
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancel'),
+                child: Text(appText(context, 'Cancel')),
               ),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(
@@ -271,7 +277,7 @@ class EditableItineraryTab extends StatelessWidget {
                     int.tryParse(cost.text.replaceAll(RegExp(r'\D'), '')) ?? 0,
                   ),
                 ),
-                child: const Text('Add'),
+                child: Text(appText(context, 'Add')),
               ),
             ],
           ),
@@ -303,7 +309,7 @@ class EditableItineraryTab extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         for (final day in grouped.keys.toList()..sort()) ...[
-          LabelText('Day $day'),
+          LabelText('${appText(context, 'Day')} $day'),
           const SizedBox(height: 10),
           for (final item in grouped[day]!)
             Dismissible(
@@ -434,7 +440,7 @@ class TripMapTab extends StatelessWidget {
               const LabelText('Route map'),
               const SizedBox(height: 8),
               Text(
-                trip.formattedAddress ?? trip.destination,
+                appText(context, trip.formattedAddress ?? trip.destination),
                 style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
@@ -474,20 +480,22 @@ class EditableChecklistTab extends StatelessWidget {
       final item = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('Add to ${category.category}'),
+          title: Text('${appText(context, 'Add to')} ${category.category}'),
           content: TextField(
             controller: controller,
-            decoration: const InputDecoration(labelText: 'Checklist item'),
+            decoration: InputDecoration(
+              labelText: appText(context, 'Checklist item'),
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+              child: Text(appText(context, 'Cancel')),
             ),
             FilledButton(
               onPressed: () =>
                   Navigator.of(context).pop(controller.text.trim()),
-              child: const Text('Add'),
+              child: Text(appText(context, 'Add')),
             ),
           ],
         ),
@@ -525,7 +533,7 @@ class EditableChecklistTab extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          category.category,
+                          appText(context, category.category),
                           style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w900,
@@ -543,7 +551,7 @@ class EditableChecklistTab extends StatelessWidget {
                       dense: true,
                       value: false,
                       onChanged: (_) {},
-                      title: Text(item),
+                      title: Text(appText(context, item)),
                       secondary: IconButton(
                         icon: const Icon(Icons.delete_outline_rounded),
                         onPressed: () {
@@ -591,31 +599,41 @@ class EditableBookingTab extends StatelessWidget {
       final booking = await showDialog<Booking>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Add booking'),
+          title: Text(appText(context, 'Add booking')),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: title,
-                  decoration: const InputDecoration(labelText: 'Title'),
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Title'),
+                  ),
                 ),
                 TextField(
                   controller: date,
-                  decoration: const InputDecoration(labelText: 'Date'),
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Date'),
+                  ),
                 ),
                 TextField(
                   controller: time,
-                  decoration: const InputDecoration(labelText: 'Time'),
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Time'),
+                  ),
                 ),
                 TextField(
                   controller: reference,
-                  decoration: const InputDecoration(labelText: 'Reference'),
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Reference'),
+                  ),
                 ),
                 TextField(
                   controller: cost,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Cost'),
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Cost'),
+                  ),
                 ),
               ],
             ),
@@ -623,7 +641,7 @@ class EditableBookingTab extends StatelessWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+              child: Text(appText(context, 'Cancel')),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(
@@ -636,7 +654,7 @@ class EditableBookingTab extends StatelessWidget {
                   Icons.confirmation_number_rounded,
                 ),
               ),
-              child: const Text('Add'),
+              child: Text(appText(context, 'Add')),
             ),
           ],
         ),
@@ -714,10 +732,13 @@ class TripChatTab extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Ask for route changes, cheaper options, packing help, or booking reminders.',
+              Text(
+                appText(
+                  context,
+                  'Ask for route changes, cheaper options, packing help, or booking reminders.',
+                ),
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   color: _secondary,
                   fontWeight: FontWeight.w700,
                 ),
@@ -785,7 +806,7 @@ class BudgetCategoryEditor extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            category.category,
+            appText(context, category.category),
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 10),
@@ -794,7 +815,9 @@ class BudgetCategoryEditor extends StatelessWidget {
               TextField(
                 controller: planned,
                 keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: 'Planned $currency'),
+                decoration: InputDecoration(
+                  labelText: '${appText(context, 'Planned')} $currency',
+                ),
                 onSubmitted: (_) => onChanged(
                   category.copyWith(
                     planned:
@@ -813,7 +836,9 @@ class BudgetCategoryEditor extends StatelessWidget {
               TextField(
                 controller: actual,
                 keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: 'Actual $currency'),
+                decoration: InputDecoration(
+                  labelText: '${appText(context, 'Actual')} $currency',
+                ),
                 onSubmitted: (_) => onChanged(
                   category.copyWith(
                     planned:

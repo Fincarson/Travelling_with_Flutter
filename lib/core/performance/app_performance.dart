@@ -83,7 +83,7 @@ class AppPerformanceSettings {
         imageQuality: ImageQualityPreference.balanced,
         cachePages: true,
         isolateRepaints: true,
-        heavyVisualEffects: true,
+        heavyVisualEffects: false,
       ),
       PerformancePreset.batterySaver => const AppPerformanceSettings(
         preset: PerformancePreset.batterySaver,
@@ -101,12 +101,17 @@ class AppPerformanceSettings {
   }
 
   factory AppPerformanceSettings.fromJson(Map<String, dynamic> json) {
+    final preset = _enumFromName(
+      PerformancePreset.values,
+      json['preset'] as String?,
+      PerformancePreset.balanced,
+    );
+    if (preset != PerformancePreset.custom) {
+      return AppPerformanceSettings.forPreset(preset);
+    }
+
     return AppPerformanceSettings(
-      preset: _enumFromName(
-        PerformancePreset.values,
-        json['preset'] as String?,
-        PerformancePreset.balanced,
-      ),
+      preset: preset,
       motionLevel: _enumFromName(
         MotionLevel.values,
         json['motionLevel'] as String?,
@@ -124,7 +129,7 @@ class AppPerformanceSettings {
       ),
       cachePages: (json['cachePages'] as bool?) ?? true,
       isolateRepaints: (json['isolateRepaints'] as bool?) ?? true,
-      heavyVisualEffects: (json['heavyVisualEffects'] as bool?) ?? true,
+      heavyVisualEffects: (json['heavyVisualEffects'] as bool?) ?? false,
     );
   }
 
@@ -180,7 +185,7 @@ class AppPerformanceSettings {
     return switch (frameRatePreference) {
       FrameRatePreference.native => 'Use normal Flutter frame pacing.',
       FrameRatePreference.balanced =>
-        'Slow decorative loops and keep transitions short.',
+        'Keep transitions short and decorative loops off unless enabled.',
       FrameRatePreference.conservative =>
         'Prefer static visuals and minimal animation work.',
     };
@@ -241,8 +246,7 @@ class AppPerformanceController extends ChangeNotifier {
           _settings = AppPerformanceSettings.fromJson(decoded);
         }
       }
-    } catch (error) {
-      debugPrint('[performance] Could not load local settings: $error');
+    } catch (_) {
     } finally {
       _loaded = true;
       notifyListeners();
@@ -305,9 +309,7 @@ class AppPerformanceController extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_storageKey, jsonEncode(settings.toJson()));
-    } catch (error) {
-      debugPrint('[performance] Could not save local settings: $error');
-    }
+    } catch (_) {}
   }
 }
 

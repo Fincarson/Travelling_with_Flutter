@@ -26,7 +26,7 @@ class MessageBubble extends StatelessWidget {
               : Border.all(color: const Color(0xFFEFF3F6)),
         ),
         child: Text(
-          message.text,
+          message.fromUser ? message.text : appText(context, message.text),
           style: TextStyle(
             color: message.fromUser ? Colors.white : _primary,
             fontWeight: FontWeight.w700,
@@ -67,7 +67,7 @@ class ChatPreview extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      title,
+                      appText(context, title),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -76,7 +76,7 @@ class ChatPreview extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      text,
+                      appText(context, text),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(

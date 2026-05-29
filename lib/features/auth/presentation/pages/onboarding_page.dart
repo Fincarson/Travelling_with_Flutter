@@ -34,15 +34,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const IconBadge(icon: Icons.travel_explore_rounded, size: 64),
           const SizedBox(height: 24),
           Text(
-            'Pick your travel style',
+            appText(context, 'Pick your travel style'),
             style: Theme.of(
               context,
             ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 10),
-          const Text(
-            'Choose the things you usually look for so routes, packing lists, and budgets start closer to your taste.',
-            style: TextStyle(
+          Text(
+            appText(
+              context,
+              'Choose the things you usually look for so routes, packing lists, and budgets start closer to your taste.',
+            ),
+            style: const TextStyle(
               color: _secondary,
               fontWeight: FontWeight.w700,
               height: 1.45,
@@ -57,7 +60,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             children: [
               for (final tag in tags)
                 ChoiceChip(
-                  label: Text(tag),
+                  label: Text(appText(context, tag)),
                   selected: _selected.contains(tag),
                   onSelected: (_) => setState(
                     () => _selected.contains(tag)

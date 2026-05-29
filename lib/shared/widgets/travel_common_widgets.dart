@@ -135,7 +135,7 @@ class StatCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  title.toUpperCase(),
+                  appText(context, title).toUpperCase(),
                   style: const TextStyle(
                     color: _secondary,
                     fontSize: 9,
@@ -144,13 +144,13 @@ class StatCard extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  value,
+                  appText(context, value),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
                 Text(
-                  detail,
+                  appText(context, detail),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -188,10 +188,13 @@ class InfoCard extends StatelessWidget {
         children: [
           IconBadge(icon: icon, size: 42),
           const SizedBox(height: 10),
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+          Text(
+            appText(context, title),
+            style: const TextStyle(fontWeight: FontWeight.w900),
+          ),
           const SizedBox(height: 4),
           Text(
-            text,
+            appText(context, text),
             style: const TextStyle(
               color: _secondary,
               fontWeight: FontWeight.w700,
@@ -232,7 +235,7 @@ class TopBar extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: Text(
-            title,
+            appText(context, title),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(
@@ -271,7 +274,7 @@ class SectionHeader extends StatelessWidget {
       children: [
         Expanded(
           child: Text(
-            title.toUpperCase(),
+            appText(context, title).toUpperCase(),
             style: const TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w900,
@@ -283,7 +286,7 @@ class SectionHeader extends StatelessWidget {
           TextButton(
             onPressed: onTap,
             child: Text(
-              action!,
+              appText(context, action!),
               style: const TextStyle(
                 fontWeight: FontWeight.w900,
                 color: _secondary,
@@ -318,7 +321,7 @@ class PrimaryButton extends StatelessWidget {
       onPressed: onPressed,
       icon: Icon(icon),
       label: Text(
-        label.toUpperCase(),
+        appText(context, label).toUpperCase(),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.2),
@@ -401,7 +404,7 @@ class LabelText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(
-      text.toUpperCase(),
+      appText(context, text).toUpperCase(),
       style: const TextStyle(
         color: _secondary,
         fontSize: 10,
@@ -425,7 +428,7 @@ class SmallPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
-        label.toUpperCase(),
+        appText(context, label).toUpperCase(),
         style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900),
       ),
     );
@@ -459,7 +462,7 @@ class NavItem extends StatelessWidget {
           ),
           const SizedBox(height: 3),
           Text(
-            label.toUpperCase(),
+            appText(context, label).toUpperCase(),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(

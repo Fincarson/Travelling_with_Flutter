@@ -13,7 +13,7 @@ class ChatListScreen extends StatelessWidget {
         padding: _responsivePagePadding(context, top: 28, bottom: 112),
         children: [
           Text(
-            'Chat',
+            appText(context, 'Chat'),
             style: Theme.of(
               context,
             ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900),
@@ -96,8 +96,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 Expanded(
                   child: TextField(
                     controller: _input,
-                    decoration: const InputDecoration(
-                      hintText: 'Ask about Kyoto, budgets, packing...',
+                    decoration: InputDecoration(
+                      hintText: appText(
+                        context,
+                        'Ask about Kyoto, budgets, packing...',
+                      ),
                     ),
                   ),
                 ),

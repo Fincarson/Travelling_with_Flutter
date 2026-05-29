@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../app/travel_agent_app.dart';
+import '../../../../core/localization/app_text.dart';
 import '../../../../core/performance/app_performance.dart';
 import '../../data/account_auth_service.dart';
 
@@ -209,14 +210,17 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             ),
             const SizedBox(height: 18),
             Text(
-              'Travelling with Flutter',
+              appText(context, 'Travelling with Flutter'),
               style: theme.textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.w900,
               ),
             ),
             const SizedBox(height: 6),
             Text(
-              'Sign in to keep your trips, AI plans, budgets, and packing lists synced.',
+              appText(
+                context,
+                'Sign in to keep your trips, AI plans, budgets, and packing lists synced.',
+              ),
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: const Color(0xFF7AAACE),
                 fontWeight: FontWeight.w700,
@@ -225,16 +229,16 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             ),
             const SizedBox(height: 24),
             SegmentedButton<_AccountMode>(
-              segments: const [
+              segments: [
                 ButtonSegment(
                   value: _AccountMode.email,
-                  icon: Icon(Icons.alternate_email_rounded),
-                  label: Text('Email'),
+                  icon: const Icon(Icons.alternate_email_rounded),
+                  label: Text(appText(context, 'Email')),
                 ),
                 ButtonSegment(
                   value: _AccountMode.phone,
-                  icon: Icon(Icons.phone_iphone_rounded),
-                  label: Text('Phone'),
+                  icon: const Icon(Icons.phone_iphone_rounded),
+                  label: Text(appText(context, 'Phone')),
                 ),
               ],
               selected: {_mode},
@@ -264,12 +268,15 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                   : (value) => setState(() => _rememberMe = value ?? true),
               controlAffinity: ListTileControlAffinity.leading,
               contentPadding: EdgeInsets.zero,
-              title: const Text(
-                'Remember me for 30 days',
-                style: TextStyle(fontWeight: FontWeight.w800),
+              title: Text(
+                appText(context, 'Remember me for 30 days'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
               ),
-              subtitle: const Text(
-                'Useful while debugging. Sign out anytime from Profile.',
+              subtitle: Text(
+                appText(
+                  context,
+                  'Useful while debugging. Sign out anytime from Profile.',
+                ),
               ),
             ),
             const SizedBox(height: 18),
@@ -279,7 +286,7 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Text(
-                    'or',
+                    appText(context, 'or'),
                     style: theme.textTheme.labelMedium?.copyWith(
                       color: const Color(0xFF7AAACE),
                       fontWeight: FontWeight.w900,
@@ -300,13 +307,13 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                       );
                     }),
               icon: const Icon(Icons.g_mobiledata_rounded, size: 30),
-              label: const Text('Continue with Google'),
+              label: Text(appText(context, 'Continue with Google')),
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
               onPressed: null,
               icon: const Icon(Icons.facebook_rounded),
-              label: const Text('Facebook setup needed'),
+              label: Text(appText(context, 'Facebook setup needed')),
             ),
             if (_message != null) ...[
               const SizedBox(height: 16),
@@ -330,9 +337,9 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
               controller: _name,
               enabled: !_isBusy,
               textInputAction: TextInputAction.next,
-              decoration: const InputDecoration(
-                labelText: 'Name',
-                prefixIcon: Icon(Icons.person_outline_rounded),
+              decoration: InputDecoration(
+                labelText: appText(context, 'Name'),
+                prefixIcon: const Icon(Icons.person_outline_rounded),
               ),
             ),
             const SizedBox(height: 12),
@@ -343,12 +350,14 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             keyboardType: TextInputType.emailAddress,
             textInputAction: TextInputAction.next,
             autofillHints: const [AutofillHints.email],
-            decoration: const InputDecoration(
-              labelText: 'Email',
-              prefixIcon: Icon(Icons.alternate_email_rounded),
+            decoration: InputDecoration(
+              labelText: appText(context, 'Email'),
+              prefixIcon: const Icon(Icons.alternate_email_rounded),
             ),
             validator: (value) {
-              if (!_looksLikeEmail(value ?? '')) return 'Enter a valid email.';
+              if (!_looksLikeEmail(value ?? '')) {
+                return appText(context, 'Enter a valid email.');
+              }
               return null;
             },
           ),
@@ -359,13 +368,13 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             obscureText: true,
             textInputAction: TextInputAction.done,
             autofillHints: const [AutofillHints.password],
-            decoration: const InputDecoration(
-              labelText: 'Password',
-              prefixIcon: Icon(Icons.lock_outline_rounded),
+            decoration: InputDecoration(
+              labelText: appText(context, 'Password'),
+              prefixIcon: const Icon(Icons.lock_outline_rounded),
             ),
             validator: (value) {
               if ((value ?? '').length < 6) {
-                return 'Use at least 6 characters.';
+                return appText(context, 'Use at least 6 characters.');
               }
               return null;
             },
@@ -384,7 +393,12 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                         ? Icons.person_add_alt_1_rounded
                         : Icons.login_rounded,
                   ),
-            label: Text(_isCreatingAccount ? 'Create account' : 'Sign in'),
+            label: Text(
+              appText(
+                context,
+                _isCreatingAccount ? 'Create account' : 'Sign in',
+              ),
+            ),
           ),
           const SizedBox(height: 8),
           TextButton(
@@ -395,16 +409,19 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                     _message = null;
                   }),
             child: Text(
-              _isCreatingAccount
-                  ? 'I already have an account'
-                  : 'Create a new account',
+              appText(
+                context,
+                _isCreatingAccount
+                    ? 'I already have an account'
+                    : 'Create a new account',
+              ),
             ),
           ),
           if (!_isCreatingAccount)
             TextButton.icon(
               onPressed: _isBusy ? null : _sendReset,
               icon: const Icon(Icons.help_outline_rounded),
-              label: const Text('Forgot password?'),
+              label: Text(appText(context, 'Forgot password?')),
             ),
         ],
       ),
@@ -439,15 +456,18 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             enabled: !_isBusy && !hasSession,
             keyboardType: TextInputType.phone,
             autofillHints: const [AutofillHints.telephoneNumber],
-            decoration: const InputDecoration(
-              labelText: 'Phone number',
+            decoration: InputDecoration(
+              labelText: appText(context, 'Phone number'),
               hintText: '+15551234567',
-              prefixIcon: Icon(Icons.phone_iphone_rounded),
+              prefixIcon: const Icon(Icons.phone_iphone_rounded),
             ),
             validator: (value) {
               final phone = (value ?? '').trim();
               if (!phone.startsWith('+') || phone.length < 8) {
-                return 'Use international format with + country code.';
+                return appText(
+                  context,
+                  'Use international format with + country code.',
+                );
               }
               return null;
             },
@@ -459,21 +479,23 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
               enabled: !_isBusy,
               keyboardType: TextInputType.number,
               textInputAction: TextInputAction.done,
-              decoration: const InputDecoration(
-                labelText: 'SMS code',
-                prefixIcon: Icon(Icons.sms_outlined),
+              decoration: InputDecoration(
+                labelText: appText(context, 'SMS code'),
+                prefixIcon: const Icon(Icons.sms_outlined),
               ),
               validator: (value) {
                 final code = (value ?? '').trim();
-                if (code.length < 6) return 'Enter the 6-digit SMS code.';
+                if (code.length < 6) {
+                  return appText(context, 'Enter the 6-digit SMS code.');
+                }
                 return null;
               },
               onFieldSubmitted: (_) => _confirmPhoneCode(),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Keep this window open while the SMS arrives.',
-              style: TextStyle(
+            Text(
+              appText(context, 'Keep this window open while the SMS arrives.'),
+              style: const TextStyle(
                 color: Color(0xFF7AAACE),
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
@@ -497,7 +519,9 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                         ? Icons.verified_rounded
                         : Icons.mark_email_read_rounded,
                   ),
-            label: Text(hasSession ? 'Verify code' : 'Send SMS code'),
+            label: Text(
+              appText(context, hasSession ? 'Verify code' : 'Send SMS code'),
+            ),
           ),
           if (hasSession) ...[
             const SizedBox(height: 8),
@@ -506,7 +530,7 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                 Expanded(
                   child: TextButton(
                     onPressed: _isBusy ? null : _sendPhoneCode,
-                    child: const Text('Resend code'),
+                    child: Text(appText(context, 'Resend code')),
                   ),
                 ),
                 Expanded(
@@ -518,7 +542,7 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                             _smsCode.clear();
                             _message = null;
                           }),
-                    child: const Text('Change phone'),
+                    child: Text(appText(context, 'Change phone')),
                   ),
                 ),
               ],
@@ -568,7 +592,7 @@ class _StatusMessage extends StatelessWidget {
         border: Border.all(color: const Color(0xFFEFF3F6)),
       ),
       child: Text(
-        message,
+        appText(context, message),
         style: const TextStyle(
           color: Color(0xFF355872),
           fontWeight: FontWeight.w800,

@@ -20,9 +20,9 @@ class CurrentTripCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  const Text(
-                    'UP NEXT',
-                    style: TextStyle(
+                  Text(
+                    appText(context, 'UP NEXT'),
+                    style: const TextStyle(
                       color: _accent,
                       fontSize: 11,
                       fontWeight: FontWeight.w900,
@@ -30,11 +30,11 @@ class CurrentTripCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
-                    'Kyoto City Zoo',
+                  Text(
+                    appText(context, 'Kyoto City Zoo'),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 30,
                       fontWeight: FontWeight.w900,
@@ -354,7 +354,7 @@ class TripListCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '${trip.startDate} / ${trip.groupType}',
+              '${trip.startDate} / ${appText(context, trip.groupType)}',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -434,7 +434,7 @@ class ItineraryTile extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    item.activity,
+                    appText(context, item.activity),
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w900),
@@ -445,7 +445,7 @@ class ItineraryTile extends StatelessWidget {
             Flexible(
               fit: FlexFit.loose,
               child: Text(
-                item.cost == 0 ? 'Free' : '\$${item.cost}',
+                item.cost == 0 ? appText(context, 'Free') : '\$${item.cost}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.end,
@@ -477,7 +477,7 @@ class BookingTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    booking.title,
+                    appText(context, booking.title),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w900),

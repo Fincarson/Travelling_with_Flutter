@@ -25,7 +25,9 @@ class BudgetBar extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  name,
+                  // Category names may be custom user data; translate only
+                  // known app labels.
+                  appText(context, name),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w900),
@@ -78,7 +80,7 @@ class QuickAction extends StatelessWidget {
           Icon(icon, color: _primary, size: 28),
           const SizedBox(height: 4),
           Text(
-            label.toUpperCase(),
+            appText(context, label).toUpperCase(),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -115,7 +117,7 @@ class MiniAction extends StatelessWidget {
             Icon(icon, color: _primary),
             const SizedBox(height: 6),
             Text(
-              label,
+              appText(context, label),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,

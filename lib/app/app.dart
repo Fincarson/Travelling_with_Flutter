@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../core/localization/app_locale_controller.dart';
 import '../core/performance/app_performance.dart';
 import '../core/theme/app_theme.dart';
 import '../features/auth/presentation/pages/account_gate.dart';
+import '../l10n/generated/app_localizations.dart';
 
 class MyApp extends StatefulWidget {
   const MyApp({super.key, this.home});
@@ -35,23 +37,33 @@ class _MyAppState extends State<MyApp> {
       child: Builder(
         builder: (context) {
           final performance = PerformanceScope.settingsOf(context);
-          return TickerMode(
-            enabled: performance.animationsEnabled,
-            child: MaterialApp(
-              title: 'Remix Travel Agent',
-              debugShowCheckedModeBanner: false,
-              theme: TravelAgentTheme.light(),
-              home: widget.home ?? AccountGate(),
-              builder: (context, child) {
-                final mediaQuery = MediaQuery.of(context);
-                return MediaQuery(
-                  data: mediaQuery.copyWith(
-                    disableAnimations: !performance.animationsEnabled,
-                  ),
-                  child: child ?? const SizedBox.shrink(),
-                );
-              },
-            ),
+          return ValueListenableBuilder<Locale>(
+            valueListenable: AppLocaleController.locale,
+            builder: (context, locale, _) {
+              return TickerMode(
+                enabled: performance.animationsEnabled,
+                child: MaterialApp(
+                  onGenerateTitle: (context) =>
+                      AppLocalizations.of(context).appTitle,
+                  debugShowCheckedModeBanner: false,
+                  theme: TravelAgentTheme.light(),
+                  locale: locale,
+                  localizationsDelegates:
+                      AppLocalizations.localizationsDelegates,
+                  supportedLocales: AppLocalizations.supportedLocales,
+                  home: widget.home ?? AccountGate(),
+                  builder: (context, child) {
+                    final mediaQuery = MediaQuery.of(context);
+                    return MediaQuery(
+                      data: mediaQuery.copyWith(
+                        disableAnimations: !performance.animationsEnabled,
+                      ),
+                      child: child ?? const SizedBox.shrink(),
+                    );
+                  },
+                ),
+              );
+            },
           );
         },
       ),

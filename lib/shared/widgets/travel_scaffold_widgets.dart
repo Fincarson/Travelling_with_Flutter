@@ -39,7 +39,7 @@ class SyncBanner extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                message,
+                appText(context, message),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
@@ -76,7 +76,7 @@ class FormNotice extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              message,
+              appText(context, message),
               style: const TextStyle(
                 color: Color(0xFF991B1B),
                 fontSize: 12,

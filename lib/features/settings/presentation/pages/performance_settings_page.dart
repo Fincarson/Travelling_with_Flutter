@@ -32,7 +32,7 @@ class PerformanceSettingsScreen extends StatelessWidget {
                       PerformancePreset.batterySaver,
                     ])
                       ChoiceChip(
-                        label: Text(preset.label),
+                        label: Text(appText(context, preset.label)),
                         selected: settings.preset == preset,
                         selectedColor: _accent,
                         labelStyle: const TextStyle(
@@ -91,7 +91,7 @@ class _PerformanceImpactCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            settings.framePolicy,
+            appText(context, settings.framePolicy),
             style: const TextStyle(
               color: _secondary,
               fontWeight: FontWeight.w700,
@@ -120,13 +120,13 @@ class _AdvancedPerformancePanel extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 4),
             child: Row(
-              children: const [
-                IconBadge(icon: Icons.tune_rounded, size: 42),
-                SizedBox(width: 12),
+              children: [
+                const IconBadge(icon: Icons.tune_rounded, size: 42),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Advanced',
-                    style: TextStyle(
+                    appText(context, 'Advanced'),
+                    style: const TextStyle(
                       color: _primary,
                       fontSize: 18,
                       fontWeight: FontWeight.w900,
@@ -202,11 +202,13 @@ class _EnumDropdownTile<T> extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
       child: DropdownButtonFormField<T>(
         initialValue: value,
-        decoration: InputDecoration(labelText: title),
+        decoration: InputDecoration(labelText: appText(context, title)),
         items: values
             .map(
-              (item) =>
-                  DropdownMenuItem<T>(value: item, child: Text(labelFor(item))),
+              (item) => DropdownMenuItem<T>(
+                value: item,
+                child: Text(appText(context, labelFor(item))),
+              ),
             )
             .toList(),
         onChanged: (next) {
@@ -235,9 +237,12 @@ class _SwitchTile extends StatelessWidget {
     return SwitchListTile.adaptive(
       value: value,
       onChanged: (next) => unawaited(onChanged(next)),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+      title: Text(
+        appText(context, title),
+        style: const TextStyle(fontWeight: FontWeight.w900),
+      ),
       subtitle: Text(
-        subtitle,
+        appText(context, subtitle),
         style: const TextStyle(
           color: _secondary,
           fontSize: 12,

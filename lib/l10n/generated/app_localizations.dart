@@ -6,7 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart' as intl;
 
 import 'app_localizations_en.dart';
-import 'app_localizations_id.dart';
+import 'app_localizations_zh.dart';
 
 // ignore_for_file: type=lint
 
@@ -95,7 +95,12 @@ abstract class AppLocalizations {
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
-    Locale('id'),
+    Locale('zh'),
+    Locale.fromSubtags(
+      languageCode: 'zh',
+      countryCode: 'TW',
+      scriptCode: 'Hant',
+    ),
   ];
 
   /// No description provided for @appTitle.
@@ -254,11 +259,11 @@ abstract class AppLocalizations {
   /// **'English'**
   String get english;
 
-  /// No description provided for @indonesian.
+  /// No description provided for @traditionalChineseTaiwan.
   ///
   /// In en, this message translates to:
-  /// **'Indonesian'**
-  String get indonesian;
+  /// **'Chinese (Taiwan / Traditional)'**
+  String get traditionalChineseTaiwan;
 }
 
 class _AppLocalizationsDelegate
@@ -272,19 +277,25 @@ class _AppLocalizationsDelegate
 
   @override
   bool isSupported(Locale locale) =>
-      <String>['en', 'id'].contains(locale.languageCode);
+      <String>['en', 'zh'].contains(locale.languageCode);
 
   @override
   bool shouldReload(_AppLocalizationsDelegate old) => false;
 }
 
 AppLocalizations lookupAppLocalizations(Locale locale) {
+  // Lookup logic when language+script+country codes are specified.
+  switch (locale.toString()) {
+    case 'zh_Hant_TW':
+      return AppLocalizationsZhHantTw();
+  }
+
   // Lookup logic when only language code is specified.
   switch (locale.languageCode) {
     case 'en':
       return AppLocalizationsEn();
-    case 'id':
-      return AppLocalizationsId();
+    case 'zh':
+      return AppLocalizationsZh();
   }
 
   throw FlutterError(

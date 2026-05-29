@@ -29,7 +29,7 @@ class SettingsTile extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    title,
+                    appText(context, title),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w900),
@@ -37,7 +37,7 @@ class SettingsTile extends StatelessWidget {
                 ),
                 Flexible(
                   child: Text(
-                    value,
+                    appText(context, value),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.end,

@@ -16,8 +16,8 @@ class CreateTripScreen extends StatefulWidget {
 class _CreateTripScreenState extends State<CreateTripScreen> {
   final _places = GeoapifyPlacesService();
   final _assistant = TravelAssistantService();
-  final _destination = TextEditingController(text: 'Tokyo');
-  final _budget = TextEditingController(text: '3500');
+  final _destination = TextEditingController();
+  final _budget = TextEditingController();
   final _chatInput = TextEditingController();
   final _customPreference = TextEditingController();
   final _airline = TextEditingController();
@@ -28,7 +28,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   final List<CreateTripChatMessage> _chatMessages = [];
   CreateTripDraft? _pendingDraft;
   var _group = 'Friends';
-  var _currency = 'USD';
+  var _currency = AppCurrency.fallbackCurrencyCode;
   var _mode = 0;
   String? _formError;
   var _isSearching = false;
@@ -36,6 +36,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _isThinking = false;
   var _usedFallbackPlan = false;
   var _pendingDraftConfirmed = false;
+  var _appliedDeviceCurrency = false;
+  var _hasBudgetText = false;
   String? _lastAiError;
   DateTime _startDate = DateTime.now().add(const Duration(days: 30));
   DateTime _endDate = DateTime.now().add(const Duration(days: 35));
@@ -57,6 +59,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   ];
 
   static const _currencyOptions = ['USD', 'TWD', 'IDR', 'JPY', 'EUR'];
+  static const _groupOptions = ['Friends', 'Family', 'Tour'];
   static const _twdToIdrFallbackRate = 562.0;
 
   static const _galleryOptions = [
@@ -71,12 +74,27 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   @override
   void initState() {
     super.initState();
-    _searchPlaces(_destination.text);
+    _budget.addListener(_syncBudgetTextState);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_appliedDeviceCurrency) return;
+    _appliedDeviceCurrency = true;
+
+    final deviceCurrency = AppCurrency.defaultForDevice(
+      supportedCurrencies: _currencyOptions,
+    );
+    if (deviceCurrency == _currency) return;
+
+    _currency = deviceCurrency;
   }
 
   @override
   void dispose() {
     _searchTimer?.cancel();
+    _budget.removeListener(_syncBudgetTextState);
     _destination.dispose();
     _budget.dispose();
     _chatInput.dispose();
@@ -84,6 +102,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     _airline.dispose();
     _flightConfirmation.dispose();
     super.dispose();
+  }
+
+  void _syncBudgetTextState() {
+    final hasText = _budget.text.trim().isNotEmpty;
+    if (hasText == _hasBudgetText) return;
+    setState(() => _hasBudgetText = hasText);
   }
 
   void _schedulePlaceSearch(String value) {
@@ -170,6 +194,29 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     if (date == null) return;
     setState(() {
       _endDate = date;
+      _formError = null;
+    });
+  }
+
+  Future<void> _pickDateRange() async {
+    final today = DateTime.now();
+    final firstDate = DateTime(today.year, today.month, today.day);
+    final initialStart = _startDate.isBefore(firstDate)
+        ? firstDate
+        : _startDate;
+    final initialEnd = _endDate.isBefore(initialStart)
+        ? initialStart.add(const Duration(days: 4))
+        : _endDate;
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: firstDate,
+      lastDate: DateTime(2028, 12, 31),
+      initialDateRange: DateTimeRange(start: initialStart, end: initialEnd),
+    );
+    if (range == null) return;
+    setState(() {
+      _startDate = range.start;
+      _endDate = range.end;
       _formError = null;
     });
   }
@@ -692,6 +739,38 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     return buffer.toString();
   }
 
+  String _formatNumberText(String value) {
+    final digits = value.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return '';
+    return _formatWholeNumber(int.parse(digits));
+  }
+
+  void _setBudgetText(String value) {
+    final formatted = _formatNumberText(value);
+    _budget.value = TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+
+  String _budgetHintText(BuildContext context) {
+    final options = _budgetOptionsForCurrency(_currency);
+    final example = options.length >= 2
+        ? options[1].amount
+        : options.first.amount;
+    return '${_formatWholeNumber(example)} ${appText(context, _currencyDisplayName(_currency))}';
+  }
+
+  String _currencyDisplayName(String currency) {
+    return switch (currency) {
+      'TWD' => 'New Taiwan dollars',
+      'IDR' => 'Indonesian rupiah',
+      'JPY' => 'Japanese yen',
+      'EUR' => 'euros',
+      _ => 'US dollars',
+    };
+  }
+
   void _applyDraftToForm(CreateTripDraft draft) {
     final destination = draft.destination?.trim();
     if (destination != null && destination.isNotEmpty) {
@@ -703,13 +782,15 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     if (startDate != null) _startDate = startDate;
     if (endDate != null) _endDate = endDate;
     final budget = draft.budget?.trim();
-    if (budget != null && budget.isNotEmpty) _budget.text = budget;
+    if (budget != null && budget.isNotEmpty) _setBudgetText(budget);
     final currency = draft.currency;
     if (currency != null && _currencyOptions.contains(currency)) {
       _currency = currency;
     }
     final groupType = draft.groupType;
-    if (groupType != null && groupType.isNotEmpty) _group = groupType;
+    if (groupType != null && _groupOptions.contains(groupType)) {
+      _group = groupType;
+    }
     _preferences
       ..clear()
       ..addAll(
@@ -831,10 +912,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                     size: 42,
                                   ),
                                   const SizedBox(width: 12),
-                                  const Expanded(
+                                  Expanded(
                                     child: Text(
-                                      'Customize AI Draft',
-                                      style: TextStyle(
+                                      appText(context, 'Customize AI Draft'),
+                                      style: const TextStyle(
                                         color: _primary,
                                         fontSize: 20,
                                         fontWeight: FontWeight.w900,
@@ -851,9 +932,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                               const SizedBox(height: 16),
                               TextField(
                                 controller: destination,
-                                decoration: const InputDecoration(
-                                  labelText: 'Destination',
-                                  prefixIcon: Icon(Icons.place_rounded),
+                                decoration: InputDecoration(
+                                  labelText: appText(context, 'Destination'),
+                                  prefixIcon: const Icon(Icons.place_rounded),
                                 ),
                               ),
                               const SizedBox(height: 12),
@@ -875,23 +956,23 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                               TextField(
                                 controller: budget,
                                 keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  labelText: 'Total budget',
+                                decoration: InputDecoration(
+                                  labelText: appText(context, 'Total budget'),
                                   prefixText: '\$ ',
                                 ),
                               ),
                               const SizedBox(height: 12),
                               DropdownButtonFormField<String>(
                                 initialValue: groupType,
-                                decoration: const InputDecoration(
-                                  labelText: 'Who is coming',
+                                decoration: InputDecoration(
+                                  labelText: appText(context, 'Who is coming'),
                                 ),
                                 items:
                                     const ['Solo', 'Family', 'Friends', 'Tour']
                                         .map(
                                           (item) => DropdownMenuItem(
                                             value: item,
-                                            child: Text(item),
+                                            child: Text(appText(context, item)),
                                           ),
                                         )
                                         .toList(),
@@ -909,7 +990,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                   for (final option in _preferenceOptions)
                                     FilterChip(
                                       selected: preferences.contains(option),
-                                      label: Text(option),
+                                      label: Text(appText(context, option)),
                                       onSelected: (_) => setSheetState(() {
                                         preferences.contains(option)
                                             ? preferences.remove(option)
@@ -920,7 +1001,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                     (tag) => !_preferenceOptions.contains(tag),
                                   ))
                                     InputChip(
-                                      label: Text(tag),
+                                      label: Text(appText(context, tag)),
                                       onDeleted: () => setSheetState(
                                         () => preferences.remove(tag),
                                       ),
@@ -933,8 +1014,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                   Expanded(
                                     child: TextField(
                                       controller: customTag,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Add custom tag',
+                                      decoration: InputDecoration(
+                                        labelText: appText(
+                                          context,
+                                          'Add custom tag',
+                                        ),
                                       ),
                                       onSubmitted: (_) => addTag(),
                                     ),
@@ -1227,14 +1311,17 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                     const AnimatedGlobe(),
                     const SizedBox(height: 16),
                     Text(
-                      'Hello, where would you like to go?',
+                      appText(context, 'Hello, where would you like to go?'),
                       style: Theme.of(context).textTheme.headlineMedium
                           ?.copyWith(fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(height: 8),
-                    const Text(
-                      'Choose guided suggestions or describe the full trip.',
-                      style: TextStyle(
+                    Text(
+                      appText(
+                        context,
+                        'Choose guided suggestions or describe the full trip.',
+                      ),
+                      style: const TextStyle(
                         color: _secondary,
                         fontWeight: FontWeight.w700,
                       ),
@@ -1329,9 +1416,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                             controller: _chatInput,
                             enabled: !_isThinking && !_isGenerating,
                             decoration: InputDecoration(
-                              hintText: pendingDraft == null
-                                  ? 'Describe the trip...'
-                                  : 'Type changes or confirm...',
+                              hintText: appText(
+                                context,
+                                pendingDraft == null
+                                    ? 'Describe the trip...'
+                                    : 'Type changes or confirm...',
+                              ),
                             ),
                             onSubmitted: _sendCreateTripChat,
                           ),
@@ -1369,16 +1459,16 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ),
           const SizedBox(height: 18),
           SegmentedButton<int>(
-            segments: const [
+            segments: [
               ButtonSegment(
                 value: 1,
-                label: Text('AI Flow'),
-                icon: Icon(Icons.auto_awesome_rounded),
+                label: Text(appText(context, 'AI Flow')),
+                icon: const Icon(Icons.auto_awesome_rounded),
               ),
               ButtonSegment(
                 value: 2,
-                label: Text('Manual'),
-                icon: Icon(Icons.edit_note_rounded),
+                label: Text(appText(context, 'Manual')),
+                icon: const Icon(Icons.edit_note_rounded),
               ),
             ],
             selected: {_mode},
@@ -1388,70 +1478,78 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           if (_mode == 1) ...[
             const AnimatedGlobe(),
             const SizedBox(height: 14),
-            const FormNotice(
-              message:
-                  'Tell AI the basics below. It will build stops, bookings, and a packing list.',
+            FormNotice(
+              message: appText(
+                context,
+                'Tell AI the basics below. It will build stops, bookings, and a packing list.',
+              ),
             ),
           ],
           const SizedBox(height: 18),
-          GestureDetector(
-            onTap: _showImagePicker,
-            child: SizedBox(
-              height: 128,
-              child: _selectedImage == null
-                  ? const GlassPanel(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.add_photo_alternate_rounded,
-                            color: _accent,
-                            size: 30,
-                          ),
-                          SizedBox(height: 8),
-                          Text(
-                            'ADD PRIMARY PHOTO',
-                            style: TextStyle(
-                              color: _secondary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.network(
-                            _selectedImage!,
-                            fit: BoxFit.cover,
-                            filterQuality: PerformanceScope.maybeSettingsOf(
-                              context,
-                            ).filterQuality,
-                          ),
-                          Container(color: Colors.black.withValues(alpha: .18)),
-                          const Center(
-                            child: Icon(
+          if (_mode == 1) ...[
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _showImagePicker,
+              child: SizedBox(
+                height: 128,
+                child: _selectedImage == null
+                    ? GlassPanel(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
                               Icons.add_photo_alternate_rounded,
-                              color: Colors.white,
-                              size: 32,
+                              color: _accent,
+                              size: 30,
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 8),
+                            Text(
+                              appText(context, 'ADD PRIMARY PHOTO'),
+                              style: const TextStyle(
+                                color: _secondary,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.network(
+                              _selectedImage!,
+                              fit: BoxFit.cover,
+                              filterQuality: PerformanceScope.maybeSettingsOf(
+                                context,
+                              ).filterQuality,
+                            ),
+                            Container(
+                              color: Colors.black.withValues(alpha: .18),
+                            ),
+                            const Center(
+                              child: Icon(
+                                Icons.add_photo_alternate_rounded,
+                                color: Colors.white,
+                                size: 32,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+              ),
             ),
-          ),
-          const SizedBox(height: 14),
+            const SizedBox(height: 14),
+          ],
           TextField(
             controller: _destination,
             onChanged: _schedulePlaceSearch,
+            textInputAction: TextInputAction.next,
             decoration: InputDecoration(
-              labelText: 'Destination',
-              hintText: 'Search a real city',
+              labelText: appText(context, 'Destination'),
+              hintText: appText(context, 'Tokyo, Japan'),
               suffixIcon: _isSearching
                   ? const Padding(
                       padding: EdgeInsets.all(14),
@@ -1478,75 +1576,46 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           DateRangeCard(
             startDate: _startDate,
             endDate: _endDate,
+            onPickRange: _pickDateRange,
             onPickStart: _pickStartDate,
             onPickEnd: _pickEndDate,
-          ),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              if (constraints.maxWidth < 430) {
-                return DropdownButtonFormField<String>(
-                  initialValue: _currency,
-                  decoration: const InputDecoration(labelText: 'Currency'),
-                  items: _currencyOptions
-                      .map(
-                        (currency) => DropdownMenuItem(
-                          value: currency,
-                          child: Text(currency),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) =>
-                      setState(() => _currency = value ?? _currency),
-                );
-              }
-
-              return SegmentedButton<String>(
-                segments: _currencyOptions
-                    .map(
-                      (currency) =>
-                          ButtonSegment(value: currency, label: Text(currency)),
-                    )
-                    .toList(),
-                selected: {_currency},
-                onSelectionChanged: (value) =>
-                    setState(() => _currency = value.first),
-              );
-            },
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _budget,
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Total budget',
-              prefixText: '\$ ',
+            textInputAction: TextInputAction.next,
+            inputFormatters: const [_GroupedNumberInputFormatter()],
+            decoration: InputDecoration(
+              labelText: appText(context, 'Total budget'),
+              hintText: _budgetHintText(context),
+              suffixText: _hasBudgetText
+                  ? appText(context, _currencyDisplayName(_currency))
+                  : null,
             ),
           ),
           const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: _group,
-            decoration: const InputDecoration(labelText: 'Who is coming'),
-            items: const ['Solo', 'Family', 'Friends', 'Tour']
-                .map((item) => DropdownMenuItem(value: item, child: Text(item)))
-                .toList(),
-            onChanged: (value) => setState(() => _group = value ?? _group),
+          FullTapDropdownField(
+            label: 'Who is coming',
+            value: _group,
+            options: _groupOptions,
+            onChanged: (value) => setState(() => _group = value),
           ),
           const SizedBox(height: 12),
           ResponsiveSplit(
             children: [
               TextField(
                 controller: _airline,
-                decoration: const InputDecoration(
-                  labelText: 'Airline optional',
-                  prefixIcon: Icon(Icons.flight_takeoff_rounded),
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Airline optional'),
+                  prefixIcon: const Icon(Icons.flight_takeoff_rounded),
                 ),
               ),
               TextField(
                 controller: _flightConfirmation,
-                decoration: const InputDecoration(
-                  labelText: 'Confirmation',
-                  prefixIcon: Icon(Icons.confirmation_number_rounded),
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Confirmation'),
+                  prefixIcon: const Icon(Icons.confirmation_number_rounded),
                 ),
               ),
             ],
@@ -1559,7 +1628,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               final selected = _preferences.contains(preference);
               return FilterChip(
                 selected: selected,
-                label: Text(preference),
+                label: Text(appText(context, preference)),
                 onSelected: (_) => _togglePreference(preference),
                 selectedColor: _accent.withValues(alpha: .35),
                 checkmarkColor: _primary,
@@ -1573,9 +1642,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               Expanded(
                 child: TextField(
                   controller: _customPreference,
-                  decoration: const InputDecoration(
-                    labelText: 'Add custom tag',
-                    hintText: 'e.g. anime, halal food, wheelchair access',
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Add custom tag'),
+                    hintText: appText(
+                      context,
+                      'e.g. anime, halal food, wheelchair access',
+                    ),
                   ),
                   onSubmitted: (_) => _addCustomPreference(),
                 ),
@@ -1596,9 +1668,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           const PlanningIdeaStrip(),
           if (_usedFallbackPlan) ...[
             const SizedBox(height: 16),
-            const FormNotice(
-              message:
-                  'AI generation was unavailable, so a local draft plan was created.',
+            FormNotice(
+              message: appText(
+                context,
+                'AI generation was unavailable, so a local draft plan was created.',
+              ),
             ),
           ],
           if (_formError != null) ...[
@@ -1619,5 +1693,40 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         ],
       ),
     );
+  }
+}
+
+class _GroupedNumberInputFormatter extends TextInputFormatter {
+  const _GroupedNumberInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) {
+      return const TextEditingValue(
+        text: '',
+        selection: TextSelection.collapsed(offset: 0),
+      );
+    }
+
+    final formatted = _formatDigits(digits);
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+
+  String _formatDigits(String digits) {
+    final normalized = int.parse(digits).toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < normalized.length; i++) {
+      final remaining = normalized.length - i;
+      buffer.write(normalized[i]);
+      if (remaining > 1 && remaining % 3 == 1) buffer.write(',');
+    }
+    return buffer.toString();
   }
 }

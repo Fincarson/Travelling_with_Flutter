@@ -47,8 +47,8 @@ class SettingsPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 _LanguageButton(
-                  label: l10n.indonesian,
-                  locale: AppLocaleController.indonesian,
+                  label: l10n.traditionalChineseTaiwan,
+                  locale: AppLocaleController.traditionalChineseTaiwan,
                   selectedLocale: locale,
                 ),
               ],

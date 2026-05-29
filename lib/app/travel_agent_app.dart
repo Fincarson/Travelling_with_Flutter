@@ -7,10 +7,13 @@ import 'dart:math' as math;
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/config/api_keys.dart';
-import '../core/debug/app_debug_logger.dart';
+import '../core/localization/app_currency.dart';
+import '../core/localization/app_locale_controller.dart';
+import '../core/localization/app_text.dart';
 import '../core/performance/app_performance.dart';
 import '../core/theme/app_theme.dart';
 import '../features/auth/data/account_auth_service.dart';

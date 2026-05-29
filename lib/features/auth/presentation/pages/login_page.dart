@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/localization/app_text.dart';
 import '../../../../shared/widgets/responsive_page.dart';
 import '../../domain/usecases/login_user.dart';
 
@@ -38,7 +39,7 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Login')),
+      appBar: AppBar(title: Text(appText(context, 'Login'))),
       body: ResponsivePage(
         maxContentWidth: 520,
         child: SingleChildScrollView(
@@ -47,15 +48,22 @@ class _LoginPageState extends State<LoginPage> {
             children: [
               TextField(
                 controller: emailController,
-                decoration: const InputDecoration(labelText: 'Email'),
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Email'),
+                ),
               ),
               TextField(
                 controller: passwordController,
-                decoration: const InputDecoration(labelText: 'Password'),
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Password'),
+                ),
                 obscureText: true,
               ),
               const SizedBox(height: 16),
-              ElevatedButton(onPressed: login, child: const Text('Login')),
+              ElevatedButton(
+                onPressed: login,
+                child: Text(appText(context, 'Login')),
+              ),
               const SizedBox(height: 16),
               Text(result),
             ],
