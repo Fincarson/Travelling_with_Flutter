@@ -12,6 +12,8 @@ class TravelAgentApp extends StatefulWidget {
 class _TravelAgentAppState extends State<TravelAgentApp> {
   final _repository = TravelDataRepository(FirebaseFirestore.instance);
   final _authService = AccountAuthService();
+  StreamSubscription<UserProfile?>? _userSubscription;
+  StreamSubscription<List<Trip>>? _tripsSubscription;
   var _showOnboarding = true;
   var _isLoading = true;
   var _tab = _NavTab.home;
@@ -58,6 +60,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         _isLoading = false;
       });
       AppLocaleController.setProfileLanguage(user.language);
+      _watchAccountData(accountId);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -65,6 +68,53 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         _isLoading = false;
       });
     }
+  }
+
+  void _watchAccountData(String accountId) {
+    _userSubscription?.cancel();
+    _tripsSubscription?.cancel();
+
+    _userSubscription = _repository
+        .watchUser(accountId)
+        .listen(
+          (profile) {
+            if (!mounted || profile == null) return;
+            setState(() {
+              _user = profile;
+              _showOnboarding = false;
+              _loadError = null;
+            });
+            AppLocaleController.setProfileLanguage(profile.language);
+          },
+          onError: (Object error) {
+            if (!mounted) return;
+            setState(() => _loadError = 'Could not sync profile data: $error');
+          },
+        );
+
+    _tripsSubscription = _repository
+        .watchTrips(accountId)
+        .listen(
+          (trips) {
+            if (!mounted) return;
+            setState(() {
+              _trips
+                ..clear()
+                ..addAll(trips);
+              _activeTrip = _firstOngoingTrip(trips);
+              _selectedTrip = _matchingTrip(trips, _selectedTrip);
+              if (_screen == _Screen.itinerary && _selectedTrip == null) {
+                _screen = _Screen.dashboard;
+                _tab = _NavTab.home;
+              }
+              _loadError = null;
+            });
+          },
+          onError: (Object error) {
+            if (!mounted) return;
+            setState(() => _loadError = 'Could not sync trip data: $error');
+          },
+        );
   }
 
   void _openTrip(Trip trip) {
@@ -101,8 +151,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     });
     AppLocaleController.setProfileLanguage(profile.language);
 
-    final accountId = _accountId;
-    if (accountId == null) return;
+    final accountId = _accountId ?? widget.account.uid;
     try {
       await _repository.saveUser(accountId, profile);
     } catch (error) {
@@ -157,8 +206,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   Future<void> _saveTripOnline(Trip trip) async {
-    final accountId = _accountId;
-    if (accountId == null) return;
+    final accountId = _accountId ?? widget.account.uid;
     try {
       await _repository.saveTrip(accountId, trip);
     } catch (error) {
@@ -178,6 +226,13 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       setState(() => _loadError = 'Could not delete account: $error');
       rethrow;
     }
+  }
+
+  @override
+  void dispose() {
+    _userSubscription?.cancel();
+    _tripsSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -260,7 +315,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   Widget _buildCachedTabStack(AppPerformanceSettings performance) {
-    final trips = _trips.isEmpty ? [mockKyotoTrip] : _trips;
     return KeyedSubtree(
       key: const ValueKey('cached-tabs'),
       child: IndexedStack(
@@ -270,7 +324,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             DashboardScreen(
               key: const PageStorageKey('dashboard-tab'),
               user: _user,
-              trips: trips,
+              trips: _trips,
               activeTrip: _activeTrip,
               onCreate: () => setState(() {
                 _screen = _Screen.create;
@@ -333,13 +387,12 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   Widget _buildScreen() {
-    final trips = _trips.isEmpty ? [mockKyotoTrip] : _trips;
     switch (_screen) {
       case _Screen.dashboard:
         return DashboardScreen(
           key: const ValueKey('dashboard'),
           user: _user,
-          trips: trips,
+          trips: _trips,
           activeTrip: _activeTrip,
           onCreate: () => setState(() {
             _screen = _Screen.create;
@@ -478,6 +531,14 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
 Trip? _firstOngoingTrip(List<Trip> trips) {
   for (final trip in trips) {
     if (trip.status == TripStatus.ongoing) return trip;
+  }
+  return null;
+}
+
+Trip? _matchingTrip(List<Trip> trips, Trip? current) {
+  if (current == null) return null;
+  for (final trip in trips) {
+    if (trip.id == current.id) return trip;
   }
   return null;
 }

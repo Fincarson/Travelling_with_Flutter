@@ -32,7 +32,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final trip = widget.activeTrip ?? widget.trips.first;
+    final trip =
+        widget.activeTrip ?? (widget.trips.isEmpty ? null : widget.trips.first);
     return ScreenScaffold(
       bottomPadding: 92,
       child: ListView(
@@ -74,34 +75,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 10),
           if (widget.user.notificationsEnabled) const AlertRail(),
           const SizedBox(height: 28),
-          LabelText(_profileText(widget.user.language, 'currentTrip')),
-          const SizedBox(height: 8),
-          CurrentTripCard(trip: trip, onTap: () => widget.onOpenTrip(trip)),
-          const SizedBox(height: 22),
-          ResponsiveActionWrap(
-            children: [
-              QuickAction(
-                icon: Icons.info_outline_rounded,
-                label: 'Info',
-                onTap: widget.onOpenInfo,
-              ),
-              QuickAction(
-                icon: Icons.map_rounded,
-                label: 'Map',
-                onTap: widget.onOpenMap,
-              ),
-              QuickAction(
-                icon: Icons.translate_rounded,
-                label: 'Translate',
-                onTap: widget.onOpenTranslate,
-              ),
-              QuickAction(
-                icon: Icons.auto_awesome_rounded,
-                label: 'AI',
-                onTap: () => widget.onAskAi('Plan my next Kyoto stop.'),
-              ),
-            ],
-          ),
+          if (trip == null) ...[
+            _EmptyTripCard(onCreate: widget.onCreate),
+          ] else ...[
+            LabelText(_profileText(widget.user.language, 'currentTrip')),
+            const SizedBox(height: 8),
+            CurrentTripCard(trip: trip, onTap: () => widget.onOpenTrip(trip)),
+            const SizedBox(height: 22),
+            ResponsiveActionWrap(
+              children: [
+                QuickAction(
+                  icon: Icons.info_outline_rounded,
+                  label: 'Info',
+                  onTap: widget.onOpenInfo,
+                ),
+                QuickAction(
+                  icon: Icons.map_rounded,
+                  label: 'Map',
+                  onTap: widget.onOpenMap,
+                ),
+                QuickAction(
+                  icon: Icons.translate_rounded,
+                  label: 'Translate',
+                  onTap: widget.onOpenTranslate,
+                ),
+                QuickAction(
+                  icon: Icons.auto_awesome_rounded,
+                  label: 'AI',
+                  onTap: () =>
+                      widget.onAskAi('Plan my next ${trip.destination} stop.'),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 28),
           SectionHeader(
             title: 'Ready for your next Adventure',
@@ -120,6 +126,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 onTap: widget.onCreate,
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyTripCard extends StatelessWidget {
+  const _EmptyTripCard({required this.onCreate});
+
+  final VoidCallback onCreate;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const IconBadge(icon: Icons.add_location_alt_rounded, size: 48),
+          const SizedBox(height: 14),
+          Text(
+            appText(context, 'Start your first trip'),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            appText(context, 'Create an itinerary to see your route here.'),
+            style: const TextStyle(
+              color: _secondary,
+              fontWeight: FontWeight.w700,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 16),
+          PrimaryButton(
+            label: 'Create itinerary',
+            icon: Icons.add_rounded,
+            onPressed: onCreate,
           ),
         ],
       ),
