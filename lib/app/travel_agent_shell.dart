@@ -44,6 +44,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           UserProfile(
             name: widget.account.name,
             email: widget.account.email ?? '',
+            photoUrl: widget.account.photoUrl,
             interests: const [],
             language: 'en',
             notificationsEnabled: true,
@@ -161,57 +162,71 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   Future<void> _createTrip(Trip trip) async {
+    final saved = await _saveTripOnline(trip);
+    if (!saved || !mounted) return;
+    await _refreshTripsFromBackend(selectTripId: trip.id);
+    if (!mounted) return;
     setState(() {
-      _trips.insert(0, trip);
-      _selectedTrip = trip;
       _screen = _Screen.itinerary;
       _tab = _NavTab.trips;
-      _loadError = null;
     });
-
-    await _saveTripOnline(trip);
   }
 
   Future<void> _startTrip(Trip trip) async {
     final previousActive = _activeTrip;
-    setState(() {
-      final started = trip.copyWith(status: TripStatus.ongoing);
-      final index = _trips.indexWhere((item) => item.id == trip.id);
-      if (index >= 0) _trips[index] = started;
-      _activeTrip = started;
-      _selectedTrip = started;
-      _screen = _Screen.dashboard;
-      _tab = _NavTab.home;
-    });
-
-    final started = _selectedTrip;
-    if (started != null) await _saveTripOnline(started);
+    final started = trip.copyWith(status: TripStatus.ongoing);
+    final saved = await _saveTripOnline(started);
+    if (!saved) return;
     if (previousActive != null && previousActive.id != trip.id) {
       await _saveTripOnline(
         previousActive.copyWith(status: TripStatus.upcoming),
       );
     }
+    if (!mounted) return;
+    await _refreshTripsFromBackend(selectTripId: trip.id);
+    if (!mounted) return;
+    setState(() {
+      _screen = _Screen.dashboard;
+      _tab = _NavTab.home;
+    });
   }
 
   Future<void> _updateTrip(Trip trip) async {
-    setState(() {
-      final index = _trips.indexWhere((item) => item.id == trip.id);
-      if (index >= 0) _trips[index] = trip;
-      if (_selectedTrip?.id == trip.id) _selectedTrip = trip;
-      if (_activeTrip?.id == trip.id) _activeTrip = trip;
-      _loadError = null;
-    });
-
-    await _saveTripOnline(trip);
+    final saved = await _saveTripOnline(trip);
+    if (!saved || !mounted) return;
+    await _refreshTripsFromBackend(selectTripId: trip.id);
   }
 
-  Future<void> _saveTripOnline(Trip trip) async {
+  Future<bool> _saveTripOnline(Trip trip) async {
     final accountId = _accountId ?? widget.account.uid;
     try {
       await _repository.saveTrip(accountId, trip);
+      return true;
+    } catch (error) {
+      if (!mounted) return false;
+      setState(() => _loadError = 'Could not save trip online: $error');
+      return false;
+    }
+  }
+
+  Future<void> _refreshTripsFromBackend({String? selectTripId}) async {
+    final accountId = _accountId ?? widget.account.uid;
+    try {
+      final trips = await _repository.loadTrips(accountId);
+      if (!mounted) return;
+      setState(() {
+        _trips
+          ..clear()
+          ..addAll(trips);
+        _activeTrip = _firstOngoingTrip(trips);
+        _selectedTrip =
+            _tripById(trips, selectTripId) ??
+            _matchingTrip(trips, _selectedTrip);
+        _loadError = null;
+      });
     } catch (error) {
       if (!mounted) return;
-      setState(() => _loadError = 'Could not save trip online: $error');
+      setState(() => _loadError = 'Could not refresh trip data: $error');
     }
   }
 
@@ -539,6 +554,14 @@ Trip? _matchingTrip(List<Trip> trips, Trip? current) {
   if (current == null) return null;
   for (final trip in trips) {
     if (trip.id == current.id) return trip;
+  }
+  return null;
+}
+
+Trip? _tripById(List<Trip> trips, String? tripId) {
+  if (tripId == null) return null;
+  for (final trip in trips) {
+    if (trip.id == tripId) return trip;
   }
   return null;
 }

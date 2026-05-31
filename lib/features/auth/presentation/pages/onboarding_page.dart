@@ -87,6 +87,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               UserProfile(
                 name: widget.account.name,
                 email: widget.account.email ?? '',
+                photoUrl: widget.account.photoUrl,
                 interests: _selected.toList(),
               ),
             ),

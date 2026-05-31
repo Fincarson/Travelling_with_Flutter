@@ -5,6 +5,8 @@ class UserProfile {
     required this.name,
     required this.email,
     required this.interests,
+    this.bio = '',
+    this.photoUrl,
     this.language = 'en',
     this.notificationsEnabled = true,
     this.themeMode = 'Light',
@@ -12,6 +14,8 @@ class UserProfile {
 
   final String name;
   final String email;
+  final String bio;
+  final String? photoUrl;
   final List<String> interests;
   final String language;
   final bool notificationsEnabled;
@@ -20,6 +24,8 @@ class UserProfile {
   Map<String, dynamic> toMap() => {
     'name': name,
     'email': email,
+    'bio': bio,
+    'photoUrl': photoUrl,
     'interests': interests,
     'settings': {
       'language': language,
@@ -36,6 +42,8 @@ class UserProfile {
     return UserProfile(
       name: (map['name'] as String?) ?? 'Explorer',
       email: (map['email'] as String?) ?? '',
+      bio: (map['bio'] as String?) ?? '',
+      photoUrl: map['photoUrl'] as String?,
       interests: ((map['interests'] as List<dynamic>?) ?? const [])
           .whereType<String>()
           .toList(),

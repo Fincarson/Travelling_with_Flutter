@@ -89,8 +89,51 @@ Ask before choosing where new settings or user data are stored.
 Current guidance:
 
 - Performance settings are local only through `shared_preferences`.
-- User/trip data may be Firebase-backed.
+- User/trip data is Firebase-backed and must stay in sync with the shared trip schema below.
 - Do not sync new local-only settings to Firebase unless the user explicitly approves it.
+
+## Firebase Data Organization
+
+Firestore is the source of truth for account, trip, collaboration, and chat-ready data. Do not add new trip features that only mutate local app state. Whenever trips, plans, itinerary items, bookings, budgets, checklist data, members, invites, chat, or AI results change, update the backend repository/rules so Firestore remains authoritative.
+
+Use this shared trip structure unless the user explicitly approves a schema change:
+
+- User profile: `travel_users/{userId}`
+- User trip index: `travel_users/{userId}/tripMemberships/{tripId}`
+- Shared trip document: `trips/{tripId}`
+- Trip members: `trips/{tripId}/members/{userId}`
+- Itinerary items: `trips/{tripId}/itineraryItems/{itemId}`
+- Bookings: `trips/{tripId}/bookings/{bookingId}`
+- Budget categories: `trips/{tripId}/budgetCategories/{categoryId}`
+- Chat channels: `trips/{tripId}/channels/{channelId}`
+- Chat messages: `trips/{tripId}/channels/{channelId}/messages/{messageId}`
+- AI runs: `trips/{tripId}/aiRuns/{runId}`
+- Invites: `trips/{tripId}/invites/{inviteId}`
+
+Keep denormalized data in sync:
+
+- `trips/{tripId}.memberIds` and `trips/{tripId}.roles`
+- `trips/{tripId}/members/{userId}`
+- `travel_users/{userId}/tripMemberships/{tripId}` snapshots such as title, destination, cover image, role, status, last message time, and unread count.
+
+Role expectations:
+
+- `owner`: can edit the trip, invite/remove users, delete the trip, and manage roles.
+- `editor`: can edit itinerary, budget, bookings, checklist, chat, and request AI updates.
+- `viewer`: can read the trip and chat when allowed, but cannot edit trip data.
+
+If legacy data under `travel_users/{userId}/trips/{tripId}` appears, migrate it into the shared `trips/{tripId}` structure and delete the old document only after the transfer succeeds.
+
+## Platform Compatibility
+
+Changes must remain compatible with Android, iOS, web, and the supported desktop targets unless the user narrows the platform scope.
+
+When changing Firebase, authentication, routing, plugins, generated options, platform config, or UI behavior:
+
+- Check that the change works with FlutterFire-supported Android, iOS, and web flows.
+- Avoid platform-only APIs unless guarded by platform checks and a fallback.
+- Keep web behavior in mind for browser resizing, Firebase Auth, callable Functions, and Firestore listeners.
+- Run available checks for the affected platforms when feasible, and clearly report anything skipped.
 
 ## Theme And Design
 

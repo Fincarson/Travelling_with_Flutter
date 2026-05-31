@@ -50,6 +50,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   UserProfile _draftProfile() => UserProfile(
     name: _name.text,
     email: widget.account.email ?? widget.user.email,
+    bio: widget.user.bio,
+    photoUrl: widget.user.photoUrl,
     interests: _interests.toList(),
     language: _language,
     notificationsEnabled: _notificationsEnabled,

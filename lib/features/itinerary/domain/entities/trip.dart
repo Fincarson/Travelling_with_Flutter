@@ -23,9 +23,11 @@ class Trip {
     this.formattedAddress,
     this.latitude,
     this.longitude,
+    this.title = '',
   });
 
   final String id;
+  final String title;
   final String destination;
   final String startDate;
   final String endDate;
@@ -60,8 +62,10 @@ class Trip {
     List<ChecklistCategory>? checklist,
     List<String>? preferences,
     List<BudgetCategory>? budgetCategories,
+    String? title,
   }) => Trip(
     id: id,
+    title: title ?? this.title,
     destination: destination ?? this.destination,
     startDate: startDate ?? this.startDate,
     endDate: endDate ?? this.endDate,
@@ -83,6 +87,7 @@ class Trip {
   );
 
   Map<String, dynamic> toMap() => {
+    'title': title.trim().isEmpty ? destination : title,
     'destination': destination,
     'placeId': placeId,
     'formattedAddress': formattedAddress,
@@ -108,9 +113,11 @@ class Trip {
 
   static Trip fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final map = doc.data() ?? const <String, dynamic>{};
+    final destination = (map['destination'] as String?) ?? 'Untitled trip';
     return Trip(
       id: doc.id,
-      destination: (map['destination'] as String?) ?? 'Untitled trip',
+      title: (map['title'] as String?) ?? destination,
+      destination: destination,
       placeId: map['placeId'] as String?,
       formattedAddress: map['formattedAddress'] as String?,
       latitude: (map['latitude'] as num?)?.toDouble(),
@@ -154,6 +161,51 @@ class Trip {
                     BudgetCategory.fromMap(Map<String, dynamic>.from(item)),
               )
               .toList(),
+    );
+  }
+
+  static Trip fromSharedDoc(
+    DocumentSnapshot<Map<String, dynamic>> doc, {
+    required List<ItineraryItem> items,
+    required List<Booking> bookings,
+    required List<BudgetCategory> budgetCategories,
+  }) {
+    final map = doc.data() ?? const <String, dynamic>{};
+    final destination = (map['destination'] as String?) ?? 'Untitled trip';
+    return Trip(
+      id: doc.id,
+      title: (map['title'] as String?) ?? destination,
+      destination: destination,
+      placeId: map['placeId'] as String?,
+      formattedAddress: map['formattedAddress'] as String?,
+      latitude: (map['latitude'] as num?)?.toDouble(),
+      longitude: (map['longitude'] as num?)?.toDouble(),
+      startDate: (map['startDate'] as String?) ?? '',
+      endDate: (map['endDate'] as String?) ?? '',
+      budget: (map['budget'] as num?)?.toInt() ?? 0,
+      spent: (map['spent'] as num?)?.toInt() ?? 0,
+      groupType: (map['groupType'] as String?) ?? 'Solo',
+      currency: (map['currency'] as String?) ?? 'USD',
+      status: TripStatus.values.firstWhere(
+        (status) => status.name == map['status'],
+        orElse: () => TripStatus.upcoming,
+      ),
+      images: ((map['images'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .toList(),
+      items: items,
+      bookings: bookings,
+      checklist: ((map['checklist'] as List<dynamic>?) ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) =>
+                ChecklistCategory.fromMap(Map<String, dynamic>.from(item)),
+          )
+          .toList(),
+      preferences: ((map['preferences'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .toList(),
+      budgetCategories: budgetCategories,
     );
   }
 }
@@ -214,7 +266,7 @@ class Booking {
     (map['time'] as String?) ?? '',
     (map['reference'] as String?) ?? '',
     (map['cost'] as num?)?.toInt() ?? 0,
-    _iconFromMap(map['icon']),
+    _iconFromMap(map['icon'] ?? map['type']),
   );
 }
 
@@ -272,6 +324,7 @@ class ChecklistCategory {
 Map<String, dynamic> _iconToMap(IconData icon) => {'name': _iconName(icon)};
 
 IconData _iconFromMap(Object? value) {
+  if (value is String) return _iconByName(value);
   if (value is! Map) return Icons.place_rounded;
   final map = Map<String, dynamic>.from(value);
   return _iconByName(map['name'] as String?);
