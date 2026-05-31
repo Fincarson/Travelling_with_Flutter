@@ -64,7 +64,7 @@ class MapScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
-          for (final item in trip.items.take(4)) ItineraryTile(item: item),
+          for (final item in trip.items.take(4)) ScheduleTile(item: item),
         ],
       ),
     );

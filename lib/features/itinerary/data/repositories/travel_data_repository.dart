@@ -135,9 +135,9 @@ class TravelDataRepository {
     final items =
         snapshots[0].docs
             .map((doc) => _orderedDocData(doc))
-            .map(ItineraryItem.fromMap)
+            .map(ScheduleItem.fromMap)
             .toList()
-          ..sort(_compareItineraryItems);
+          ..sort(_compareScheduleItems);
 
     final bookings =
         snapshots[1].docs
@@ -208,7 +208,7 @@ class TravelDataRepository {
         batch.delete(doc.reference);
       }
     }
-    _writeItineraryItems(batch, tripRef, trip.items);
+    _writeScheduleItems(batch, tripRef, trip.items);
     _writeBookings(batch, tripRef, trip.bookings);
     _writeBudgetCategories(batch, tripRef, trip.budgetCategories);
 
@@ -316,10 +316,10 @@ class TravelDataRepository {
     };
   }
 
-  void _writeItineraryItems(
+  void _writeScheduleItems(
     WriteBatch batch,
     DocumentReference<Map<String, dynamic>> tripRef,
-    List<ItineraryItem> items,
+    List<ScheduleItem> items,
   ) {
     for (var index = 0; index < items.length; index++) {
       final item = items[index];
@@ -481,7 +481,7 @@ Map<String, dynamic> _orderedDocData(
   return {'id': doc.id, ...doc.data()};
 }
 
-int _compareItineraryItems(ItineraryItem a, ItineraryItem b) {
+int _compareScheduleItems(ScheduleItem a, ScheduleItem b) {
   final dayCompare = a.day.compareTo(b.day);
   if (dayCompare != 0) return dayCompare;
   return a.time.compareTo(b.time);

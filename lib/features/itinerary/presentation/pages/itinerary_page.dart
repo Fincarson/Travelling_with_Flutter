@@ -1,7 +1,7 @@
 part of travel_agent_app;
 
-class ItineraryScreen extends StatelessWidget {
-  const ItineraryScreen({
+class TripDetailScreen extends StatelessWidget {
+  const TripDetailScreen({
     required this.trip,
     required this.onBack,
     required this.onOpenChat,
@@ -21,7 +21,7 @@ class ItineraryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _EditableItineraryScreen(
+    return _EditableTripDetailScreen(
       trip: trip,
       onBack: onBack,
       onOpenChat: onOpenChat,
@@ -31,8 +31,8 @@ class ItineraryScreen extends StatelessWidget {
   }
 }
 
-class _EditableItineraryScreen extends StatefulWidget {
-  const _EditableItineraryScreen({
+class _EditableTripDetailScreen extends StatefulWidget {
+  const _EditableTripDetailScreen({
     required this.trip,
     required this.onBack,
     required this.onOpenChat,
@@ -47,11 +47,11 @@ class _EditableItineraryScreen extends StatefulWidget {
   final ValueChanged<Trip> onUpdateTrip;
 
   @override
-  State<_EditableItineraryScreen> createState() =>
-      _EditableItineraryScreenState();
+  State<_EditableTripDetailScreen> createState() =>
+      _EditableTripDetailScreenState();
 }
 
-class _EditableItineraryScreenState extends State<_EditableItineraryScreen> {
+class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
   late Trip _trip;
 
   @override
@@ -61,7 +61,7 @@ class _EditableItineraryScreenState extends State<_EditableItineraryScreen> {
   }
 
   @override
-  void didUpdateWidget(covariant _EditableItineraryScreen oldWidget) {
+  void didUpdateWidget(covariant _EditableTripDetailScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.trip.id != oldWidget.trip.id || widget.trip != oldWidget.trip) {
       _trip = widget.trip;
@@ -78,7 +78,7 @@ class _EditableItineraryScreenState extends State<_EditableItineraryScreen> {
     final performance = PerformanceScope.settingsOf(context);
     final tabs = [
       TripOverviewTab(trip: _trip),
-      EditableItineraryTab(trip: _trip, onSave: _save),
+      EditableScheduleTab(trip: _trip, onSave: _save),
       EditableBudgetTab(trip: _trip, onSave: _save),
       TripMapTab(trip: _trip, onOpenMap: widget.onOpenMap),
       EditableChecklistTab(trip: _trip, onSave: _save),
@@ -111,7 +111,7 @@ class _EditableItineraryScreenState extends State<_EditableItineraryScreen> {
                 indicatorColor: _accent,
                 tabs: [
                   Tab(text: appText(context, 'Overview')),
-                  Tab(text: appText(context, 'Itinerary')),
+                  Tab(text: appText(context, 'Schedule')),
                   Tab(text: appText(context, 'Budget')),
                   Tab(text: appText(context, 'Map')),
                   Tab(text: appText(context, 'Checklist')),
@@ -196,16 +196,16 @@ class TripOverviewTab extends StatelessWidget {
         for (final booking in trip.bookings.take(2))
           BookingTile(booking: booking),
         const SizedBox(height: 12),
-        const SectionHeader(title: 'First stops'),
+        const SectionHeader(title: 'First schedule stops'),
         const SizedBox(height: 10),
-        for (final item in trip.items.take(3)) ItineraryTile(item: item),
+        for (final item in trip.items.take(3)) ScheduleTile(item: item),
       ],
     );
   }
 }
 
-class EditableItineraryTab extends StatelessWidget {
-  const EditableItineraryTab({
+class EditableScheduleTab extends StatelessWidget {
+  const EditableScheduleTab({
     required this.trip,
     required this.onSave,
     super.key,
@@ -214,17 +214,17 @@ class EditableItineraryTab extends StatelessWidget {
   final Trip trip;
   final ValueChanged<Trip> onSave;
 
-  Future<void> _addStop(BuildContext context) async {
+  Future<void> _addScheduleStop(BuildContext context) async {
     final activity = TextEditingController();
     final time = TextEditingController(text: '10:00 AM');
     final cost = TextEditingController(text: '0');
     var day = 1;
     try {
-      final item = await showDialog<ItineraryItem>(
+      final item = await showDialog<ScheduleItem>(
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: Text(appText(context, 'Add stop')),
+            title: Text(appText(context, 'Add schedule stop')),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -267,7 +267,7 @@ class EditableItineraryTab extends StatelessWidget {
               ),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(
-                  ItineraryItem(
+                  ScheduleItem(
                     day,
                     time.text.trim().isEmpty ? '10:00 AM' : time.text.trim(),
                     activity.text.trim().isEmpty
@@ -294,7 +294,7 @@ class EditableItineraryTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final grouped = <int, List<ItineraryItem>>{};
+    final grouped = <int, List<ScheduleItem>>{};
     for (final item in trip.items) {
       grouped.putIfAbsent(item.day, () => []).add(item);
     }
@@ -303,9 +303,9 @@ class EditableItineraryTab extends StatelessWidget {
       padding: _responsivePagePadding(context, top: 16),
       children: [
         PrimaryButton(
-          label: 'Add stop',
+          label: 'Add schedule stop',
           icon: Icons.add_rounded,
-          onPressed: () => _addStop(context),
+          onPressed: () => _addScheduleStop(context),
         ),
         const SizedBox(height: 16),
         for (final day in grouped.keys.toList()..sort()) ...[
@@ -332,7 +332,7 @@ class EditableItineraryTab extends StatelessWidget {
                       .toList(),
                 ),
               ),
-              child: ItineraryTile(item: item),
+              child: ScheduleTile(item: item),
             ),
           const SizedBox(height: 12),
         ],
@@ -456,7 +456,7 @@ class TripMapTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        for (final item in trip.items.take(6)) ItineraryTile(item: item),
+        for (final item in trip.items.take(6)) ScheduleTile(item: item),
       ],
     );
   }

@@ -33,7 +33,7 @@ class TravelAssistantService {
         'model': 'gpt-5.5',
         'instructions':
             'You are a concise travel planning assistant inside a mobile app. '
-            'Help with itinerary order, budget tradeoffs, packing, food, '
+            'Help with schedule order, budget tradeoffs, packing, food, '
             'transit, and practical destination advice. Keep replies friendly '
             'and short.',
         'input': message,
@@ -110,7 +110,7 @@ class TravelAssistantService {
       body: jsonEncode({
         'model': 'gpt-5.5',
         'instructions': [
-          'Generate a practical travel itinerary as strict JSON only.',
+          'Generate a practical travel schedule as strict JSON only.',
           'Use current attraction names for the destination.',
           'Keep costs realistic but approximate.',
           'Return no markdown and no explanation.',
@@ -160,7 +160,7 @@ class TravelAssistantService {
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('AI itinerary generation failed.');
+      throw Exception('AI schedule generation failed.');
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
@@ -418,7 +418,7 @@ class GeneratedTripPlan {
     required this.checklist,
   });
 
-  final List<ItineraryItem> items;
+  final List<ScheduleItem> items;
   final List<Booking> bookings;
   final List<ChecklistCategory> checklist;
 
@@ -427,7 +427,7 @@ class GeneratedTripPlan {
         .whereType<Map>()
         .map((item) {
           final data = Map<String, dynamic>.from(item);
-          return ItineraryItem(
+          return ScheduleItem(
             (data['day'] as num?)?.toInt() ?? 1,
             (data['time'] as String?) ?? '09:00 AM',
             (data['activity'] as String?) ?? 'Explore local highlights',

@@ -155,7 +155,7 @@ class _EmptyTripCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            appText(context, 'Create an itinerary to see your route here.'),
+            appText(context, 'Create a schedule to see your route here.'),
             style: const TextStyle(
               color: _secondary,
               fontWeight: FontWeight.w700,
@@ -164,7 +164,7 @@ class _EmptyTripCard extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           PrimaryButton(
-            label: 'Create itinerary',
+            label: 'Create schedule',
             icon: Icons.add_rounded,
             onPressed: onCreate,
           ),

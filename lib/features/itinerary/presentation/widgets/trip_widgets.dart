@@ -421,9 +421,9 @@ class TripListCard extends StatelessWidget {
   }
 }
 
-class ItineraryTile extends StatelessWidget {
-  const ItineraryTile({required this.item, super.key});
-  final ItineraryItem item;
+class ScheduleTile extends StatelessWidget {
+  const ScheduleTile({required this.item, super.key});
+  final ScheduleItem item;
 
   @override
   Widget build(BuildContext context) {

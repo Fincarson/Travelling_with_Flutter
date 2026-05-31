@@ -36,7 +36,7 @@ class Trip {
   final String groupType;
   final TripStatus status;
   final List<String> images;
-  final List<ItineraryItem> items;
+  final List<ScheduleItem> items;
   final List<Booking> bookings;
   final List<ChecklistCategory> checklist;
   final String currency;
@@ -57,7 +57,7 @@ class Trip {
     String? groupType,
     String? currency,
     List<String>? images,
-    List<ItineraryItem>? items,
+    List<ScheduleItem>? items,
     List<Booking>? bookings,
     List<ChecklistCategory>? checklist,
     List<String>? preferences,
@@ -137,7 +137,7 @@ class Trip {
           .toList(),
       items: ((map['items'] as List<dynamic>?) ?? const [])
           .whereType<Map>()
-          .map((item) => ItineraryItem.fromMap(Map<String, dynamic>.from(item)))
+          .map((item) => ScheduleItem.fromMap(Map<String, dynamic>.from(item)))
           .toList(),
       bookings: ((map['bookings'] as List<dynamic>?) ?? const [])
           .whereType<Map>()
@@ -166,7 +166,7 @@ class Trip {
 
   static Trip fromSharedDoc(
     DocumentSnapshot<Map<String, dynamic>> doc, {
-    required List<ItineraryItem> items,
+    required List<ScheduleItem> items,
     required List<Booking> bookings,
     required List<BudgetCategory> budgetCategories,
   }) {
@@ -210,8 +210,8 @@ class Trip {
   }
 }
 
-class ItineraryItem {
-  const ItineraryItem(this.day, this.time, this.activity, this.type, this.cost);
+class ScheduleItem {
+  const ScheduleItem(this.day, this.time, this.activity, this.type, this.cost);
   final int day;
   final String time;
   final String activity;
@@ -226,7 +226,7 @@ class ItineraryItem {
     'cost': cost,
   };
 
-  static ItineraryItem fromMap(Map<String, dynamic> map) => ItineraryItem(
+  static ScheduleItem fromMap(Map<String, dynamic> map) => ScheduleItem(
     (map['day'] as num?)?.toInt() ?? 1,
     (map['time'] as String?) ?? '',
     (map['activity'] as String?) ?? 'Activity',

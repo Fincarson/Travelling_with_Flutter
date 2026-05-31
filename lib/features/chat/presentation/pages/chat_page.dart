@@ -62,7 +62,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     _messages = [
       const ChatMessageModel(
         false,
-        "AI Agent active. I can optimize routes, compare ideas, and turn chat into itinerary changes.",
+        "AI Agent active. I can optimize routes, compare ideas, and turn chat into schedule changes.",
       ),
       if (widget.initialQuery.isNotEmpty)
         ChatMessageModel(true, widget.initialQuery),
