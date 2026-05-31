@@ -17,6 +17,13 @@ class TravelDataRepository {
     return UserProfile.fromMap(snapshot.data() ?? const <String, dynamic>{});
   }
 
+  Stream<UserProfile?> watchUser(String accountId) {
+    return _userDoc(accountId).snapshots().map((snapshot) {
+      if (!snapshot.exists) return null;
+      return UserProfile.fromMap(snapshot.data() ?? const <String, dynamic>{});
+    });
+  }
+
   Future<void> saveUser(String accountId, UserProfile profile) =>
       _userDoc(accountId).set(profile.toMap(), SetOptions(merge: true));
 
@@ -24,6 +31,13 @@ class TravelDataRepository {
     final snapshot = await _tripsRef(accountId).orderBy('updatedAt').get();
     final trips = snapshot.docs.map(Trip.fromDoc).toList();
     return trips.reversed.toList();
+  }
+
+  Stream<List<Trip>> watchTrips(String accountId) {
+    return _tripsRef(accountId)
+        .orderBy('updatedAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map(Trip.fromDoc).toList());
   }
 
   Future<void> saveTrip(String accountId, Trip trip) => _tripsRef(

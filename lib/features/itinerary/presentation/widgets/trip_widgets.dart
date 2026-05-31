@@ -7,6 +7,16 @@ class CurrentTripCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final nextItem = trip.items.isEmpty ? null : trip.items.first;
+    final booking = trip.bookings.isEmpty ? null : trip.bookings.first;
+    final image = trip.images.isEmpty
+        ? destinations.first.image
+        : trip.images.first;
+    final nextTitle = nextItem?.activity ?? trip.destination;
+    final nextDetail = nextItem == null
+        ? '${trip.startDate} / ${trip.endDate}'
+        : '${nextItem.time} / Day ${nextItem.day} route';
+
     return GlassPanel(
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -14,7 +24,7 @@ class CurrentTripCard extends StatelessWidget {
           GestureDetector(
             onTap: onTap,
             child: ImageHero(
-              image: trip.images.first,
+              image: image,
               height: 150,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -31,7 +41,7 @@ class CurrentTripCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    appText(context, 'Kyoto City Zoo'),
+                    appText(context, nextTitle),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -43,7 +53,9 @@ class CurrentTripCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '10:30 AM / Day 1 route',
+                    appText(context, nextDetail),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: .75),
                       fontWeight: FontWeight.w700,
@@ -58,8 +70,10 @@ class CurrentTripCard extends StatelessWidget {
             children: [
               StatCard(
                 title: 'Booking',
-                value: trip.bookings.first.title,
-                detail: '${trip.bookings.first.date} / confirmed',
+                value: booking?.title ?? 'TBD',
+                detail: booking == null
+                    ? 'No bookings yet'
+                    : '${booking.date} / confirmed',
               ),
               StatCard(
                 title: 'Budget',
