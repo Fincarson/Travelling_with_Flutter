@@ -320,7 +320,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         _chatMessages.add(
           const CreateTripChatMessage(
             fromUser: false,
-            text: 'Confirmed. I will use this draft for the itinerary.',
+            text: 'Confirmed. I will use this draft for the schedule.',
           ),
         );
       });
@@ -1156,7 +1156,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         flightConfirmation: _flightConfirmation.text.trim(),
       );
       if (plan.items.isEmpty) {
-        throw Exception('AI returned no itinerary items.');
+        throw Exception('AI returned no schedule items.');
       }
     } catch (_) {
       plan = _fallbackTripPlan(
@@ -1684,7 +1684,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             const GeneratingTripPanel()
           else
             PrimaryButton(
-              label: _mode == 1 ? 'Generate with AI' : 'Create itinerary',
+              label: _mode == 1 ? 'Generate with AI' : 'Create schedule',
               icon: _mode == 1
                   ? Icons.auto_awesome_rounded
                   : Icons.arrow_forward_rounded,

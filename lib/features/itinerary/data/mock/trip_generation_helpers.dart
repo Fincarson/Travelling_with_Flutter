@@ -20,21 +20,21 @@ GeneratedTripPlan _fallbackTripPlan({
   );
 
   final items = [
-    ItineraryItem(
+    ScheduleItem(
       1,
       '09:30 AM',
       '$placeName arrival and neighborhood orientation',
       Icons.directions_walk_rounded,
       0,
     ),
-    ItineraryItem(
+    ScheduleItem(
       1,
       '12:30 PM',
       wantsFood ? '$placeName local food crawl' : 'Central cafe lunch stop',
       wantsFood ? Icons.restaurant_rounded : Icons.local_cafe_rounded,
       (budget * .03).round(),
     ),
-    ItineraryItem(
+    ScheduleItem(
       1,
       '03:00 PM',
       wantsShopping
@@ -43,7 +43,7 @@ GeneratedTripPlan _fallbackTripPlan({
       wantsShopping ? Icons.shopping_bag_rounded : Icons.museum_rounded,
       (budget * .02).round(),
     ),
-    ItineraryItem(
+    ScheduleItem(
       2,
       '09:00 AM',
       wantsNature
@@ -52,7 +52,7 @@ GeneratedTripPlan _fallbackTripPlan({
       wantsNature ? Icons.hiking_rounded : Icons.place_rounded,
       (budget * .02).round(),
     ),
-    ItineraryItem(
+    ScheduleItem(
       2,
       '06:00 PM',
       '$placeName evening dinner plan',
@@ -117,7 +117,7 @@ List<String> _imagesForDestination(String destination) {
 List<BudgetCategory> _defaultBudgetCategories({
   required int budget,
   required int actual,
-  required List<ItineraryItem> items,
+  required List<ScheduleItem> items,
   required List<Booking> bookings,
 }) {
   final activityCost = items.fold<int>(0, (total, item) => total + item.cost);

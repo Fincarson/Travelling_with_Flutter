@@ -121,11 +121,11 @@ abstract class AppLocalizations {
   /// **'Search'**
   String get search;
 
-  /// No description provided for @itinerary.
+  /// No description provided for @schedule.
   ///
   /// In en, this message translates to:
-  /// **'Itinerary'**
-  String get itinerary;
+  /// **'Schedule'**
+  String get schedule;
 
   /// No description provided for @chat.
   ///
@@ -151,11 +151,11 @@ abstract class AppLocalizations {
   /// **'Search page'**
   String get searchPage;
 
-  /// No description provided for @newItineraryPage.
+  /// No description provided for @newSchedulePage.
   ///
   /// In en, this message translates to:
-  /// **'New itinerary page'**
-  String get newItineraryPage;
+  /// **'New schedule page'**
+  String get newSchedulePage;
 
   /// No description provided for @chatPage.
   ///

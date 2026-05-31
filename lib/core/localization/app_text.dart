@@ -26,7 +26,7 @@ const _zhHantTwText = {
   'UP NEXT': '下一站',
   'Kyoto City Zoo': '京都市動物園',
   'Overview': '總覽',
-  'Itinerary': '行程',
+  'Schedule': '日程',
   'Checklist': '清單',
   'Day': '第',
   'Add to': '新增到',
@@ -69,13 +69,13 @@ const _zhHantTwText = {
       '告訴 AI 基本資訊，它會建立停靠點、預訂和打包清單。',
   'AI generation was unavailable, so a local draft plan was created.':
       'AI 生成功能暫時無法使用，因此已建立本機草稿計畫。',
-  'Generating itinerary...': '正在產生行程...',
+  'Generating schedule...': '正在產生日程...',
   'AI is shaping the route, bookings, budget, and packing list.':
       'AI 正在整理路線、預訂、預算和打包清單。',
   'Ask for routes, food, bookings, packing, or swaps.': '詢問路線、美食、預訂、打包或替換方案。',
   'Vote on lunch and share plan changes with friends.': '和朋友投票決定午餐，並分享計畫變更。',
-  'AI Agent active. I can optimize routes, compare ideas, and turn chat into itinerary changes.':
-      'AI 助理已啟用。我可以最佳化路線、比較想法，並把聊天內容轉成行程變更。',
+  'AI Agent active. I can optimize routes, compare ideas, and turn chat into schedule changes.':
+      'AI 助理已啟用。我可以最佳化路線、比較想法，並把聊天內容轉成日程變更。',
   'I could not generate a travel suggestion right now.': '我現在無法產生旅行建議。',
   'AI chat is unavailable right now. Please try again in a moment.':
       'AI 聊天目前無法使用，請稍後再試。',
@@ -177,8 +177,8 @@ const _zhHantTwText = {
   'Trip dates': '旅程日期',
   'Trip tags': '旅程標籤',
   'Bookings': '預訂',
-  'First stops': '前幾站',
-  'Add stop': '新增停靠點',
+  'First schedule stops': '前幾個日程停靠點',
+  'Add schedule stop': '新增日程停靠點',
   'Activity': '活動',
   'Time': '時間',
   'Cost': '費用',
@@ -242,7 +242,8 @@ const _zhHantTwText = {
   'AI Flow': 'AI 流程',
   'Manual': '手動',
   'Generate with AI': '使用 AI 產生',
-  'Create itinerary': '建立行程',
+  'Create schedule': '建立日程',
+  'Create a schedule to see your route here.': '建立日程後即可在這裡查看路線。',
   'Destination': '目的地',
   'Search a real city': '搜尋真實城市',
   'Currency': '貨幣',

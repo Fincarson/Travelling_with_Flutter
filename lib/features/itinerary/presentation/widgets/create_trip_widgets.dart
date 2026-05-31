@@ -699,7 +699,7 @@ class GeneratingTripPanel extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  appText(context, 'Generating itinerary...'),
+                  appText(context, 'Generating schedule...'),
                   style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
                 const SizedBox(height: 4),

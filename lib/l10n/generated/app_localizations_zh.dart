@@ -18,7 +18,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get search => '搜尋';
 
   @override
-  String get itinerary => '行程';
+  String get schedule => '日程';
 
   @override
   String get chat => '聊天';
@@ -33,7 +33,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get searchPage => '搜尋頁面';
 
   @override
-  String get newItineraryPage => '新增行程頁面';
+  String get newSchedulePage => '新增日程頁面';
 
   @override
   String get chatPage => '聊天頁面';
@@ -104,7 +104,7 @@ class AppLocalizationsZhHantTw extends AppLocalizationsZh {
   String get search => '搜尋';
 
   @override
-  String get itinerary => '行程';
+  String get schedule => '日程';
 
   @override
   String get chat => '聊天';
@@ -119,7 +119,7 @@ class AppLocalizationsZhHantTw extends AppLocalizationsZh {
   String get searchPage => '搜尋頁面';
 
   @override
-  String get newItineraryPage => '新增行程頁面';
+  String get newSchedulePage => '新增日程頁面';
 
   @override
   String get chatPage => '聊天頁面';

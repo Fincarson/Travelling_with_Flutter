@@ -118,35 +118,35 @@ const mockKyotoTrip = Trip(
     'https://images.unsplash.com/photo-1545569341-9eb8b30979d9?q=80&w=900',
   ],
   items: [
-    ItineraryItem(
+    ScheduleItem(
       1,
       '10:00 AM',
       'Arrive at Kyoto Station',
       Icons.train_rounded,
       0,
     ),
-    ItineraryItem(
+    ScheduleItem(
       1,
       '12:30 PM',
       'Nishiki Market Food Tour',
       Icons.restaurant_rounded,
       45,
     ),
-    ItineraryItem(
+    ScheduleItem(
       1,
       '02:00 PM',
       'Fushimi Inari-taisha Hike',
       Icons.hiking_rounded,
       0,
     ),
-    ItineraryItem(
+    ScheduleItem(
       2,
       '09:00 AM',
       'Kinkaku-ji Golden Pavilion',
       Icons.temple_buddhist_rounded,
       15,
     ),
-    ItineraryItem(
+    ScheduleItem(
       2,
       '05:30 PM',
       'Gion District Walk',

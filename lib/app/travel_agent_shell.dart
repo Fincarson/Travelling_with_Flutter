@@ -104,7 +104,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
                 ..addAll(trips);
               _activeTrip = _firstOngoingTrip(trips);
               _selectedTrip = _matchingTrip(trips, _selectedTrip);
-              if (_screen == _Screen.itinerary && _selectedTrip == null) {
+              if (_screen == _Screen.tripDetail && _selectedTrip == null) {
                 _screen = _Screen.dashboard;
                 _tab = _NavTab.home;
               }
@@ -121,7 +121,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   void _openTrip(Trip trip) {
     setState(() {
       _selectedTrip = trip;
-      _screen = _Screen.itinerary;
+      _screen = _Screen.tripDetail;
       _tab = _NavTab.trips;
     });
   }
@@ -167,7 +167,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     await _refreshTripsFromBackend(selectTripId: trip.id);
     if (!mounted) return;
     setState(() {
-      _screen = _Screen.itinerary;
+      _screen = _Screen.tripDetail;
       _tab = _NavTab.trips;
     });
   }
@@ -432,9 +432,9 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           }),
           onGenerate: _createTrip,
         );
-      case _Screen.itinerary:
-        return ItineraryScreen(
-          key: ValueKey('itinerary-${_selectedTrip?.id}'),
+      case _Screen.tripDetail:
+        return TripDetailScreen(
+          key: ValueKey('trip-detail-${_selectedTrip?.id}'),
           trip: _selectedTrip ?? mockKyotoTrip,
           onBack: () => setState(() {
             _screen = _Screen.dashboard;
@@ -501,7 +501,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onBack: () => setState(
             () => _screen = _selectedTrip == null
                 ? _Screen.dashboard
-                : _Screen.itinerary,
+                : _Screen.tripDetail,
           ),
         );
       case _Screen.info:
@@ -518,13 +518,13 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         return BudgetScreen(
           key: const ValueKey('budget'),
           trip: _selectedTrip ?? mockKyotoTrip,
-          onBack: () => setState(() => _screen = _Screen.itinerary),
+          onBack: () => setState(() => _screen = _Screen.tripDetail),
         );
       case _Screen.packing:
         return PackingScreen(
           key: const ValueKey('packing'),
           trip: _selectedTrip ?? mockKyotoTrip,
-          onBack: () => setState(() => _screen = _Screen.itinerary),
+          onBack: () => setState(() => _screen = _Screen.tripDetail),
         );
     }
   }
@@ -569,7 +569,7 @@ Trip? _tripById(List<Trip> trips, String? tripId) {
 enum _Screen {
   dashboard,
   create,
-  itinerary,
+  tripDetail,
   trips,
   chatList,
   chatRoom,

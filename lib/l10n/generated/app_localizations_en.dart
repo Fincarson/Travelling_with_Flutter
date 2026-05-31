@@ -18,7 +18,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get search => 'Search';
 
   @override
-  String get itinerary => 'Itinerary';
+  String get schedule => 'Schedule';
 
   @override
   String get chat => 'Chat';
@@ -33,7 +33,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get searchPage => 'Search page';
 
   @override
-  String get newItineraryPage => 'New itinerary page';
+  String get newSchedulePage => 'New schedule page';
 
   @override
   String get chatPage => 'Chat page';

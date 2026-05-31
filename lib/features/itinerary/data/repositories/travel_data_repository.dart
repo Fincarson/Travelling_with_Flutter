@@ -135,9 +135,9 @@ class TravelDataRepository {
     final items =
         snapshots[0].docs
             .map((doc) => _orderedDocData(doc))
-            .map(ItineraryItem.fromMap)
+            .map(ScheduleItem.fromMap)
             .toList()
-          ..sort(_compareItineraryItems);
+          ..sort(_compareScheduleItems);
 
     final bookings =
         snapshots[1].docs
@@ -166,8 +166,9 @@ class TravelDataRepository {
     required Trip trip,
   }) async {
     final tripRef = _sharedTripDoc(trip.id);
-    final existingTrip = await tripRef.get();
-    final existingData = existingTrip.data() ?? const <String, dynamic>{};
+    final membership = await _membershipsRef(accountId).doc(trip.id).get();
+    final existingTrip = membership.exists ? await tripRef.get() : null;
+    final existingData = existingTrip?.data() ?? const <String, dynamic>{};
     final ownerId = (existingData['ownerId'] as String?) ?? accountId;
     final memberIds = _stringList(existingData['memberIds']);
     if (!memberIds.contains(accountId)) memberIds.add(accountId);
@@ -184,11 +185,13 @@ class TravelDataRepository {
     );
 
     final user = await loadUser(accountId);
-    final existingCollections = await Future.wait([
-      tripRef.collection('itineraryItems').get(),
-      tripRef.collection('bookings').get(),
-      tripRef.collection('budgetCategories').get(),
-    ]);
+    final existingCollections = existingTrip == null
+        ? <QuerySnapshot<Map<String, dynamic>>>[]
+        : await Future.wait([
+            tripRef.collection('itineraryItems').get(),
+            tripRef.collection('bookings').get(),
+            tripRef.collection('budgetCategories').get(),
+          ]);
 
     final batch = _firestore.batch();
     batch.set(
@@ -198,7 +201,7 @@ class TravelDataRepository {
         ownerId: ownerId,
         memberIds: memberIds,
         roles: roles,
-        includeCreatedAt: !existingTrip.exists,
+        includeCreatedAt: existingTrip == null,
       ),
       SetOptions(merge: true),
     );
@@ -208,7 +211,7 @@ class TravelDataRepository {
         batch.delete(doc.reference);
       }
     }
-    _writeItineraryItems(batch, tripRef, trip.items);
+    _writeScheduleItems(batch, tripRef, trip.items);
     _writeBookings(batch, tripRef, trip.bookings);
     _writeBudgetCategories(batch, tripRef, trip.budgetCategories);
 
@@ -219,7 +222,7 @@ class TravelDataRepository {
         role: roles[accountId] ?? 'editor',
         profile: user,
         invitedBy: accountId,
-        includeJoinedAt: !existingTrip.exists,
+        includeJoinedAt: existingTrip == null,
       ),
       SetOptions(merge: true),
     );
@@ -236,7 +239,7 @@ class TravelDataRepository {
       );
     }
 
-    if (!existingTrip.exists) {
+    if (existingTrip == null) {
       batch.set(tripRef.collection('channels').doc('general'), {
         'title': 'Group chat',
         'type': 'group',
@@ -316,10 +319,10 @@ class TravelDataRepository {
     };
   }
 
-  void _writeItineraryItems(
+  void _writeScheduleItems(
     WriteBatch batch,
     DocumentReference<Map<String, dynamic>> tripRef,
-    List<ItineraryItem> items,
+    List<ScheduleItem> items,
   ) {
     for (var index = 0; index < items.length; index++) {
       final item = items[index];
@@ -481,7 +484,7 @@ Map<String, dynamic> _orderedDocData(
   return {'id': doc.id, ...doc.data()};
 }
 
-int _compareItineraryItems(ItineraryItem a, ItineraryItem b) {
+int _compareScheduleItems(ScheduleItem a, ScheduleItem b) {
   final dayCompare = a.day.compareTo(b.day);
   if (dayCompare != 0) return dayCompare;
   return a.time.compareTo(b.time);
