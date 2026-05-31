@@ -162,9 +162,9 @@ class _AnimatedGlobeState extends State<AnimatedGlobe>
                 ),
               ),
             )
-          : CustomPaint(
+          : const CustomPaint(
               painter: _GlobePainter(.18),
-              child: const Center(
+              child: Center(
                 child: Icon(Icons.public_rounded, size: 76, color: _primary),
               ),
             ),

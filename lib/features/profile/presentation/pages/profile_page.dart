@@ -65,7 +65,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     String? interestError;
     final selected = await showModalBottomSheet<Set<String>>(
       context: context,
-      showDragHandle: true,
+      isDismissible: false,
+      enableDrag: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) => SafeArea(
           child: Center(
@@ -83,11 +84,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        appText(context, 'Travel interests'),
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              appText(context, 'Travel interests'),
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.w900),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: appText(context, 'Cancel'),
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 14),
                       Wrap(

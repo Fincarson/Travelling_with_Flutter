@@ -837,6 +837,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       final edited = await showModalBottomSheet<CreateTripDraft>(
         context: context,
         isScrollControlled: true,
+        isDismissible: false,
+        enableDrag: false,
         backgroundColor: Colors.transparent,
         builder: (context) {
           return StatefulBuilder(

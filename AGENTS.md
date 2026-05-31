@@ -110,6 +110,19 @@ Use this shared trip structure unless the user explicitly approves a schema chan
 - AI runs: `trips/{tripId}/aiRuns/{runId}`
 - Invites: `trips/{tripId}/invites/{inviteId}`
 
+Standalone group chat currently uses its own future-linkable structure. Keep it independent from trips until the user explicitly asks to link chats to trip plans, but preserve `linkedTripId` so a chat can later attach to a trip without migration:
+
+- Public user lookup: `public_users/{userId}`
+- User chat index: `travel_users/{userId}/chatMemberships/{chatId}`
+- User pending invites: `travel_users/{userId}/chatInvites/{inviteCode}`
+- Group chat document: `chat_groups/{chatId}`
+- Chat members: `chat_groups/{chatId}/members/{userId}`
+- Chat messages: `chat_groups/{chatId}/messages/{messageId}`
+- Chat invites: `chat_groups/{chatId}/invites/{inviteCode}`
+- Share invite lookup: `chat_invites/{inviteCode}`
+
+Chat messages must be stored as plain Firestore strings so multilingual text, emoji, and right-to-left scripts remain intact. Store sender snapshots such as `senderNameSnapshot` and `senderPhotoUrlSnapshot` on each message so historical chat UI does not break when a profile changes. Do not add custom lossy encoding for user messages. Future attachments should use an `attachments[]` array with structured metadata such as `type`, `storagePath`, `url`, `mimeType`, and `sizeBytes`.
+
 Keep denormalized data in sync:
 
 - `trips/{tripId}.memberIds` and `trips/{tripId}.roles`

@@ -33,8 +33,21 @@ class TravelDataRepository {
     });
   }
 
-  Future<void> saveUser(String accountId, UserProfile profile) =>
-      _userDoc(accountId).set(profile.toMap(), SetOptions(merge: true));
+  Future<void> saveUser(String accountId, UserProfile profile) {
+    final batch = _firestore.batch();
+    batch.set(_userDoc(accountId), profile.toMap(), SetOptions(merge: true));
+    batch.set(
+      _firestore.collection('public_users').doc(accountId),
+      {
+        'displayName': _displayNameFor(profile),
+        'emailLower': profile.email.trim().toLowerCase(),
+        'photoUrl': profile.photoUrl,
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+    return batch.commit();
+  }
 
   Future<List<Trip>> loadTrips(String accountId) async {
     await migrateLegacyTrips(accountId);

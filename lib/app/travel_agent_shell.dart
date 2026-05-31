@@ -18,11 +18,11 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   var _isLoading = true;
   var _tab = _NavTab.home;
   var _screen = _Screen.dashboard;
+  var _isChatRoomOpen = false;
   var _user = const UserProfile(name: '', email: '', interests: []);
   final List<Trip> _trips = [];
   Trip? _selectedTrip;
   Trip? _activeTrip;
-  String _initialChat = '';
   String? _accountId;
   String? _loadError;
 
@@ -305,6 +305,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   bool get _showsBottomNav {
+    if (_screen == _Screen.chatList && _isChatRoomOpen) return false;
     return switch (_screen) {
       _Screen.create || _Screen.performance => false,
       _ => true,
@@ -346,9 +347,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
                 _tab = _NavTab.add;
               }),
               onOpenTrip: _openTrip,
-              onAskAi: (query) => setState(() {
-                _initialChat = query;
-                _screen = _Screen.chatRoom;
+              onAskAi: (_) => setState(() {
+                _screen = _Screen.chatList;
                 _tab = _NavTab.chat;
               }),
               onOpenInfo: () => setState(() => _screen = _Screen.info),
@@ -375,11 +375,9 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           _performanceBoundary(
             ChatListScreen(
               key: const PageStorageKey('chat-list-tab'),
-              trips: _trips,
-              onOpen: (query) => setState(() {
-                _initialChat = query;
-                _screen = _Screen.chatRoom;
-              }),
+              account: widget.account,
+              user: _user,
+              onRoomOpenChanged: _setChatRoomOpen,
             ),
             performance,
           ),
@@ -414,9 +412,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             _tab = _NavTab.add;
           }),
           onOpenTrip: _openTrip,
-          onAskAi: (query) => setState(() {
-            _initialChat = query;
-            _screen = _Screen.chatRoom;
+          onAskAi: (_) => setState(() {
+            _screen = _Screen.chatList;
             _tab = _NavTab.chat;
           }),
           onOpenInfo: () => setState(() => _screen = _Screen.info),
@@ -441,9 +438,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             _tab = _NavTab.home;
           }),
           onOpenChat: () => setState(() {
-            _initialChat =
-                'Help optimize ${(_selectedTrip ?? mockKyotoTrip).destination}.';
-            _screen = _Screen.chatRoom;
+            _screen = _Screen.chatList;
             _tab = _NavTab.chat;
           }),
           onOpenBudget: () => setState(() => _screen = _Screen.budget),
@@ -466,17 +461,9 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       case _Screen.chatList:
         return ChatListScreen(
           key: const ValueKey('chat-list'),
-          trips: _trips,
-          onOpen: (query) => setState(() {
-            _initialChat = query;
-            _screen = _Screen.chatRoom;
-          }),
-        );
-      case _Screen.chatRoom:
-        return ChatRoomScreen(
-          key: ValueKey('chat-$_initialChat'),
-          initialQuery: _initialChat,
-          onBack: () => setState(() => _screen = _Screen.chatList),
+          account: widget.account,
+          user: _user,
+          onRoomOpenChanged: _setChatRoomOpen,
         );
       case _Screen.profile:
         return ProfileScreen(
@@ -541,6 +528,11 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       };
     });
   }
+
+  void _setChatRoomOpen(bool isOpen) {
+    if (_isChatRoomOpen == isOpen) return;
+    setState(() => _isChatRoomOpen = isOpen);
+  }
 }
 
 Trip? _firstOngoingTrip(List<Trip> trips) {
@@ -572,7 +564,6 @@ enum _Screen {
   tripDetail,
   trips,
   chatList,
-  chatRoom,
   profile,
   performance,
   map,
