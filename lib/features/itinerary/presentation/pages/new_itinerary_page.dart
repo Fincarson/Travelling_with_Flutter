@@ -4,10 +4,12 @@ class CreateTripScreen extends StatefulWidget {
   const CreateTripScreen({
     required this.onBack,
     required this.onGenerate,
+    required this.profileLanguage,
     super.key,
   });
   final VoidCallback onBack;
   final ValueChanged<Trip> onGenerate;
+  final String profileLanguage;
 
   @override
   State<CreateTripScreen> createState() => _CreateTripScreenState();
@@ -16,6 +18,7 @@ class CreateTripScreen extends StatefulWidget {
 class _CreateTripScreenState extends State<CreateTripScreen> {
   final _places = GeoapifyPlacesService();
   final _assistant = TravelAssistantService();
+  final _deviceContextService = AppDeviceContextService();
   final _destination = TextEditingController();
   final _budget = TextEditingController();
   final _chatInput = TextEditingController();
@@ -39,6 +42,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _appliedDeviceCurrency = false;
   var _hasBudgetText = false;
   String? _lastAiError;
+  AppDeviceContext? _deviceContext;
   DateTime _startDate = DateTime.now().add(const Duration(days: 30));
   DateTime _endDate = DateTime.now().add(const Duration(days: 35));
   String? _selectedImage;
@@ -75,6 +79,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   void initState() {
     super.initState();
     _budget.addListener(_syncBudgetTextState);
+    unawaited(_loadDeviceContext());
   }
 
   @override
@@ -108,6 +113,26 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final hasText = _budget.text.trim().isNotEmpty;
     if (hasText == _hasBudgetText) return;
     setState(() => _hasBudgetText = hasText);
+  }
+
+  Future<void> _loadDeviceContext() async {
+    final context = await _deviceContextService.load(requestLocation: true);
+    if (!mounted) return;
+    final oldToday = _today();
+    final newToday = context.today;
+    setState(() {
+      _deviceContext = context;
+      if (_startDate.difference(oldToday).inDays == 30 &&
+          _endDate.difference(oldToday).inDays == 35) {
+        _startDate = newToday.add(const Duration(days: 30));
+        _endDate = newToday.add(const Duration(days: 35));
+      }
+    });
+  }
+
+  DateTime _today() {
+    final value = _deviceContext?.today ?? DateTime.now();
+    return DateTime(value.year, value.month, value.day);
   }
 
   void _schedulePlaceSearch(String value) {
@@ -145,7 +170,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       if (!mounted) return;
       setState(() {
         _isSearching = false;
-        _formError = 'Could not search places right now: $error';
+        _placeSuggestions = const [];
+        _formError =
+            'Place search is unavailable. You can still generate using the destination you typed.';
       });
     }
   }
@@ -160,7 +187,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _pickStartDate() async {
-    final today = DateTime.now();
+    final today = _today();
     final firstDate = DateTime(today.year, today.month, today.day);
     final initialDate = _startDate.isBefore(firstDate) ? firstDate : _startDate;
     final date = await showDatePicker(
@@ -180,7 +207,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _pickEndDate() async {
-    final today = DateTime.now();
+    final today = _today();
     final firstDate = _startDate.isBefore(today)
         ? DateTime(today.year, today.month, today.day)
         : _startDate;
@@ -199,7 +226,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _pickDateRange() async {
-    final today = DateTime.now();
+    final today = _today();
     final firstDate = DateTime(today.year, today.month, today.day);
     final initialStart = _startDate.isBefore(firstDate)
         ? firstDate
@@ -304,7 +331,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _sendCreateTripChat([String? value]) async {
-    final text = (value ?? _chatInput.text).trim();
+    var text = (value ?? _chatInput.text).trim();
+    if (text == _customDateRangeValue) {
+      final rangeText = await _pickCreateTripChatDateRange();
+      if (rangeText == null) return;
+      text = rangeText;
+    }
     if (text.isEmpty || _isThinking || _isGenerating) return;
 
     _chatInput.clear();
@@ -339,6 +371,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         message: text,
         currentDraft: _pendingDraft ?? CreateTripDraft(currency: _currency),
         history: _chatMessages,
+        profileLanguage: widget.profileLanguage,
       );
       _lastAiError = null;
     } catch (error) {
@@ -377,13 +410,37 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     });
   }
 
+  Future<String?> _pickCreateTripChatDateRange() async {
+    final today = _today();
+    final firstDate = DateTime(today.year, today.month, today.day);
+    final draft = _pendingDraft;
+    final initialStart = draft?.startDate ?? _startDate;
+    final safeStart = initialStart.isBefore(firstDate)
+        ? firstDate
+        : initialStart;
+    final initialEnd = draft?.endDate ?? _endDate;
+    final safeEnd = initialEnd.isBefore(safeStart)
+        ? safeStart.add(const Duration(days: 4))
+        : initialEnd;
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: firstDate,
+      lastDate: DateTime(2028, 12, 31),
+      initialDateRange: DateTimeRange(start: safeStart, end: safeEnd),
+    );
+    if (range == null) return null;
+    return '${_dateKey(range.start)} to ${_dateKey(range.end)}';
+  }
+
   String _friendlyAiError(Object error) {
     final text = error.toString();
     if (text.contains('not-found') ||
         text.contains('NOT_FOUND') ||
+        text.contains('failed-precondition') ||
+        text.contains('SERVICE_DISABLED') ||
         text.contains('generateTripPlan') ||
         text.contains('createTripReply')) {
-      return 'AI is not connected yet. Deploy the Firebase Functions or run Flutter with an OPENAI_API_KEY dart define. I used the local draft parser for now.';
+      return 'AI is not connected yet. Set the Firebase Function secrets and deploy Functions, or run Flutter with an OPENAI_API_KEY dart define. I used the local draft parser for now.';
     }
     if (text.contains('unauthenticated') ||
         text.contains('permission-denied')) {
@@ -477,7 +534,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     ).firstMatch(text);
     if (durationMatch != null && (startDate == null || endDate == null)) {
       final duration = math.max(1, int.parse(durationMatch.group(1)!));
-      final today = DateTime.now();
+      final today = _today();
       startDate = lower.contains('tomorrow')
           ? today.add(const Duration(days: 1))
           : today;
@@ -553,7 +610,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   int _fullYear(String? value) {
-    final year = int.tryParse(value ?? '') ?? DateTime.now().year;
+    final year = int.tryParse(value ?? '') ?? _today().year;
     return year < 100 ? 2000 + year : year;
   }
 
@@ -611,7 +668,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ],
         );
       case 'dates':
-        final base = DateTime.now().add(const Duration(days: 21));
+        final base = _today().add(const Duration(days: 21));
         final threeDayEnd = base.add(const Duration(days: 2));
         final fiveDayEnd = base.add(const Duration(days: 4));
         final sevenDayEnd = base.add(const Duration(days: 6));
@@ -632,6 +689,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               label: '7 days',
               value: '${_dateKey(base)} to ${_dateKey(sevenDayEnd)}',
               description: 'More room for day trips',
+            ),
+            const CreateTripChoiceOption(
+              label: 'Pick exact dates',
+              value: _customDateRangeValue,
+              description: 'Open the calendar',
             ),
           ],
         );
@@ -844,7 +906,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           return StatefulBuilder(
             builder: (context, setSheetState) {
               Future<void> pickStart() async {
-                final today = DateTime.now();
+                final today = _today();
                 final firstDate = DateTime(today.year, today.month, today.day);
                 final date = await showDatePicker(
                   context: context,
@@ -1096,11 +1158,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       if (suggestions.isNotEmpty) {
         return suggestions.first;
       }
-    } catch (_) {
-      if (_mode == 1) rethrow;
-    }
+    } catch (_) {}
 
-    if (_mode == 1) return null;
     return PlaceSuggestion(
       name: typed,
       formatted: typed,
@@ -1156,6 +1215,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         currency: _currency,
         airline: _airline.text.trim(),
         flightConfirmation: _flightConfirmation.text.trim(),
+        profileLanguage: widget.profileLanguage,
       );
       if (plan.items.isEmpty) {
         throw Exception('AI returned no schedule items.');
@@ -1221,32 +1281,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     return [manualFlight, ...generated];
   }
 
-  void _useTemplateTrip() {
-    widget.onGenerate(
-      Trip(
-        id: 't-${DateTime.now().millisecondsSinceEpoch}',
-        destination: mockKyotoTrip.destination,
-        startDate: '2026-06-15',
-        endDate: '2026-06-20',
-        budget: mockKyotoTrip.budget,
-        spent: 0,
-        groupType: mockKyotoTrip.groupType,
-        currency: mockKyotoTrip.currency,
-        status: TripStatus.upcoming,
-        images: mockKyotoTrip.images,
-        items: mockKyotoTrip.items,
-        bookings: mockKyotoTrip.bookings,
-        checklist: mockKyotoTrip.checklist,
-        preferences: mockKyotoTrip.preferences,
-        budgetCategories: mockKyotoTrip.budgetCategories,
-        placeId: mockKyotoTrip.placeId,
-        formattedAddress: mockKyotoTrip.formattedAddress,
-        latitude: mockKyotoTrip.latitude,
-        longitude: mockKyotoTrip.longitude,
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_mode == 0) {
@@ -1277,13 +1311,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               title: 'Create Manually',
               text: 'Enter destination, dates, budget, people, and tags.',
               onTap: () => setState(() => _mode = 2),
-            ),
-            const SizedBox(height: 12),
-            CreateOptionCard(
-              icon: Icons.work_rounded,
-              title: 'Use Saved Trip Template',
-              text: 'Start from a polished Kyoto sample and edit later.',
-              onTap: _useTemplateTrip,
             ),
           ],
         ),

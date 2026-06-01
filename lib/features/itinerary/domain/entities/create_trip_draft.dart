@@ -1,5 +1,7 @@
 part of travel_agent_app;
 
+const _customDateRangeValue = '__pick_dates__';
+
 class CreateTripDraft {
   const CreateTripDraft({
     this.destination,

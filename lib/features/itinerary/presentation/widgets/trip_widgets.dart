@@ -26,42 +26,55 @@ class CurrentTripCard extends StatelessWidget {
             child: ImageHero(
               image: image,
               height: 150,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Text(
-                    appText(context, 'UP NEXT'),
-                    style: const TextStyle(
-                      color: _accent,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.4,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return FittedBox(
+                    alignment: Alignment.bottomLeft,
+                    fit: BoxFit.scaleDown,
+                    child: SizedBox(
+                      width: constraints.maxWidth,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            appText(context, 'UP NEXT'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _accent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            appText(context, nextTitle),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 30,
+                              fontWeight: FontWeight.w900,
+                              height: .95,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            appText(context, nextDetail),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .75),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    appText(context, nextTitle),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 30,
-                      fontWeight: FontWeight.w900,
-                      height: .95,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    appText(context, nextDetail),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: .75),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
+                  );
+                },
               ),
             ),
           ),
@@ -346,11 +359,13 @@ class TripListCard extends StatelessWidget {
     required this.trip,
     required this.onTap,
     required this.onStart,
+    required this.onDelete,
     super.key,
   });
   final Trip trip;
   final VoidCallback onTap;
   final VoidCallback onStart;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -382,10 +397,11 @@ class TripListCard extends StatelessWidget {
               runSpacing: 8,
               children: [
                 SmallPill(label: trip.status.name),
-                GestureDetector(
-                  onTap: onStart,
-                  child: const SmallPill(label: 'Start'),
-                ),
+                if (trip.status != TripStatus.ongoing)
+                  GestureDetector(
+                    onTap: onStart,
+                    child: const SmallPill(label: 'Start'),
+                  ),
               ],
             ),
           ],
@@ -409,9 +425,24 @@ class TripListCard extends StatelessWidget {
               ),
               const SizedBox(width: 14),
               Expanded(child: content),
-              IconButton(
-                onPressed: onTap,
-                icon: const Icon(Icons.arrow_forward_rounded),
+              SizedBox(
+                width: 44,
+                height: imageSize,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      tooltip: appText(context, 'Remove trip'),
+                      onPressed: onDelete,
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                    IconButton(
+                      tooltip: appText(context, 'Open trip'),
+                      onPressed: onTap,
+                      icon: const Icon(Icons.arrow_forward_rounded),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),

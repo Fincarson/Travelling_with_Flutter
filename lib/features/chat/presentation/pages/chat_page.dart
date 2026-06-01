@@ -864,11 +864,14 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
           ),
           FilledButton.icon(
             onPressed: () async {
-              await SharePlus.instance.share(
-                ShareParams(
-                  text: invite.link,
-                  subject: 'Join ${invite.titleSnapshot}',
+              await Clipboard.setData(
+                ClipboardData(
+                  text: 'Join ${invite.titleSnapshot}: ${invite.link}',
                 ),
+              );
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(appText(context, 'Invite copied.'))),
               );
             },
             icon: const Icon(Icons.ios_share_rounded),

@@ -1,9 +1,24 @@
 part of travel_agent_app;
 
 class PerformanceSettingsScreen extends StatelessWidget {
-  const PerformanceSettingsScreen({required this.onBack, super.key});
+  const PerformanceSettingsScreen({
+    required this.onBack,
+    required this.onSettingsChanged,
+    super.key,
+  });
 
   final VoidCallback onBack;
+  final Future<void> Function(AppPerformanceSettings settings)
+  onSettingsChanged;
+
+  Future<void> _update(
+    BuildContext context,
+    AppPerformanceSettings settings,
+  ) async {
+    final controller = PerformanceScope.of(context);
+    await controller.update(settings);
+    await onSettingsChanged(settings);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,8 +54,12 @@ class PerformanceSettingsScreen extends StatelessWidget {
                           color: _primary,
                           fontWeight: FontWeight.w900,
                         ),
-                        onSelected: (_) =>
-                            unawaited(controller.applyPreset(preset)),
+                        onSelected: (_) => unawaited(
+                          _update(
+                            context,
+                            AppPerformanceSettings.forPreset(preset),
+                          ),
+                        ),
                       ),
                     if (settings.preset == PerformancePreset.custom)
                       const SmallPill(label: 'Custom'),
@@ -52,7 +71,7 @@ class PerformanceSettingsScreen extends StatelessWidget {
           const SizedBox(height: 12),
           _PerformanceImpactCard(settings: settings),
           const SizedBox(height: 12),
-          _AdvancedPerformancePanel(controller: controller),
+          _AdvancedPerformancePanel(onSettingsChanged: _update),
         ],
       ),
     );
@@ -105,13 +124,17 @@ class _PerformanceImpactCard extends StatelessWidget {
 }
 
 class _AdvancedPerformancePanel extends StatelessWidget {
-  const _AdvancedPerformancePanel({required this.controller});
+  const _AdvancedPerformancePanel({required this.onSettingsChanged});
 
-  final AppPerformanceController controller;
+  final Future<void> Function(
+    BuildContext context,
+    AppPerformanceSettings settings,
+  )
+  onSettingsChanged;
 
   @override
   Widget build(BuildContext context) {
-    final settings = controller.settings;
+    final settings = PerformanceScope.of(context).settings;
 
     return GlassPanel(
       padding: EdgeInsets.zero,
@@ -141,39 +164,75 @@ class _AdvancedPerformancePanel extends StatelessWidget {
             value: settings.motionLevel,
             values: MotionLevel.values,
             labelFor: (value) => value.label,
-            onChanged: controller.setMotionLevel,
+            onChanged: (value) => onSettingsChanged(
+              context,
+              settings.copyWith(
+                preset: PerformancePreset.custom,
+                motionLevel: value,
+              ),
+            ),
           ),
           _EnumDropdownTile<FrameRatePreference>(
             title: 'Frame pacing',
             value: settings.frameRatePreference,
             values: FrameRatePreference.values,
             labelFor: (value) => value.label,
-            onChanged: controller.setFrameRatePreference,
+            onChanged: (value) => onSettingsChanged(
+              context,
+              settings.copyWith(
+                preset: PerformancePreset.custom,
+                frameRatePreference: value,
+              ),
+            ),
           ),
           _EnumDropdownTile<ImageQualityPreference>(
             title: 'Image quality',
             value: settings.imageQuality,
             values: ImageQualityPreference.values,
             labelFor: (value) => value.label,
-            onChanged: controller.setImageQuality,
+            onChanged: (value) => onSettingsChanged(
+              context,
+              settings.copyWith(
+                preset: PerformancePreset.custom,
+                imageQuality: value,
+              ),
+            ),
           ),
           _SwitchTile(
             title: 'Cache pages',
             subtitle: 'Keep tab pages alive instead of rebuilding from zero.',
             value: settings.cachePages,
-            onChanged: controller.setCachePages,
+            onChanged: (value) => onSettingsChanged(
+              context,
+              settings.copyWith(
+                preset: PerformancePreset.custom,
+                cachePages: value,
+              ),
+            ),
           ),
           _SwitchTile(
             title: 'Repaint isolation',
             subtitle: 'Wrap major pages in repaint boundaries.',
             value: settings.isolateRepaints,
-            onChanged: controller.setIsolateRepaints,
+            onChanged: (value) => onSettingsChanged(
+              context,
+              settings.copyWith(
+                preset: PerformancePreset.custom,
+                isolateRepaints: value,
+              ),
+            ),
           ),
           _SwitchTile(
             title: 'Heavy visual effects',
             subtitle: 'Allow decorative animated visuals when enabled.',
             value: settings.heavyVisualEffects,
-            onChanged: controller.setHeavyVisualEffects,
+            onChanged: (value) => onSettingsChanged(
+              context,
+              settings.copyWith(
+                preset: PerformancePreset.custom,
+                heavyVisualEffects: value,
+              ),
+            ),
           ),
         ],
       ),

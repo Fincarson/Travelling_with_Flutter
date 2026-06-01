@@ -13,7 +13,7 @@ class ProfileScreen extends StatefulWidget {
 
   final AuthenticatedAccount account;
   final UserProfile user;
-  final ValueChanged<UserProfile> onSave;
+  final Future<void> Function(UserProfile profile) onSave;
   final Future<void> Function() onSignOut;
   final Future<void> Function() onDeleteAccount;
   final VoidCallback onOpenPerformance;
@@ -29,6 +29,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   var _isSigningOut = false;
   var _isDeleting = false;
+  var _isSaving = false;
   late final Set<String> _interests = {...widget.user.interests};
   late var _language = widget.user.language;
   late var _notificationsEnabled = widget.user.notificationsEnabled;
@@ -40,6 +41,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _name.dispose();
     _customInterest.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant ProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.user == widget.user || _isSaving) return;
+    _name.text = widget.user.name;
+    _interests
+      ..clear()
+      ..addAll(widget.user.interests);
+    _language = widget.user.language;
+    _notificationsEnabled = widget.user.notificationsEnabled;
+    _themeMode = widget.user.themeMode;
   }
 
   Future<void> _signOut() async {
@@ -56,9 +70,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     language: _language,
     notificationsEnabled: _notificationsEnabled,
     themeMode: _themeMode,
+    performanceSettings: widget.user.performanceSettings,
   );
 
-  void _saveDraft() => widget.onSave(_draftProfile());
+  Future<void> _saveDraft({bool showFeedback = false}) async {
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+    try {
+      await widget.onSave(_draftProfile());
+      if (!mounted) return;
+      if (showFeedback) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(appText(context, 'Profile saved.'))),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not save profile: $error')));
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
 
   Future<void> _editInterests() async {
     final draft = {..._interests};
@@ -183,7 +217,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ..clear()
           ..addAll(selected);
       });
-      _saveDraft();
+      unawaited(_saveDraft());
     }
   }
 
@@ -227,7 +261,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       onSelected: (value) {
         setState(() => _language = value);
         AppLocaleController.setProfileLanguage(value);
-        _saveDraft();
+        unawaited(_saveDraft());
       },
     );
   }
@@ -240,7 +274,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       labelFor: (value) => appText(context, value),
       onSelected: (value) {
         setState(() => _themeMode = value);
-        _saveDraft();
+        unawaited(_saveDraft());
       },
     );
   }
@@ -370,7 +404,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 : _localizedSettingValue(_language, 'off'),
             onTap: () {
               setState(() => _notificationsEnabled = !_notificationsEnabled);
-              _saveDraft();
+              unawaited(_saveDraft());
             },
           ),
           SettingsTile(
@@ -399,8 +433,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 20),
           PrimaryButton(
             label: _profileText(_language, 'saveProfile'),
-            icon: Icons.check_rounded,
-            onPressed: _saveDraft,
+            icon: _isSaving ? Icons.hourglass_top_rounded : Icons.check_rounded,
+            onPressed: _isSaving ? null : () => _saveDraft(showFeedback: true),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(

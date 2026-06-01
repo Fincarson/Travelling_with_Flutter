@@ -1,18 +1,16 @@
-# Firebase Function Secrets
+# Firebase Function API Keys
 
 Do not put API keys in Flutter code or committed env files. Flutter apps can be inspected by customers, so secrets must stay on the server.
 
-This project keeps external API keys in Firebase Secret Manager and exposes only callable Firebase Functions to the app:
+This project keeps external API keys in a local `functions/.env` file and exposes only callable Firebase Functions to the app:
 
 - `searchPlaces` uses `GEOAPIFY_API_KEY`.
 - `chatWithAssistant`, `generateTripPlan`, and `createTripReply` use `OPENAI_API_KEY`.
 
-Set or rotate the secrets with:
+Set or rotate the function environment keys with:
 
 ```sh
-firebase functions:secrets:set GEOAPIFY_API_KEY
-firebase functions:secrets:set OPENAI_API_KEY
-firebase deploy --only functions
+../scripts/configure_firebase_ai.ps1
 ```
 
 For local Flutter debugging without deployed Functions, pass temporary keys at

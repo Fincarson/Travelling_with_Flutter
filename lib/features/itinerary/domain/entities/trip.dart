@@ -63,6 +63,10 @@ class Trip {
     List<String>? preferences,
     List<BudgetCategory>? budgetCategories,
     String? title,
+    String? placeId,
+    String? formattedAddress,
+    double? latitude,
+    double? longitude,
   }) => Trip(
     id: id,
     title: title ?? this.title,
@@ -80,10 +84,10 @@ class Trip {
     currency: currency ?? this.currency,
     preferences: preferences ?? this.preferences,
     budgetCategories: budgetCategories ?? this.budgetCategories,
-    placeId: placeId,
-    formattedAddress: formattedAddress,
-    latitude: latitude,
-    longitude: longitude,
+    placeId: placeId ?? this.placeId,
+    formattedAddress: formattedAddress ?? this.formattedAddress,
+    latitude: latitude ?? this.latitude,
+    longitude: longitude ?? this.longitude,
   );
 
   Map<String, dynamic> toMap() => {

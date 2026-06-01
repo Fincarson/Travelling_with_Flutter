@@ -6,23 +6,29 @@ class TravelAssistantService {
           functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
 
   final FirebaseFunctions _functions;
+  final _deviceContext = AppDeviceContextService();
 
   Future<String> sendMessage(String message) async {
     final trimmed = message.trim();
     if (trimmed.isEmpty) return '';
+    final appContext = await _deviceContext.load(requestLocation: true);
 
     if (LocalApiKeys.hasOpenAiApiKey) {
-      return _sendMessageDirectly(trimmed);
+      return _sendMessageDirectly(trimmed, appContext);
     }
 
     final callable = _functions.httpsCallable('chatWithAssistant');
     final response = await callable.call<Map<String, dynamic>>({
       'message': trimmed,
+      'appContext': appContext.toAiMap(),
     });
     return (response.data['reply'] as String?)?.trim() ?? '';
   }
 
-  Future<String> _sendMessageDirectly(String message) async {
+  Future<String> _sendMessageDirectly(
+    String message,
+    AppDeviceContext appContext,
+  ) async {
     final response = await http.post(
       Uri.https('api.openai.com', '/v1/responses'),
       headers: {
@@ -35,8 +41,14 @@ class TravelAssistantService {
             'You are a concise travel planning assistant inside a mobile app. '
             'Help with schedule order, budget tradeoffs, packing, food, '
             'transit, and practical destination advice. Keep replies friendly '
-            'and short.',
-        'input': message,
+            'and short. Use appContext.localDate, appContext.localTime, and '
+            'appContext.timeZoneOffset as the source of truth for today and '
+            'relative dates. Use appContext.location only for near-me or '
+            'location-aware requests.',
+        'input': jsonEncode({
+          'message': message,
+          'appContext': appContext.toAiMap(),
+        }),
         'store': false,
         'reasoning': {'effort': 'low'},
         'text': {'verbosity': 'low'},
@@ -72,9 +84,12 @@ class TravelAssistantService {
     required String groupType,
     required List<String> preferences,
     required String currency,
+    required String profileLanguage,
     String airline = '',
     String flightConfirmation = '',
   }) async {
+    final appContext = await _deviceContext.load(requestLocation: true);
+    final outputLanguage = _aiLanguageName(profileLanguage);
     if (!LocalApiKeys.hasOpenAiApiKey) {
       final callable = _functions.httpsCallable('generateTripPlan');
       final response = await callable.call<Map<String, dynamic>>({
@@ -92,8 +107,11 @@ class TravelAssistantService {
         'groupType': groupType,
         'preferences': preferences,
         'currency': currency,
+        'profileLanguage': profileLanguage,
+        'outputLanguage': outputLanguage,
         'airline': airline,
         'flightConfirmation': flightConfirmation,
+        'appContext': appContext.toAiMap(),
       });
       final data = response.data['plan'] is Map
           ? Map<String, dynamic>.from(response.data['plan'] as Map)
@@ -113,6 +131,9 @@ class TravelAssistantService {
           'Generate a practical travel schedule as strict JSON only.',
           'Use current attraction names for the destination.',
           'Keep costs realistic but approximate.',
+          'Use appContext.localDate and appContext.timeZoneOffset as today context.',
+          'Write all user-facing itinerary text in $outputLanguage.',
+          'Do not infer language from currency; currency only controls money.',
           'Return no markdown and no explanation.',
         ].join(' '),
         'input': jsonEncode({
@@ -122,9 +143,12 @@ class TravelAssistantService {
           'endDate': _dateKey(endDate),
           'budgetUsd': budget,
           'currency': currency,
+          'profileLanguage': profileLanguage,
+          'outputLanguage': outputLanguage,
           'groupType': groupType,
           'preferences': preferences,
           'flight': {'airline': airline, 'confirmation': flightConfirmation},
+          'appContext': appContext.toAiMap(),
           'schema': {
             'items': [
               {
@@ -173,7 +197,10 @@ class TravelAssistantService {
     required String message,
     required CreateTripDraft currentDraft,
     required List<CreateTripChatMessage> history,
+    required String profileLanguage,
   }) async {
+    final appContext = await _deviceContext.load(requestLocation: true);
+    final outputLanguage = _aiLanguageName(profileLanguage);
     if (!LocalApiKeys.hasOpenAiApiKey) {
       final callable = _functions.httpsCallable('createTripReply');
       final response = await callable.call<Map<String, dynamic>>({
@@ -190,7 +217,10 @@ class TravelAssistantService {
               },
             )
             .toList(),
-        'today': _dateKey(DateTime.now()),
+        'today': _dateKey(appContext.today),
+        'profileLanguage': profileLanguage,
+        'outputLanguage': outputLanguage,
+        'appContext': appContext.toAiMap(),
       });
       final data = response.data['reply'] is Map
           ? Map<String, dynamic>.from(response.data['reply'] as Map)
@@ -212,9 +242,14 @@ class TravelAssistantService {
           'Ask for exactly one missing important field at a time.',
           'When useful, create a tappable widget with 2 to 4 options.',
           'Widget option values must be short user messages the app can send back.',
+          "When asking for dates, include a 'Pick exact dates' option with value '$_customDateRangeValue'.",
+          'Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset as the source of truth for today, tomorrow, next weekend, and relative dates.',
+          'Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.',
           'Required final fields: destination, startDate, endDate, budget, groupType.',
           'Dates must be ISO yyyy-MM-dd. groupType must be Solo, Friends, Family, or Tour.',
           'If the user names a currency, set currency to USD, TWD, IDR, JPY, or EUR.',
+          'Write message, widget title, widget labels, widget descriptions, and preferences in $outputLanguage.',
+          'Do not infer language from currency; currency only controls money.',
           'Return only JSON matching the schema.',
         ].join(' '),
         'input': jsonEncode({
@@ -231,7 +266,10 @@ class TravelAssistantService {
                 },
               )
               .toList(),
-          'today': _dateKey(DateTime.now()),
+          'today': _dateKey(appContext.today),
+          'profileLanguage': profileLanguage,
+          'outputLanguage': outputLanguage,
+          'appContext': appContext.toAiMap(),
         }),
         'store': false,
         'reasoning': {'effort': 'low'},
@@ -250,6 +288,24 @@ class TravelAssistantService {
     final data = _decodeJsonObject(_responseOutputText(body));
     return CreateTripAiResponse.fromMap(data, fallbackDraft: currentDraft);
   }
+}
+
+String _aiLanguageName(String profileLanguage) {
+  return switch (profileLanguage) {
+    'id' => 'Indonesian',
+    'zh' || 'zh_Hant_TW' || 'zh-TW' => 'Traditional Chinese',
+    'ja' => 'Japanese',
+    'ko' => 'Korean',
+    'es' => 'Spanish',
+    'fr' => 'French',
+    'de' => 'German',
+    'it' => 'Italian',
+    'pt' => 'Portuguese',
+    'th' => 'Thai',
+    'vi' => 'Vietnamese',
+    'ar' => 'Arabic',
+    _ => 'English',
+  };
 }
 
 Map<String, dynamic> _tripPlanTextFormat() => {

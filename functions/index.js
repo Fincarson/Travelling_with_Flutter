@@ -1,24 +1,35 @@
+/* global process */
+
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
-const {defineSecret} = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 
 admin.initializeApp();
 
-const geoapifyApiKey = defineSecret("GEOAPIFY_API_KEY");
-const openAiApiKey = defineSecret("OPENAI_API_KEY");
 const openAiModel = "gpt-5.5";
+
+function geoapifyApiKey() {
+  return String(process.env.GEOAPIFY_API_KEY ?? "").trim();
+}
+
+function openAiApiKey() {
+  return String(process.env.OPENAI_API_KEY ?? "").trim();
+}
 
 const travelAssistantInstructions = [
   "You are a concise travel planning assistant inside a mobile app.",
   "Help with itinerary order, budget tradeoffs, packing, food, transit,",
   "and practical destination advice. Keep replies friendly and short.",
+  "Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset",
+  "as the source of truth for today, tomorrow, and relative dates.",
+  "Use appContext.location only for near-me or location-aware requests.",
 ].join(" ");
 
 const tripPlanInstructions = [
   "Generate a practical travel itinerary for a mobile travel app.",
   "Use realistic attraction names, reasonable pacing, and approximate costs.",
   "Keep activities suitable for the destination, dates, budget, group, and tags.",
+  "Use appContext.localDate and appContext.timeZoneOffset as today's context.",
 ].join(" ");
 
 const createTripInstructions = [
@@ -27,10 +38,56 @@ const createTripInstructions = [
   "Ask for exactly one missing important field at a time.",
   "When useful, create a tappable widget with 2 to 4 options.",
   "Widget option values must be short user messages the app can send back.",
+  "When asking for dates, include a 'Pick exact dates' option with value '__pick_dates__'.",
+  "Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset as the source of truth for today, tomorrow, next weekend, and relative dates.",
+  "Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.",
   "Required final fields: destination, startDate, endDate, budget, groupType.",
   "Dates must be ISO yyyy-MM-dd. groupType must be Solo, Friends, Family, or Tour.",
   "If the user names a currency, set currency to USD, TWD, IDR, JPY, or EUR.",
 ].join(" ");
+
+function aiLanguageName(profileLanguage, outputLanguage) {
+  const explicit = String(outputLanguage ?? "").trim();
+  if (explicit) return explicit;
+  switch (String(profileLanguage ?? "en")) {
+    case "id":
+      return "Indonesian";
+    case "zh":
+    case "zh_Hant_TW":
+    case "zh-TW":
+      return "Traditional Chinese";
+    case "ja":
+      return "Japanese";
+    case "ko":
+      return "Korean";
+    case "es":
+      return "Spanish";
+    case "fr":
+      return "French";
+    case "de":
+      return "German";
+    case "it":
+      return "Italian";
+    case "pt":
+      return "Portuguese";
+    case "th":
+      return "Thai";
+    case "vi":
+      return "Vietnamese";
+    case "ar":
+      return "Arabic";
+    default:
+      return "English";
+  }
+}
+
+function outputLanguageInstructions(profileLanguage, outputLanguage) {
+  const language = aiLanguageName(profileLanguage, outputLanguage);
+  return [
+    `Write all user-facing text in ${language}.`,
+    "Do not infer language from currency; currency only controls money values.",
+  ].join(" ");
+}
 
 const tripPlanFormat = {
   type: "json_schema",
@@ -182,7 +239,6 @@ const createTripReplyFormat = {
 exports.searchPlaces = onCall(
   {
     region: "us-central1",
-    secrets: [geoapifyApiKey],
   },
   async (request) => {
     const query = String(request.data?.query ?? "").trim();
@@ -190,23 +246,54 @@ exports.searchPlaces = onCall(
       return {results: []};
     }
 
+    const apiKey = geoapifyApiKey();
+    if (!apiKey) {
+      logger.error("Geoapify search is not configured");
+      throw new HttpsError(
+        "failed-precondition",
+        "Place search is not configured.",
+      );
+    }
+
     const url = new URL("https://api.geoapify.com/v1/geocode/autocomplete");
     url.searchParams.set("text", query);
     url.searchParams.set("format", "json");
     url.searchParams.set("type", "city");
     url.searchParams.set("limit", "6");
-    url.searchParams.set("apiKey", geoapifyApiKey.value());
+    url.searchParams.set("apiKey", apiKey);
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      logger.error("Geoapify search failed", {
-        status: response.status,
+    let response;
+    try {
+      response = await fetch(url);
+    } catch (error) {
+      logger.error("Geoapify search request failed", {
         query,
+        message: error?.message,
       });
       throw new HttpsError("unavailable", "Place search is unavailable.");
     }
 
-    const body = await response.json();
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      logger.error("Geoapify search failed", {
+        status: response.status,
+        query,
+        detail: detail.slice(0, 300),
+      });
+      throw new HttpsError("unavailable", "Place search is unavailable.");
+    }
+
+    let body;
+    try {
+      body = await response.json();
+    } catch (error) {
+      logger.error("Geoapify search returned invalid JSON", {
+        query,
+        message: error?.message,
+      });
+      throw new HttpsError("unavailable", "Place search is unavailable.");
+    }
+
     const results = Array.isArray(body.results) ? body.results : [];
 
     return {
@@ -236,7 +323,6 @@ exports.searchPlaces = onCall(
 exports.chatWithAssistant = onCall(
   {
     region: "us-central1",
-    secrets: [openAiApiKey],
   },
   async (request) => {
     const message = String(request.data?.message ?? "").trim();
@@ -250,13 +336,16 @@ exports.chatWithAssistant = onCall(
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${openAiApiKey.value()}`,
+        "Authorization": `Bearer ${openAiApiKey()}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model: openAiModel,
         instructions: travelAssistantInstructions,
-        input: message,
+        input: JSON.stringify({
+          message,
+          appContext: request.data?.appContext ?? null,
+        }),
         store: false,
         reasoning: {effort: "low"},
         text: {verbosity: "low"},
@@ -284,7 +373,6 @@ exports.chatWithAssistant = onCall(
 exports.generateTripPlan = onCall(
   {
     region: "us-central1",
-    secrets: [openAiApiKey],
   },
   async (request) => {
     const data = request.data ?? {};
@@ -298,8 +386,13 @@ exports.generateTripPlan = onCall(
       throw new HttpsError("invalid-argument", "Trip details are required.");
     }
 
+    const languageInstructions = outputLanguageInstructions(
+      data.profileLanguage,
+      data.outputLanguage,
+    );
+
     const plan = await createStructuredResponse({
-      instructions: tripPlanInstructions,
+      instructions: `${tripPlanInstructions} ${languageInstructions}`,
       input: {
         destination,
         formattedAddress: String(place.formatted ?? destination),
@@ -307,12 +400,15 @@ exports.generateTripPlan = onCall(
         endDate,
         budget,
         currency: String(data.currency ?? "USD"),
+        profileLanguage: String(data.profileLanguage ?? "en"),
+        outputLanguage: aiLanguageName(data.profileLanguage, data.outputLanguage),
         groupType: String(data.groupType ?? "Solo"),
         preferences: Array.isArray(data.preferences) ? data.preferences : [],
         flight: {
           airline: String(data.airline ?? ""),
           confirmation: String(data.flightConfirmation ?? ""),
         },
+        appContext: data.appContext ?? null,
       },
       format: tripPlanFormat,
       logContext: "OpenAI itinerary generation failed",
@@ -326,7 +422,6 @@ exports.generateTripPlan = onCall(
 exports.createTripReply = onCall(
   {
     region: "us-central1",
-    secrets: [openAiApiKey],
   },
   async (request) => {
     const message = String(request.data?.message ?? "").trim();
@@ -337,8 +432,13 @@ exports.createTripReply = onCall(
       throw new HttpsError("invalid-argument", "Message is too long.");
     }
 
+    const languageInstructions = outputLanguageInstructions(
+      request.data?.profileLanguage,
+      request.data?.outputLanguage,
+    );
+
     const reply = await createStructuredResponse({
-      instructions: createTripInstructions,
+      instructions: `${createTripInstructions} ${languageInstructions}`,
       input: {
         latestMessage: message,
         currentDraft: request.data?.currentDraft ?? {},
@@ -346,6 +446,12 @@ exports.createTripReply = onCall(
           ? request.data.history.slice(-8)
           : [],
         today: request.data?.today ?? null,
+        profileLanguage: String(request.data?.profileLanguage ?? "en"),
+        outputLanguage: aiLanguageName(
+          request.data?.profileLanguage,
+          request.data?.outputLanguage,
+        ),
+        appContext: request.data?.appContext ?? null,
       },
       format: createTripReplyFormat,
       logContext: "OpenAI create trip chat failed",
@@ -366,7 +472,7 @@ async function createStructuredResponse({
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${openAiApiKey.value()}`,
+      "Authorization": `Bearer ${openAiApiKey()}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
