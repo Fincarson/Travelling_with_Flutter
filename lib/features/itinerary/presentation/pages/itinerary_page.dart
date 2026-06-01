@@ -89,6 +89,7 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
     return DefaultTabController(
       length: 7,
       child: ScreenScaffold(
+        bottomPadding: 92,
         child: Column(
           children: [
             Padding(
@@ -110,13 +111,13 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
                 unselectedLabelColor: _secondary,
                 indicatorColor: _accent,
                 tabs: [
-                  Tab(text: appText(context, 'Overview')),
-                  Tab(text: appText(context, 'Schedule')),
-                  Tab(text: appText(context, 'Budget')),
-                  Tab(text: appText(context, 'Map')),
-                  Tab(text: appText(context, 'Checklist')),
-                  Tab(text: appText(context, 'Booking')),
-                  Tab(text: appText(context, 'Chat')),
+                  Tab(text: appText(context, 'OVERVIEW')),
+                  Tab(text: appText(context, 'SCHEDULE')),
+                  Tab(text: appText(context, 'BUDGET')),
+                  Tab(text: appText(context, 'MAP')),
+                  Tab(text: appText(context, 'CHECKLIST')),
+                  Tab(text: appText(context, 'BOOKING')),
+                  Tab(text: appText(context, 'CHAT')),
                 ],
               ),
             ),

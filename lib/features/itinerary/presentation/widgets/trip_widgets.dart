@@ -455,17 +455,7 @@ class ScheduleTile extends StatelessWidget {
                   ),
                 ],
               ),
-            ),
-            Flexible(
-              fit: FlexFit.loose,
-              child: Text(
-                item.cost == 0 ? appText(context, 'Free') : '\$${item.cost}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.end,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
+            )
           ],
         ),
       ),
