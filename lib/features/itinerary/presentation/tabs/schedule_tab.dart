@@ -1,16 +1,32 @@
 part of travel_agent_app;
 
-class ScheduleTab extends StatelessWidget {
+class ScheduleTab extends StatefulWidget {
   const ScheduleTab({required this.trip, required this.onSave, super.key});
 
   final Trip trip;
   final ValueChanged<Trip> onSave;
 
-  Future<void> _addScheduleStop(BuildContext context) async {
+  @override
+  State<ScheduleTab> createState() => _ScheduleTabState();
+}
+
+class _ScheduleTabState extends State<ScheduleTab> {
+  var _selectedDay = 1;
+
+  @override
+  void didUpdateWidget(covariant ScheduleTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final days = _scheduleDays(widget.trip.items);
+    if (!days.contains(_selectedDay)) {
+      _selectedDay = days.first;
+    }
+  }
+
+  Future<void> _addDestination(BuildContext context) async {
     final activity = TextEditingController();
     final time = TextEditingController(text: '10:00 AM');
     final cost = TextEditingController(text: '0');
-    var day = 1;
+    var day = _selectedDay;
     try {
       final item = await showDialog<ScheduleItem>(
         context: context,
@@ -76,7 +92,8 @@ class ScheduleTab extends StatelessWidget {
         ),
       );
       if (item == null) return;
-      onSave(trip.copyWith(items: [...trip.items, item]));
+      setState(() => _selectedDay = item.day);
+      widget.onSave(widget.trip.copyWith(items: [...widget.trip.items, item]));
     } finally {
       activity.dispose();
       time.dispose();
@@ -87,48 +104,162 @@ class ScheduleTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final grouped = <int, List<ScheduleItem>>{};
-    for (final item in trip.items) {
+    for (final item in widget.trip.items) {
       grouped.putIfAbsent(item.day, () => []).add(item);
     }
+    final days = _scheduleDays(widget.trip.items);
+    final selectedItems = grouped[_selectedDay] ?? const <ScheduleItem>[];
 
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
       children: [
-        PrimaryButton(
-          label: 'Add Stop',
-          icon: Icons.add_rounded,
-          onPressed: () => _addScheduleStop(context),
+        _ScheduleDayTabs(
+          days: days,
+          selectedDay: _selectedDay,
+          onSelect: (day) => setState(() => _selectedDay = day),
         ),
         const SizedBox(height: 16),
-        for (final day in grouped.keys.toList()..sort()) ...[
-          LabelText('${appText(context, 'Day')} $day'),
-          const SizedBox(height: 10),
-          for (final item in grouped[day]!)
-            Dismissible(
-              key: ValueKey('${item.day}-${item.time}-${item.activity}'),
-              direction: DismissDirection.endToStart,
-              background: Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: 18),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF2F2),
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: const Icon(Icons.delete_rounded, color: Colors.red),
+        PrimaryButton(
+          label: 'Add Destination',
+          icon: Icons.add_rounded,
+          onPressed: () => _addDestination(context),
+        ),
+        const SizedBox(height: 16),
+        LabelText('${appText(context, 'Day')} $_selectedDay'),
+        const SizedBox(height: 10),
+        for (final item in selectedItems)
+          Dismissible(
+            key: ValueKey('${item.day}-${item.time}-${item.activity}'),
+            direction: DismissDirection.endToStart,
+            background: Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: 18),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(24),
               ),
-              onDismissed: (_) => onSave(
-                trip.copyWith(
-                  items: trip.items
-                      .where((candidate) => candidate != item)
-                      .toList(),
-                ),
-              ),
-              child: ScheduleTile(item: item),
+              child: const Icon(Icons.delete_rounded, color: Colors.red),
             ),
-          const SizedBox(height: 12),
-        ],
+            onDismissed: (_) {
+              final nextItems = widget.trip.items
+                  .where((candidate) => candidate != item)
+                  .toList();
+              final nextDays = _scheduleDays(nextItems);
+              setState(() {
+                if (!nextDays.contains(_selectedDay)) {
+                  _selectedDay = nextDays.first;
+                }
+              });
+              widget.onSave(widget.trip.copyWith(items: nextItems));
+            },
+            child: ScheduleTile(item: item),
+          ),
       ],
+    );
+  }
+
+  List<int> _scheduleDays(List<ScheduleItem> items) {
+    final days = items.map((item) => item.day).toSet().toList()..sort();
+    return days.isEmpty ? [1] : days;
+  }
+}
+
+class _ScheduleDayTabs extends StatelessWidget {
+  const _ScheduleDayTabs({
+    required this.days,
+    required this.selectedDay,
+    required this.onSelect,
+  });
+
+  final List<int> days;
+  final int selectedDay;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final day in days)
+            Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: _ScheduleDayTab(
+                day: day,
+                selected: day == selectedDay,
+                onTap: () => onSelect(day),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScheduleDayTab extends StatelessWidget {
+  const _ScheduleDayTab({
+    required this.day,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int day;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Day $day',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          width: 84,
+          height: 84,
+          decoration: BoxDecoration(
+            color: selected ? _primary : Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: selected ? _primary : const Color(0xFFEFF3F6),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: _primary.withValues(alpha: selected ? .16 : .06),
+                blurRadius: selected ? 18 : 12,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                appText(context, 'DAY'),
+                style: TextStyle(
+                  color: selected ? _accent : _secondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$day',
+                style: TextStyle(
+                  color: selected ? Colors.white : _primary,
+                  fontSize: 34,
+                  height: .95,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
