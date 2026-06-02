@@ -172,31 +172,137 @@ class _AnimatedGlobeState extends State<AnimatedGlobe>
   }
 }
 
+class PlanningGoal {
+  const PlanningGoal({
+    required this.id,
+    required this.icon,
+    required this.title,
+    required this.text,
+    required this.tag,
+    required this.prompt,
+  });
+
+  final String id;
+  final IconData icon;
+  final String title;
+  final String text;
+  final String tag;
+  final String prompt;
+}
+
 class PlanningIdeaStrip extends StatelessWidget {
-  const PlanningIdeaStrip({super.key});
+  const PlanningIdeaStrip({
+    required this.goals,
+    required this.selectedGoalIds,
+    required this.onToggle,
+    super.key,
+  });
+
+  final List<PlanningGoal> goals;
+  final Set<String> selectedGoalIds;
+  final ValueChanged<String> onToggle;
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        LabelText('AI planning cards'),
-        SizedBox(height: 10),
-        ResponsiveSplit(
+        Row(
           children: [
-            InfoCard(
-              icon: Icons.restaurant_rounded,
-              title: 'Food',
-              text: 'Market lunch',
-            ),
-            InfoCard(
-              icon: Icons.directions_walk_rounded,
-              title: 'Route',
-              text: 'Less walking',
-            ),
+            const Expanded(child: LabelText('AI planning cards')),
+            if (selectedGoalIds.isNotEmpty)
+              SmallPill(label: '${selectedGoalIds.length} active'),
           ],
         ),
+        const SizedBox(height: 10),
+        ResponsiveSplit(
+          children: goals
+              .map(
+                (goal) => PlanningGoalCard(
+                  goal: goal,
+                  selected: selectedGoalIds.contains(goal.id),
+                  onTap: () => onToggle(goal.id),
+                ),
+              )
+              .toList(),
+        ),
       ],
+    );
+  }
+}
+
+class PlanningGoalCard extends StatelessWidget {
+  const PlanningGoalCard({
+    required this.goal,
+    required this.selected,
+    required this.onTap,
+    super.key,
+  });
+
+  final PlanningGoal goal;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(24),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: selected ? _accent : const Color(0xFFEFF3F6),
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                IconBadge(icon: goal.icon, size: 42),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        appText(context, goal.title),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _primary,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        appText(context, goal.text),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _secondary,
+                          fontWeight: FontWeight.w700,
+                          height: 1.25,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  selected
+                      ? Icons.check_circle_rounded
+                      : Icons.add_circle_outline_rounded,
+                  color: selected ? _primary : _secondary,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

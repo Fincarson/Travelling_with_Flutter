@@ -35,6 +35,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late var _notificationsEnabled = widget.user.notificationsEnabled;
   late var _themeMode = widget.user.themeMode;
   final _customInterest = TextEditingController();
+  final _deviceContextService = AppDeviceContextService();
+  var _locationAccessEnabled = true;
+  var _isUpdatingLocationAccess = false;
 
   @override
   void dispose() {
@@ -54,6 +57,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _language = widget.user.language;
     _notificationsEnabled = widget.user.notificationsEnabled;
     _themeMode = widget.user.themeMode;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadLocationAccess());
+  }
+
+  Future<void> _loadLocationAccess() async {
+    final enabled = await _deviceContextService.isLocationAccessEnabled();
+    if (!mounted) return;
+    setState(() => _locationAccessEnabled = enabled);
   }
 
   Future<void> _signOut() async {
@@ -355,6 +370,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _setLocationAccess(bool enabled) async {
+    if (_isUpdatingLocationAccess) return;
+    setState(() => _isUpdatingLocationAccess = true);
+    var nextValue = enabled;
+    var message = enabled
+        ? 'Location access enabled.'
+        : 'Location access disabled for this app.';
+    try {
+      if (enabled) {
+        final status = await _deviceContextService.enableLocationAccess();
+        nextValue = status == AppLocationAccessStatus.granted;
+        switch (status) {
+          case AppLocationAccessStatus.granted:
+            message = 'Location access enabled.';
+          case AppLocationAccessStatus.denied:
+            message = 'Location permission was denied.';
+          case AppLocationAccessStatus.deniedForever:
+            message =
+                'Android will not show the popup again. App settings opened.';
+          case AppLocationAccessStatus.serviceDisabled:
+            message = 'Turn on device location services, then try again.';
+        }
+      } else {
+        await _deviceContextService.setLocationAccessEnabled(false);
+      }
+      if (!mounted) return;
+      setState(() => _locationAccessEnabled = nextValue);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(appText(context, message))));
+    } finally {
+      if (mounted) setState(() => _isUpdatingLocationAccess = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ScreenScaffold(
@@ -406,6 +456,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               setState(() => _notificationsEnabled = !_notificationsEnabled);
               unawaited(_saveDraft());
             },
+          ),
+          LocationAccessTile(
+            enabled: _locationAccessEnabled,
+            busy: _isUpdatingLocationAccess,
+            onChanged: _setLocationAccess,
           ),
           SettingsTile(
             icon: Icons.palette_outlined,

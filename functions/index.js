@@ -7,7 +7,7 @@ const admin = require("firebase-admin");
 admin.initializeApp();
 
 const openAiModel = "gpt-5.5";
-const openAiTimeoutMs = 25000;
+const openAiTimeoutMs = 50000;
 
 function geoapifyApiKey() {
   return String(process.env.GEOAPIFY_API_KEY ?? "").trim();
@@ -31,6 +31,15 @@ const tripPlanInstructions = [
   "Use realistic attraction names, reasonable pacing, and approximate costs.",
   "Keep activities suitable for the destination, dates, budget, group, and tags.",
   "Use appContext.localDate and appContext.timeZoneOffset as today's context.",
+  "Use startLocation as the trip origin when provided. If startLocation is missing, use appContext.location when available.",
+  "Day 1 must start with realistic transportation from the trip origin to the destination before destination activities.",
+  "The final trip day must include realistic return transportation home after destination activities.",
+  "For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.",
+  "When moving to a different city or district, or when returning home, include pack-up/preparation wording before the transport.",
+  "Choose transport by distance: local transit/taxi for nearby trips, train/bus/high-speed rail for regional trips, and flights only for genuinely long-distance trips.",
+  "Never suggest a plane for short regional travel such as Hsinchu to Taipei.",
+  "Use web search data for current attraction names, transportation options, ticket prices, and local food costs.",
+  "Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.",
 ].join(" ");
 
 const createTripInstructions = [
@@ -313,6 +322,47 @@ exports.searchPlaces = onCall(
   },
 );
 
+exports.reversePlace = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const latitude = Number(request.data?.latitude);
+    const longitude = Number(request.data?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      throw new HttpsError("invalid-argument", "Location is required.");
+    }
+
+    const apiKey = geoapifyApiKey();
+    if (!apiKey) {
+      logger.error("Geoapify reverse lookup is not configured");
+      throw new HttpsError(
+        "failed-precondition",
+        "Current location lookup is not configured.",
+      );
+    }
+
+    try {
+      const result = await fetchGeoapifyReverse({
+        latitude,
+        longitude,
+        apiKey,
+      });
+      return {result: result ? normalizeGeoapifyResult(result) : null};
+    } catch (error) {
+      logger.error("Geoapify reverse lookup failed", {
+        latitude,
+        longitude,
+        message: error?.message,
+      });
+      throw new HttpsError(
+        "unavailable",
+        "Current location lookup is unavailable.",
+      );
+    }
+  },
+);
+
 async function fetchGeoapifyAutocomplete({query, type, apiKey}) {
   const url = new URL("https://api.geoapify.com/v1/geocode/autocomplete");
   url.searchParams.set("text", query);
@@ -334,17 +384,35 @@ async function fetchGeoapifyAutocomplete({query, type, apiKey}) {
   return Array.isArray(body.results) ? body.results : [];
 }
 
+async function fetchGeoapifyReverse({latitude, longitude, apiKey}) {
+  const url = new URL("https://api.geoapify.com/v1/geocode/reverse");
+  url.searchParams.set("lat", String(latitude));
+  url.searchParams.set("lon", String(longitude));
+  url.searchParams.set("format", "json");
+  url.searchParams.set("apiKey", apiKey);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Geoapify reverse lookup failed with ${response.status}: ` +
+      detail.slice(0, 300),
+    );
+  }
+
+  const body = await response.json();
+  return Array.isArray(body.results) && body.results.length
+    ? body.results[0]
+    : null;
+}
+
 function normalizeGeoapifyResult(item) {
   const resultType = item.result_type ?? item.type ?? null;
   const country = item.country ?? null;
   const locality = item.name ?? item.city ?? item.county ?? item.state ??
     (resultType === "country" ? country : null);
   const formatted = item.formatted ?? locality ?? "Unknown place";
-  const name = !locality
-    ? formatted
-    : !country || normalizedPlaceName(locality) === normalizedPlaceName(country)
-      ? locality
-      : `${locality}, ${country}`;
+  const name = placeNameWithCountry(locality || formatted, country);
 
   return {
     name,
@@ -355,6 +423,25 @@ function normalizeGeoapifyResult(item) {
     country,
     resultType,
   };
+}
+
+function placeNameWithCountry(value, country) {
+  const name = String(value ?? "").trim();
+  const countryName = String(country ?? "").trim();
+  if (!countryName) return name;
+
+  const parts = name
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part);
+  const lastPart = parts.length ? parts[parts.length - 1] : name;
+  if (
+    normalizedPlaceName(name) === normalizedPlaceName(countryName) ||
+    normalizedPlaceName(lastPart) === normalizedPlaceName(countryName)
+  ) {
+    return name;
+  }
+  return `${name}, ${countryName}`;
 }
 
 function rankGeoapifyResults(results, query) {
@@ -474,6 +561,10 @@ exports.generateTripPlan = onCall(
       input: {
         destination,
         formattedAddress: String(place.formatted ?? destination),
+        destinationLocation: {
+          latitude: Number(place.latitude ?? 0),
+          longitude: Number(place.longitude ?? 0),
+        },
         startDate,
         endDate,
         budget,
@@ -486,9 +577,18 @@ exports.generateTripPlan = onCall(
           airline: String(data.airline ?? ""),
           confirmation: String(data.flightConfirmation ?? ""),
         },
+        startLocation: data.startLocation ?? null,
         appContext: data.appContext ?? null,
       },
       format: tripPlanFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "low",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "required",
       logContext: "OpenAI itinerary generation failed",
       publicMessage: "AI itinerary generation failed.",
     });
@@ -593,21 +693,31 @@ async function createStructuredResponse({
   instructions,
   input,
   format,
+  tools,
+  toolChoice,
   logContext,
   publicMessage,
 }) {
-  const response = await fetchOpenAiResponses({
-    payload: {
-      model: openAiModel,
-      instructions,
-      input: JSON.stringify(input),
-      store: false,
-      reasoning: {effort: "low"},
-      text: {
-        verbosity: "low",
-        format,
-      },
+  const payload = {
+    model: openAiModel,
+    instructions,
+    input: JSON.stringify(input),
+    store: false,
+    reasoning: {effort: "low"},
+    text: {
+      verbosity: "low",
+      format,
     },
+  };
+  if (Array.isArray(tools) && tools.length) {
+    payload.tools = tools;
+  }
+  if (toolChoice) {
+    payload.tool_choice = toolChoice;
+  }
+
+  const response = await fetchOpenAiResponses({
+    payload,
     logContext,
     publicMessage,
   });

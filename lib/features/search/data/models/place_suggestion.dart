@@ -33,12 +33,7 @@ class PlaceSuggestion {
         (resultType == 'country' ? country : null);
     final formatted =
         (map['formatted'] as String?) ?? locality ?? 'Unknown place';
-    final name = locality == null
-        ? formatted
-        : country == null ||
-              _normalizedPlaceName(locality) == _normalizedPlaceName(country)
-        ? locality
-        : '$locality, $country';
+    final name = _placeNameWithCountry(locality ?? formatted, country);
     return PlaceSuggestion(
       name: name,
       formatted: formatted,
@@ -58,6 +53,24 @@ class PlaceSuggestion {
       resultType: resultType,
     );
   }
+}
+
+String _placeNameWithCountry(String value, String? country) {
+  final name = value.trim();
+  final countryName = country?.trim();
+  if (countryName == null || countryName.isEmpty) return name;
+
+  final parts = name
+      .split(',')
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList();
+  final lastPart = parts.isEmpty ? name : parts.last;
+  if (_normalizedPlaceName(name) == _normalizedPlaceName(countryName) ||
+      _normalizedPlaceName(lastPart) == _normalizedPlaceName(countryName)) {
+    return name;
+  }
+  return '$name, $countryName';
 }
 
 String _normalizedPlaceName(String value) =>

@@ -17,7 +17,7 @@ class CreateTripScreen extends StatefulWidget {
 
 class _CreateTripScreenState extends State<CreateTripScreen> {
   static const _createTripChatTurnTimeout = Duration(seconds: 15);
-  static const _tripGenerationTurnTimeout = Duration(seconds: 35);
+  static const _tripGenerationTurnTimeout = Duration(seconds: 60);
 
   final _places = GeoapifyPlacesService();
   final _assistant = TravelAssistantService();
@@ -26,11 +26,15 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   final _budget = TextEditingController();
   final _chatInput = TextEditingController();
   final _customPreference = TextEditingController();
+  final _startLocation = TextEditingController();
   final _airline = TextEditingController();
   final _flightConfirmation = TextEditingController();
   Timer? _searchTimer;
+  Timer? _originSearchTimer;
   PlaceSuggestion? _selectedPlace;
+  PlaceSuggestion? _selectedOriginPlace;
   List<PlaceSuggestion> _placeSuggestions = const [];
+  List<PlaceSuggestion> _originSuggestions = const [];
   final List<CreateTripChatMessage> _chatMessages = [];
   CreateTripDraft? _pendingDraft;
   var _group = 'Friends';
@@ -38,6 +42,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _mode = 0;
   String? _formError;
   var _isSearching = false;
+  var _isOriginSearching = false;
   var _isGenerating = false;
   var _isThinking = false;
   var _usedFallbackPlan = false;
@@ -46,10 +51,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _hasBudgetText = false;
   String? _lastAiError;
   AppDeviceContext? _deviceContext;
+  TripStartLocation? _tripStartLocation;
   DateTime _startDate = _travelAgentNow();
   DateTime _endDate = _travelAgentNow().add(const Duration(days: 5));
   String? _selectedImage;
   final Set<String> _preferences = {'Culture', 'Food'};
+  final Set<String> _planningGoalIds = {};
 
   static const _preferenceOptions = [
     'Culture',
@@ -68,6 +75,45 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   static const _currencyOptions = ['USD', 'TWD', 'IDR', 'JPY', 'EUR'];
   static const _groupOptions = ['Friends', 'Family', 'Tour'];
   static const _twdToIdrFallbackRate = 562.0;
+
+  static const _planningGoals = [
+    PlanningGoal(
+      id: 'local_food',
+      icon: Icons.restaurant_rounded,
+      title: 'Food',
+      text: 'Local meals',
+      tag: 'Local food',
+      prompt:
+          'AI focus: include local food, market meals, cafes, and realistic meal timing.',
+    ),
+    PlanningGoal(
+      id: 'low_walking',
+      icon: Icons.directions_walk_rounded,
+      title: 'Route',
+      text: 'Less walking',
+      tag: 'Low walking',
+      prompt:
+          'AI focus: reduce walking distance, group nearby stops, and prefer easy transit.',
+    ),
+    PlanningGoal(
+      id: 'rain_ready',
+      icon: Icons.cloud_rounded,
+      title: 'Weather',
+      text: 'Rain backup',
+      tag: 'Rain-ready',
+      prompt:
+          'AI focus: include indoor backups and weather-flexible activities.',
+    ),
+    PlanningGoal(
+      id: 'family_pace',
+      icon: Icons.family_restroom_rounded,
+      title: 'Pace',
+      text: 'Easy day',
+      tag: 'Easy pace',
+      prompt:
+          'AI focus: leave buffer time, avoid overpacking the day, and keep the route comfortable.',
+    ),
+  ];
 
   static const _galleryOptions = [
     'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=600',
@@ -102,11 +148,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   @override
   void dispose() {
     _searchTimer?.cancel();
+    _originSearchTimer?.cancel();
     _budget.removeListener(_syncBudgetTextState);
     _destination.dispose();
     _budget.dispose();
     _chatInput.dispose();
     _customPreference.dispose();
+    _startLocation.dispose();
     _airline.dispose();
     _flightConfirmation.dispose();
     super.dispose();
@@ -125,6 +173,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final newToday = context.today;
     setState(() {
       _deviceContext = context;
+      _tripStartLocation ??= TripStartLocation.fromContext(context);
+      if (_tripStartLocation?.isCurrentLocation == true &&
+          _startLocation.text.trim().isEmpty) {
+        _startLocation.text = _tripStartLocation!.label;
+      }
       if (_startDate.difference(oldToday).inDays == 0 &&
           _endDate.difference(oldToday).inDays == 5) {
         _startDate = newToday;
@@ -136,6 +189,158 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   DateTime _today() {
     final value = _deviceContext?.today ?? _travelAgentNow();
     return DateTime(value.year, value.month, value.day);
+  }
+
+  void _scheduleOriginSearch(String value) {
+    _originSearchTimer?.cancel();
+    setState(() {
+      _selectedOriginPlace = null;
+      _tripStartLocation = null;
+      _formError = null;
+      _isOriginSearching = value.trim().length >= 3;
+      if (value.trim().isEmpty) _originSuggestions = const [];
+    });
+    _originSearchTimer = Timer(
+      const Duration(milliseconds: 450),
+      () => _searchOrigins(value),
+    );
+  }
+
+  Future<void> _searchOrigins(String value) async {
+    final query = value.trim();
+    if (query.length < 3) {
+      if (!mounted) return;
+      setState(() {
+        _isOriginSearching = false;
+        _originSuggestions = const [];
+      });
+      return;
+    }
+
+    try {
+      final suggestions = await _places.searchDestinations(query);
+      if (!mounted || _startLocation.text.trim() != query) return;
+      setState(() {
+        _originSuggestions = suggestions;
+        _isOriginSearching = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isOriginSearching = false;
+        _originSuggestions = const [];
+        _formError =
+            'Start location search is unavailable. You can still type a starting point.';
+      });
+    }
+  }
+
+  void _selectOriginPlace(PlaceSuggestion place) {
+    setState(() {
+      _selectedOriginPlace = place;
+      _tripStartLocation = TripStartLocation.fromPlace(place);
+      _startLocation.text = place.name;
+      _originSuggestions = const [];
+      _formError = null;
+    });
+  }
+
+  Future<void> _useCurrentStartLocation() async {
+    setState(() {
+      _isOriginSearching = true;
+      _formError = null;
+      _selectedOriginPlace = null;
+      _originSuggestions = const [];
+      _tripStartLocation = null;
+      _startLocation.text = 'Finding your location...';
+    });
+    final status = await _deviceContextService.enableLocationAccess();
+    if (!mounted) return;
+    if (status != AppLocationAccessStatus.granted) {
+      setState(() {
+        _isOriginSearching = false;
+        _tripStartLocation = null;
+        _formError = switch (status) {
+          AppLocationAccessStatus.denied =>
+            'Location permission was denied. Turn it on or type a starting place.',
+          AppLocationAccessStatus.deniedForever =>
+            'Android will not show the permission popup again. App settings opened.',
+          AppLocationAccessStatus.serviceDisabled =>
+            'Turn on device location services, then try again.',
+          AppLocationAccessStatus.granted => null,
+        };
+        _startLocation.clear();
+      });
+      return;
+    }
+
+    final context = await _deviceContextService.loadCurrentLocation();
+    if (!mounted) return;
+    final start = TripStartLocation.fromContext(context);
+    setState(() {
+      _deviceContext = context;
+      if (start == null) {
+        _isOriginSearching = false;
+        _tripStartLocation = null;
+        _startLocation.text = 'Location unavailable';
+        _formError =
+            'Location access is on, but the phone has not returned coordinates yet. Try again or type a starting place.';
+      } else {
+        final coordinateLabel = _coordinateLocationLabel(
+          start.latitude!,
+          start.longitude!,
+        );
+        _tripStartLocation = TripStartLocation(
+          label: coordinateLabel,
+          latitude: start.latitude,
+          longitude: start.longitude,
+          isCurrentLocation: true,
+        );
+        _startLocation.text = coordinateLabel;
+      }
+    });
+    if (start == null) return;
+
+    PlaceSuggestion? resolvedPlace;
+    try {
+      resolvedPlace = await _places
+          .reverseLocation(
+            latitude: start.latitude!,
+            longitude: start.longitude!,
+          )
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _isOriginSearching = false;
+      if (resolvedPlace == null) return;
+      _selectedOriginPlace = resolvedPlace;
+      _tripStartLocation = TripStartLocation(
+        label: resolvedPlace.name,
+        latitude: start.latitude,
+        longitude: start.longitude,
+        isCurrentLocation: true,
+      );
+      _startLocation.text = resolvedPlace.name;
+    });
+  }
+
+  String _coordinateLocationLabel(double latitude, double longitude) {
+    return '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}';
+  }
+
+  TripStartLocation? _startLocationForGeneration(
+    AppDeviceContext generationContext,
+  ) {
+    final existing = _tripStartLocation;
+    if (existing?.isCurrentLocation == true) return existing;
+    if (_selectedOriginPlace != null) {
+      return TripStartLocation.fromPlace(_selectedOriginPlace!);
+    }
+    if (existing != null) return existing;
+    final typed = _startLocation.text.trim();
+    if (typed.isNotEmpty) return TripStartLocation(label: typed);
+    return TripStartLocation.fromContext(generationContext);
   }
 
   void _schedulePlaceSearch(String value) {
@@ -271,6 +476,31 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _formError = null;
     });
   }
+
+  void _togglePlanningGoal(String id) {
+    setState(() {
+      if (_planningGoalIds.contains(id)) {
+        _planningGoalIds.remove(id);
+      } else {
+        _planningGoalIds.add(id);
+      }
+      _formError = null;
+    });
+  }
+
+  List<PlanningGoal> get _selectedPlanningGoals => _planningGoals
+      .where((goal) => _planningGoalIds.contains(goal.id))
+      .toList();
+
+  List<String> get _aiGenerationPreferences => [
+    ..._preferences,
+    ..._selectedPlanningGoals.map((goal) => goal.prompt),
+  ];
+
+  List<String> get _savedTripPreferences => [
+    ..._preferences,
+    ..._selectedPlanningGoals.map((goal) => goal.tag),
+  ];
 
   List<String> get _visiblePreferenceOptions {
     final options = [..._preferenceOptions];
@@ -912,13 +1142,29 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       return;
     }
 
-    final plan = _manualStarterPlan();
+    final generationContext = await _deviceContextService.load(
+      requestLocation: _startLocation.text.trim().isEmpty,
+    );
+    if (!mounted) return;
+    final startLocation = _startLocationForGeneration(generationContext);
+    final plan = _manualStarterPlan(
+      place: place,
+      startLocation: startLocation,
+      currency: _currency,
+    );
 
     setState(() {
+      _deviceContext = generationContext;
+      _tripStartLocation = startLocation;
       _usedFallbackPlan = false;
       _formError = null;
     });
-    _createTripFromPlan(place: place, budget: budget, plan: plan);
+    _createTripFromPlan(
+      place: place,
+      budget: budget,
+      plan: plan,
+      startLocation: startLocation,
+    );
   }
 
   Future<void> _editPendingDraft() async {
@@ -1255,6 +1501,16 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _formError = null;
     });
 
+    final generationContext = await _deviceContextService.load(
+      requestLocation: true,
+    );
+    if (!mounted) return;
+    final startLocation = _startLocationForGeneration(generationContext);
+    setState(() {
+      _deviceContext = generationContext;
+      _tripStartLocation = startLocation;
+    });
+
     GeneratedTripPlan plan;
     try {
       plan = await _assistant
@@ -1264,11 +1520,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             endDate: _endDate,
             budget: budget,
             groupType: _group,
-            preferences: _preferences.toList(),
+            preferences: _aiGenerationPreferences,
             currency: _currency,
             airline: _airline.text.trim(),
             flightConfirmation: _flightConfirmation.text.trim(),
             profileLanguage: widget.profileLanguage,
+            startLocation: startLocation,
           )
           .timeout(_tripGenerationTurnTimeout);
       if (plan.items.isEmpty) {
@@ -1278,21 +1535,30 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       plan = _fallbackTripPlan(
         place: place,
         startDate: _startDate,
+        endDate: _endDate,
         budget: budget,
-        preferences: _preferences.toList(),
+        preferences: _aiGenerationPreferences,
+        currency: _currency,
+        startLocation: startLocation,
       );
       _usedFallbackPlan = true;
     }
 
     if (!mounted) return;
     setState(() => _isGenerating = false);
-    _createTripFromPlan(place: place, budget: budget, plan: plan);
+    _createTripFromPlan(
+      place: place,
+      budget: budget,
+      plan: plan,
+      startLocation: startLocation,
+    );
   }
 
   void _createTripFromPlan({
     required PlaceSuggestion place,
     required int budget,
     required GeneratedTripPlan plan,
+    required TripStartLocation? startLocation,
   }) {
     final bookings = _bookingsWithManualDetails(plan.bookings);
     widget.onGenerate(
@@ -1303,6 +1569,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         formattedAddress: place.formatted,
         latitude: place.latitude,
         longitude: place.longitude,
+        originLabel: startLocation?.label,
+        originLatitude: startLocation?.latitude,
+        originLongitude: startLocation?.longitude,
         startDate: _dateKey(_startDate),
         endDate: _dateKey(_endDate),
         budget: budget,
@@ -1317,7 +1586,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         items: plan.items,
         bookings: bookings,
         checklist: plan.checklist,
-        preferences: _preferences.toList(),
+        preferences: _savedTripPreferences,
         budgetCategories: _defaultBudgetCategories(
           budget: budget,
           actual: 0,
@@ -1328,22 +1597,34 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     );
   }
 
-  GeneratedTripPlan _manualStarterPlan() {
-    return const GeneratedTripPlan(
-      items: [],
-      bookings: [],
-      checklist: [
-        ChecklistCategory('Essentials', [
-          'Passport or ID',
-          'Wallet and payment cards',
-          'Phone charger',
-        ]),
-        ChecklistCategory('To decide', [
-          'Accommodation',
-          'Transportation',
-          'Reservations',
-        ]),
-      ],
+  GeneratedTripPlan _manualStarterPlan({
+    required PlaceSuggestion place,
+    required TripStartLocation? startLocation,
+    required String currency,
+  }) {
+    final dayCount = _tripDayCount(_startDate, _endDate);
+    return _planWithTripTransport(
+      GeneratedTripPlan(
+        items: [],
+        bookings: [],
+        checklist: [
+          const ChecklistCategory('Essentials', [
+            'Passport or ID',
+            'Wallet and payment cards',
+            'Phone charger',
+          ]),
+          ChecklistCategory('To decide', [
+            if (dayCount > 1) 'Accommodation',
+            'Transportation',
+            'Reservations',
+          ]),
+        ],
+      ),
+      place: place,
+      startDate: _startDate,
+      endDate: _endDate,
+      startLocation: startLocation,
+      currency: currency,
     );
   }
 
@@ -1694,6 +1975,91 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             ),
           ],
           const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _startLocation,
+                  onChanged: _scheduleOriginSearch,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Start from'),
+                    hintText: appText(context, 'Current location or Hsinchu'),
+                    prefixIcon: const Icon(Icons.trip_origin_rounded),
+                    suffixIcon: _isOriginSearching
+                        ? const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              IconButton.filled(
+                tooltip: appText(context, 'Use current location'),
+                style: IconButton.styleFrom(
+                  backgroundColor: _primary,
+                  foregroundColor: Colors.white,
+                  fixedSize: const Size(54, 54),
+                ),
+                onPressed: _isOriginSearching ? null : _useCurrentStartLocation,
+                icon: const Icon(Icons.my_location_rounded),
+              ),
+            ],
+          ),
+          if (_selectedOriginPlace != null) ...[
+            const SizedBox(height: 10),
+            SelectedPlaceCard(place: _selectedOriginPlace!),
+          ] else if (_originSuggestions.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            PlaceSuggestionList(
+              suggestions: _originSuggestions,
+              onSelect: _selectOriginPlace,
+            ),
+          ] else if (_tripStartLocation?.isCurrentLocation == true) ...[
+            const SizedBox(height: 10),
+            GlassPanel(
+              child: Row(
+                children: [
+                  const IconBadge(icon: Icons.my_location_rounded, size: 46),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          appText(context, 'Current location'),
+                          style: const TextStyle(
+                            color: _primary,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          appText(
+                            context,
+                            'Used for Day 1 transport and the return-home leg.',
+                          ),
+                          style: const TextStyle(
+                            color: _secondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
           DateRangeCard(
             startDate: _startDate,
             endDate: _endDate,
@@ -1798,7 +2164,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ),
           if (_mode == 1) ...[
             const SizedBox(height: 22),
-            const PlanningIdeaStrip(),
+            PlanningIdeaStrip(
+              goals: _planningGoals,
+              selectedGoalIds: _planningGoalIds,
+              onToggle: _togglePlanningGoal,
+            ),
           ],
           if (_mode == 1 && _usedFallbackPlan) ...[
             const SizedBox(height: 16),

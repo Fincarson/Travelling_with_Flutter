@@ -7,7 +7,7 @@ class TravelAssistantService {
 
   static const _chatTimeout = Duration(seconds: 20);
   static const _createTripReplyTimeout = Duration(seconds: 18);
-  static const _tripPlanTimeout = Duration(seconds: 30);
+  static const _tripPlanTimeout = Duration(seconds: 55);
   static const _scheduleStopTimeout = Duration(seconds: 18);
 
   final FirebaseFunctions _functions;
@@ -96,10 +96,13 @@ class TravelAssistantService {
     required List<String> preferences,
     required String currency,
     required String profileLanguage,
+    TripStartLocation? startLocation,
     String airline = '',
     String flightConfirmation = '',
   }) async {
-    final appContext = await _deviceContext.load();
+    final appContext = await _deviceContext.load(requestLocation: true);
+    final tripStartLocation =
+        startLocation ?? TripStartLocation.fromContext(appContext);
     final outputLanguage = _aiLanguageName(profileLanguage);
     if (!LocalApiKeys.hasOpenAiApiKey) {
       final callable = _functions.httpsCallable('generateTripPlan');
@@ -123,13 +126,21 @@ class TravelAssistantService {
             'outputLanguage': outputLanguage,
             'airline': airline,
             'flightConfirmation': flightConfirmation,
+            'startLocation': tripStartLocation?.toAiMap(),
             'appContext': appContext.toAiMap(),
           })
           .timeout(_tripPlanTimeout);
       final data = response.data['plan'] is Map
           ? Map<String, dynamic>.from(response.data['plan'] as Map)
           : response.data;
-      return GeneratedTripPlan.fromMap(data);
+      return _planWithTripTransport(
+        GeneratedTripPlan.fromMap(data),
+        place: place,
+        startDate: startDate,
+        endDate: endDate,
+        startLocation: tripStartLocation,
+        currency: currency,
+      );
     }
 
     final response = await http
@@ -146,6 +157,15 @@ class TravelAssistantService {
               'Use current attraction names for the destination.',
               'Keep costs realistic but approximate.',
               'Use appContext.localDate and appContext.timeZoneOffset as today context.',
+              'Use startLocation as the trip origin when provided. If startLocation is missing, use appContext.location when available.',
+              'Day 1 must start with realistic transportation from the trip origin to the destination before destination activities.',
+              'The final trip day must include realistic return transportation home after the destination activities.',
+              'For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.',
+              'When moving to a different city or district, or when returning home, include pack-up/preparation wording before the transport.',
+              'Choose transport by distance: local transit/taxi for nearby trips, train/bus/high-speed rail for regional trips, and flights only for genuinely long-distance trips.',
+              'Never suggest a plane for short regional travel such as Hsinchu to Taipei.',
+              'Use web search data for current attraction names, transportation options, ticket prices, and local food costs.',
+              'Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.',
               'Write all user-facing itinerary text in $outputLanguage.',
               'Do not infer language from currency; currency only controls money.',
               'Return no markdown and no explanation.',
@@ -153,6 +173,10 @@ class TravelAssistantService {
             'input': jsonEncode({
               'destination': place.name,
               'formattedAddress': place.formatted,
+              'destinationLocation': {
+                'latitude': place.latitude,
+                'longitude': place.longitude,
+              },
               'startDate': _dateKey(startDate),
               'endDate': _dateKey(endDate),
               'budgetUsd': budget,
@@ -165,6 +189,7 @@ class TravelAssistantService {
                 'airline': airline,
                 'confirmation': flightConfirmation,
               },
+              'startLocation': tripStartLocation?.toAiMap(),
               'appContext': appContext.toAiMap(),
               'schema': {
                 'items': [
@@ -195,6 +220,14 @@ class TravelAssistantService {
               },
             }),
             'store': false,
+            'tools': [
+              {
+                'type': 'web_search',
+                'search_context_size': 'low',
+                'external_web_access': true,
+              },
+            ],
+            'tool_choice': 'required',
             'reasoning': {'effort': 'low'},
             'text': {'verbosity': 'low', 'format': _tripPlanTextFormat()},
           }),
@@ -208,7 +241,14 @@ class TravelAssistantService {
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     final text = _responseOutputText(body);
     final data = _decodeJsonObject(text);
-    return GeneratedTripPlan.fromMap(data);
+    return _planWithTripTransport(
+      GeneratedTripPlan.fromMap(data),
+      place: place,
+      startDate: startDate,
+      endDate: endDate,
+      startLocation: tripStartLocation,
+      currency: currency,
+    );
   }
 
   Future<ScheduleItem> generateScheduleStop({

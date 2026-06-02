@@ -23,6 +23,9 @@ class Trip {
     this.formattedAddress,
     this.latitude,
     this.longitude,
+    this.originLabel,
+    this.originLatitude,
+    this.originLongitude,
     this.title = '',
   });
 
@@ -46,6 +49,9 @@ class Trip {
   final String? formattedAddress;
   final double? latitude;
   final double? longitude;
+  final String? originLabel;
+  final double? originLatitude;
+  final double? originLongitude;
 
   Trip copyWith({
     TripStatus? status,
@@ -67,6 +73,9 @@ class Trip {
     String? formattedAddress,
     double? latitude,
     double? longitude,
+    String? originLabel,
+    double? originLatitude,
+    double? originLongitude,
   }) => Trip(
     id: id,
     title: title ?? this.title,
@@ -88,6 +97,9 @@ class Trip {
     formattedAddress: formattedAddress ?? this.formattedAddress,
     latitude: latitude ?? this.latitude,
     longitude: longitude ?? this.longitude,
+    originLabel: originLabel ?? this.originLabel,
+    originLatitude: originLatitude ?? this.originLatitude,
+    originLongitude: originLongitude ?? this.originLongitude,
   );
 
   Map<String, dynamic> toMap() => {
@@ -97,6 +109,9 @@ class Trip {
     'formattedAddress': formattedAddress,
     'latitude': latitude,
     'longitude': longitude,
+    'originLabel': originLabel,
+    'originLatitude': originLatitude,
+    'originLongitude': originLongitude,
     'startDate': startDate,
     'endDate': endDate,
     'budget': budget,
@@ -126,6 +141,9 @@ class Trip {
       formattedAddress: map['formattedAddress'] as String?,
       latitude: (map['latitude'] as num?)?.toDouble(),
       longitude: (map['longitude'] as num?)?.toDouble(),
+      originLabel: map['originLabel'] as String?,
+      originLatitude: (map['originLatitude'] as num?)?.toDouble(),
+      originLongitude: (map['originLongitude'] as num?)?.toDouble(),
       startDate: (map['startDate'] as String?) ?? '',
       endDate: (map['endDate'] as String?) ?? '',
       budget: (map['budget'] as num?)?.toInt() ?? 0,
@@ -185,6 +203,9 @@ class Trip {
       formattedAddress: map['formattedAddress'] as String?,
       latitude: (map['latitude'] as num?)?.toDouble(),
       longitude: (map['longitude'] as num?)?.toDouble(),
+      originLabel: map['originLabel'] as String?,
+      originLatitude: (map['originLatitude'] as num?)?.toDouble(),
+      originLongitude: (map['originLongitude'] as num?)?.toDouble(),
       startDate: (map['startDate'] as String?) ?? '',
       endDate: (map['endDate'] as String?) ?? '',
       budget: (map['budget'] as num?)?.toInt() ?? 0,

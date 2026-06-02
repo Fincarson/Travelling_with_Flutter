@@ -23,6 +23,24 @@ class GeoapifyPlacesService {
     return _placeSuggestionsFromResults(results);
   }
 
+  Future<PlaceSuggestion?> reverseLocation({
+    required double latitude,
+    required double longitude,
+  }) async {
+    if (LocalApiKeys.hasGeoapifyApiKey) {
+      return _reverseLocationDirectly(latitude: latitude, longitude: longitude);
+    }
+
+    final callable = _functions.httpsCallable('reversePlace');
+    final response = await callable.call<Map<String, dynamic>>({
+      'latitude': latitude,
+      'longitude': longitude,
+    });
+    final result = response.data['result'];
+    if (result is! Map) return null;
+    return PlaceSuggestion.fromMap(Map<String, dynamic>.from(result));
+  }
+
   Future<List<PlaceSuggestion>> _searchDestinationsDirectly(
     String query,
   ) async {
@@ -35,6 +53,28 @@ class GeoapifyPlacesService {
       ...results[0],
       ...results[1],
     ], query).take(6).toList();
+  }
+
+  Future<PlaceSuggestion?> _reverseLocationDirectly({
+    required double latitude,
+    required double longitude,
+  }) async {
+    final url = Uri.https('api.geoapify.com', '/v1/geocode/reverse', {
+      'lat': latitude.toString(),
+      'lon': longitude.toString(),
+      'format': 'json',
+      'apiKey': LocalApiKeys.geoapifyApiKey,
+    });
+
+    final response = await http.get(url);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Current location lookup is unavailable.');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final results = (body['results'] as List<dynamic>?) ?? const [];
+    final places = _placeSuggestionsFromResults(results);
+    return places.isEmpty ? null : places.first;
   }
 
   Future<List<PlaceSuggestion>> _fetchDestinationsByType(
