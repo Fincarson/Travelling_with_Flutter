@@ -6,11 +6,15 @@ import 'dart:math' as math;
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/data/latest_all.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
 
 import '../core/config/api_keys.dart';
 import '../core/localization/app_currency.dart';
@@ -22,6 +26,7 @@ import '../features/auth/data/account_auth_service.dart';
 
 part 'travel_agent_shell.dart';
 part '../core/device/app_device_context.dart';
+part '../shared/services/trip_notification_service.dart';
 part '../features/profile/domain/entities/user_profile.dart';
 part '../features/itinerary/domain/entities/trip.dart';
 part '../features/itinerary/domain/entities/create_trip_draft.dart';

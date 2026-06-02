@@ -7,6 +7,7 @@ const admin = require("firebase-admin");
 admin.initializeApp();
 
 const openAiModel = "gpt-5.5";
+const openAiTimeoutMs = 25000;
 
 function geoapifyApiKey() {
   return String(process.env.GEOAPIFY_API_KEY ?? "").trim();
@@ -236,6 +237,41 @@ const createTripReplyFormat = {
   },
 };
 
+const scheduleStopFormat = {
+  type: "json_schema",
+  name: "generated_schedule_stop",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      day: {type: "integer"},
+      time: {type: "string"},
+      activity: {type: "string"},
+      type: {
+        type: "string",
+        enum: [
+          "place",
+          "food",
+          "restaurant",
+          "walk",
+          "museum",
+          "beach",
+          "shopping",
+          "train",
+          "flight",
+          "hotel",
+          "cafe",
+          "hiking",
+          "temple",
+        ],
+      },
+      cost: {type: "integer"},
+    },
+    required: ["day", "time", "activity", "type", "cost"],
+  },
+};
+
 exports.searchPlaces = onCall(
   {
     region: "us-central1",
@@ -255,16 +291,18 @@ exports.searchPlaces = onCall(
       );
     }
 
-    const url = new URL("https://api.geoapify.com/v1/geocode/autocomplete");
-    url.searchParams.set("text", query);
-    url.searchParams.set("format", "json");
-    url.searchParams.set("type", "city");
-    url.searchParams.set("limit", "6");
-    url.searchParams.set("apiKey", apiKey);
-
-    let response;
     try {
-      response = await fetch(url);
+      const [countryResults, cityResults] = await Promise.all([
+        fetchGeoapifyAutocomplete({query, type: "country", apiKey}),
+        fetchGeoapifyAutocomplete({query, type: "city", apiKey}),
+      ]);
+
+      return {
+        results: rankGeoapifyResults(
+          [...countryResults, ...cityResults],
+          query,
+        ).slice(0, 6),
+      };
     } catch (error) {
       logger.error("Geoapify search request failed", {
         query,
@@ -272,53 +310,96 @@ exports.searchPlaces = onCall(
       });
       throw new HttpsError("unavailable", "Place search is unavailable.");
     }
-
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      logger.error("Geoapify search failed", {
-        status: response.status,
-        query,
-        detail: detail.slice(0, 300),
-      });
-      throw new HttpsError("unavailable", "Place search is unavailable.");
-    }
-
-    let body;
-    try {
-      body = await response.json();
-    } catch (error) {
-      logger.error("Geoapify search returned invalid JSON", {
-        query,
-        message: error?.message,
-      });
-      throw new HttpsError("unavailable", "Place search is unavailable.");
-    }
-
-    const results = Array.isArray(body.results) ? body.results : [];
-
-    return {
-      results: results.map((item) => {
-        const city = item.city ?? item.county ?? item.state ?? item.name;
-        const country = item.country;
-        const formatted = item.formatted ?? city ?? "Unknown place";
-        const name = city
-          ? country
-            ? `${city}, ${country}`
-            : city
-          : formatted;
-
-        return {
-          name,
-          formatted,
-          latitude: item.lat ?? 0,
-          longitude: item.lon ?? 0,
-          placeId: item.place_id ?? formatted,
-          country: country ?? null,
-        };
-      }),
-    };
   },
 );
+
+async function fetchGeoapifyAutocomplete({query, type, apiKey}) {
+  const url = new URL("https://api.geoapify.com/v1/geocode/autocomplete");
+  url.searchParams.set("text", query);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("type", type);
+  url.searchParams.set("limit", "6");
+  url.searchParams.set("apiKey", apiKey);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Geoapify ${type} search failed with ${response.status}: ` +
+      detail.slice(0, 300),
+    );
+  }
+
+  const body = await response.json();
+  return Array.isArray(body.results) ? body.results : [];
+}
+
+function normalizeGeoapifyResult(item) {
+  const resultType = item.result_type ?? item.type ?? null;
+  const country = item.country ?? null;
+  const locality = item.name ?? item.city ?? item.county ?? item.state ??
+    (resultType === "country" ? country : null);
+  const formatted = item.formatted ?? locality ?? "Unknown place";
+  const name = !locality
+    ? formatted
+    : !country || normalizedPlaceName(locality) === normalizedPlaceName(country)
+      ? locality
+      : `${locality}, ${country}`;
+
+  return {
+    name,
+    formatted,
+    latitude: item.lat ?? 0,
+    longitude: item.lon ?? 0,
+    placeId: item.place_id ?? formatted,
+    country,
+    resultType,
+  };
+}
+
+function rankGeoapifyResults(results, query) {
+  const seen = new Set();
+  const normalizedQuery = normalizedPlaceName(query);
+  return results
+    .map(normalizeGeoapifyResult)
+    .filter((place) => place.latitude !== 0 && place.longitude !== 0)
+    .filter((place) => {
+      const key = String(place.placeId || place.formatted);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => {
+      const scoreA = geoapifyRankScore(a, normalizedQuery);
+      const scoreB = geoapifyRankScore(b, normalizedQuery);
+      if (scoreA !== scoreB) return scoreA - scoreB;
+      return a.name.length - b.name.length;
+    });
+}
+
+function geoapifyRankScore(place, normalizedQuery) {
+  const name = normalizedPlaceName(place.name);
+  const country = normalizedPlaceName(place.country ?? "");
+  const formatted = normalizedPlaceName(place.formatted);
+  const isCountry = place.resultType === "country" ||
+    Boolean(country && name === country);
+
+  if (isCountry && (name === normalizedQuery || country === normalizedQuery)) {
+    return 0;
+  }
+  if (name === normalizedQuery) return 1;
+  if (formatted === normalizedQuery) return 2;
+  if (isCountry) return 3;
+  return 4;
+}
+
+function normalizedPlaceName(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
 
 exports.chatWithAssistant = onCall(
   {
@@ -333,13 +414,8 @@ exports.chatWithAssistant = onCall(
       throw new HttpsError("invalid-argument", "Message is too long.");
     }
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${openAiApiKey()}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const response = await fetchOpenAiResponses({
+      payload: {
         model: openAiModel,
         instructions: travelAssistantInstructions,
         input: JSON.stringify({
@@ -349,7 +425,9 @@ exports.chatWithAssistant = onCall(
         store: false,
         reasoning: {effort: "low"},
         text: {verbosity: "low"},
-      }),
+      },
+      logContext: "OpenAI chat failed",
+      publicMessage: "AI chat is unavailable.",
     });
 
     if (!response.ok) {
@@ -419,6 +497,55 @@ exports.generateTripPlan = onCall(
   },
 );
 
+exports.generateScheduleStop = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const data = request.data ?? {};
+    const destination = String(data.destination ?? "").trim();
+    const targetDay = Number.parseInt(data.targetDay, 10);
+    const requestText = String(data.request ?? "").trim();
+
+    if (!destination || !Number.isFinite(targetDay)) {
+      throw new HttpsError("invalid-argument", "Trip day is required.");
+    }
+    if (requestText.length > 800) {
+      throw new HttpsError("invalid-argument", "Description is too long.");
+    }
+
+    const item = await createStructuredResponse({
+      instructions: [
+        "Generate exactly one practical schedule stop for a mobile travel app.",
+        "Fit it into the requested trip day without duplicating existing stops.",
+        "Use current local time and location only if the request asks for nearby or location-aware help.",
+        "Keep the activity title concise, specific, and useful during the trip.",
+        "Return only JSON matching the schema.",
+      ].join(" "),
+      input: {
+        destination,
+        startDate: String(data.startDate ?? ""),
+        endDate: String(data.endDate ?? ""),
+        currency: String(data.currency ?? "USD"),
+        budget: Number.parseInt(data.budget, 10) || 0,
+        groupType: String(data.groupType ?? "Solo"),
+        preferences: Array.isArray(data.preferences) ? data.preferences : [],
+        targetDay,
+        request: requestText || "Suggest a useful trip stop.",
+        existingSchedule: Array.isArray(data.existingSchedule)
+          ? data.existingSchedule
+          : [],
+        appContext: data.appContext ?? null,
+      },
+      format: scheduleStopFormat,
+      logContext: "OpenAI schedule stop generation failed",
+      publicMessage: "AI schedule stop generation failed.",
+    });
+
+    return {item};
+  },
+);
+
 exports.createTripReply = onCall(
   {
     region: "us-central1",
@@ -469,13 +596,8 @@ async function createStructuredResponse({
   logContext,
   publicMessage,
 }) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${openAiApiKey()}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  const response = await fetchOpenAiResponses({
+    payload: {
       model: openAiModel,
       instructions,
       input: JSON.stringify(input),
@@ -485,7 +607,9 @@ async function createStructuredResponse({
         verbosity: "low",
         format,
       },
-    }),
+    },
+    logContext,
+    publicMessage,
   });
 
   if (!response.ok) {
@@ -499,6 +623,31 @@ async function createStructuredResponse({
 
   const body = await response.json();
   return decodeJsonObject(outputText(body));
+}
+
+async function fetchOpenAiResponses({payload, logContext, publicMessage}) {
+  try {
+    return await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openAiApiKey()}`,
+        "Content-Type": "application/json",
+      },
+      signal: AbortSignal.timeout(openAiTimeoutMs),
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    const timedOut = error?.name === "AbortError" ||
+      error?.name === "TimeoutError";
+    logger.error(logContext, {
+      timeoutMs: openAiTimeoutMs,
+      message: error?.message,
+    });
+    throw new HttpsError(
+      timedOut ? "deadline-exceeded" : "unavailable",
+      publicMessage,
+    );
+  }
 }
 
 function outputText(responseBody) {

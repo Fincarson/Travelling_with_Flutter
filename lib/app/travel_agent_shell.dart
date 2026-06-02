@@ -12,6 +12,7 @@ class TravelAgentApp extends StatefulWidget {
 class _TravelAgentAppState extends State<TravelAgentApp> {
   final _repository = TravelDataRepository(FirebaseFirestore.instance);
   final _authService = AccountAuthService();
+  final _notificationService = TripNotificationService();
   static const _localProfilePrefix = 'travel_agent.profile.';
   StreamSubscription<UserProfile?>? _userSubscription;
   StreamSubscription<List<Trip>>? _tripsSubscription;
@@ -19,10 +20,12 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   var _tab = _NavTab.home;
   var _screen = _Screen.dashboard;
   var _isChatRoomOpen = false;
+  var _tripDetailInitialTab = 0;
   var _user = const UserProfile(name: '', email: '', interests: []);
   final List<Trip> _trips = [];
   Trip? _selectedTrip;
   Trip? _activeTrip;
+  String? _pendingTripAiPrompt;
   String? _accountId;
   String? _loadError;
 
@@ -80,6 +83,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         _activeTrip = _firstOngoingTrip(trips);
         _loadError = loadError.isEmpty ? null : loadError.join('\n');
       });
+      unawaited(_syncTripReminders());
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = 'Could not load online trip data: $error');
@@ -101,6 +105,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               _user = profile;
               _loadError = null;
             });
+            unawaited(_syncTripReminders());
             AppLocaleController.setProfileLanguage(profile.language);
             unawaited(
               PerformanceScope.of(context).update(profile.performanceSettings),
@@ -130,6 +135,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               }
               _loadError = null;
             });
+            unawaited(_syncTripReminders());
           },
           onError: (Object error) {
             if (!mounted) return;
@@ -143,6 +149,27 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _selectedTrip = trip;
       _screen = _Screen.tripDetail;
       _tab = _NavTab.trips;
+      _tripDetailInitialTab = 0;
+      _pendingTripAiPrompt = null;
+    });
+  }
+
+  void _openTripAssistant(String prompt) {
+    final trip =
+        _activeTrip ?? _selectedTrip ?? (_trips.isEmpty ? null : _trips.first);
+    if (trip == null) {
+      setState(() {
+        _screen = _Screen.chatList;
+        _tab = _NavTab.chat;
+      });
+      return;
+    }
+    setState(() {
+      _selectedTrip = trip;
+      _screen = _Screen.tripDetail;
+      _tab = _NavTab.trips;
+      _tripDetailInitialTab = 6;
+      _pendingTripAiPrompt = prompt;
     });
   }
 
@@ -151,6 +178,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _user = profile;
       _loadError = null;
     });
+    unawaited(_syncTripReminders());
     AppLocaleController.setProfileLanguage(profile.language);
 
     final accountId = _accountId ?? widget.account.uid;
@@ -247,6 +275,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _screen = _Screen.dashboard;
       _tab = _NavTab.home;
     });
+    unawaited(_syncTripReminders());
   }
 
   Future<void> _deleteTrip(Trip trip) async {
@@ -362,6 +391,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             _matchingTrip(trips, _selectedTrip);
         _loadError = null;
       });
+      unawaited(_syncTripReminders());
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = 'Could not refresh trip data: $error');
@@ -480,10 +510,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
                 _tab = _NavTab.add;
               }),
               onOpenTrip: _openTrip,
-              onAskAi: (_) => setState(() {
-                _screen = _Screen.chatList;
-                _tab = _NavTab.chat;
-              }),
+              onStartTrip: _startTrip,
+              onAskAi: _openTripAssistant,
               onOpenInfo: () => setState(() => _screen = _Screen.info),
               onOpenTranslate: () =>
                   setState(() => _screen = _Screen.translate),
@@ -546,10 +574,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             _tab = _NavTab.add;
           }),
           onOpenTrip: _openTrip,
-          onAskAi: (_) => setState(() {
-            _screen = _Screen.chatList;
-            _tab = _NavTab.chat;
-          }),
+          onStartTrip: _startTrip,
+          onAskAi: _openTripAssistant,
           onOpenInfo: () => setState(() => _screen = _Screen.info),
           onOpenTranslate: () => setState(() => _screen = _Screen.translate),
           onOpenMap: () => setState(() => _screen = _Screen.map),
@@ -595,6 +621,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onOpenPacking: () => setState(() => _screen = _Screen.packing),
           onOpenMap: () => setState(() => _screen = _Screen.map),
           onUpdateTrip: _updateTrip,
+          initialTabIndex: _tripDetailInitialTab,
+          initialAiPrompt: _pendingTripAiPrompt,
         );
       case _Screen.trips:
         return TripsScreen(
@@ -715,6 +743,13 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         _NavTab.profile => _Screen.profile,
       };
     });
+  }
+
+  Future<void> _syncTripReminders() {
+    return _notificationService.syncTripReminders(
+      activeTrip: _activeTrip,
+      enabled: _user.notificationsEnabled,
+    );
   }
 
   void _setChatRoomOpen(bool isOpen) {

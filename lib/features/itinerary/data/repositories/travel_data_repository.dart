@@ -174,6 +174,7 @@ class TravelDataRepository {
         snapshots[0].docs
             .map((doc) => _orderedDocData(doc))
             .map(ScheduleItem.fromMap)
+            .where((item) => !_isLegacyManualStarterItem(item))
             .toList()
           ..sort(_compareScheduleItems);
 

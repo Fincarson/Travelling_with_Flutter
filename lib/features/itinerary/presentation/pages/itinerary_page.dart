@@ -9,6 +9,8 @@ class TripDetailScreen extends StatelessWidget {
     required this.onOpenPacking,
     required this.onOpenMap,
     required this.onUpdateTrip,
+    this.initialTabIndex = 0,
+    this.initialAiPrompt,
     super.key,
   });
   final Trip trip;
@@ -18,6 +20,8 @@ class TripDetailScreen extends StatelessWidget {
   final VoidCallback onOpenPacking;
   final VoidCallback onOpenMap;
   final ValueChanged<Trip> onUpdateTrip;
+  final int initialTabIndex;
+  final String? initialAiPrompt;
 
   @override
   Widget build(BuildContext context) {
@@ -27,6 +31,8 @@ class TripDetailScreen extends StatelessWidget {
       onOpenChat: onOpenChat,
       onOpenMap: onOpenMap,
       onUpdateTrip: onUpdateTrip,
+      initialTabIndex: initialTabIndex,
+      initialAiPrompt: initialAiPrompt,
     );
   }
 }
@@ -38,6 +44,8 @@ class _EditableTripDetailScreen extends StatefulWidget {
     required this.onOpenChat,
     required this.onOpenMap,
     required this.onUpdateTrip,
+    required this.initialTabIndex,
+    this.initialAiPrompt,
   });
 
   final Trip trip;
@@ -45,6 +53,8 @@ class _EditableTripDetailScreen extends StatefulWidget {
   final VoidCallback onOpenChat;
   final VoidCallback onOpenMap;
   final ValueChanged<Trip> onUpdateTrip;
+  final int initialTabIndex;
+  final String? initialAiPrompt;
 
   @override
   State<_EditableTripDetailScreen> createState() =>
@@ -83,11 +93,16 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
       TripMapTab(trip: _trip, onOpenMap: widget.onOpenMap),
       ChecklistTab(trip: _trip, onSave: _save),
       BookingTab(trip: _trip, onSave: _save),
-      TripChatTab(trip: _trip, onOpenChat: widget.onOpenChat),
+      TripChatTab(
+        trip: _trip,
+        onOpenChat: widget.onOpenChat,
+        initialPrompt: widget.initialAiPrompt,
+      ),
     ];
 
     return DefaultTabController(
       length: 7,
+      initialIndex: widget.initialTabIndex.clamp(0, 6),
       child: ScreenScaffold(
         child: Column(
           children: [

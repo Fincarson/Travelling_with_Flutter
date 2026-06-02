@@ -16,6 +16,9 @@ class CreateTripScreen extends StatefulWidget {
 }
 
 class _CreateTripScreenState extends State<CreateTripScreen> {
+  static const _createTripChatTurnTimeout = Duration(seconds: 15);
+  static const _tripGenerationTurnTimeout = Duration(seconds: 35);
+
   final _places = GeoapifyPlacesService();
   final _assistant = TravelAssistantService();
   final _deviceContextService = AppDeviceContextService();
@@ -43,8 +46,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _hasBudgetText = false;
   String? _lastAiError;
   AppDeviceContext? _deviceContext;
-  DateTime _startDate = DateTime.now().add(const Duration(days: 30));
-  DateTime _endDate = DateTime.now().add(const Duration(days: 35));
+  DateTime _startDate = _travelAgentNow();
+  DateTime _endDate = _travelAgentNow().add(const Duration(days: 5));
   String? _selectedImage;
   final Set<String> _preferences = {'Culture', 'Food'};
 
@@ -116,22 +119,22 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _loadDeviceContext() async {
-    final context = await _deviceContextService.load(requestLocation: true);
+    final context = await _deviceContextService.load();
     if (!mounted) return;
     final oldToday = _today();
     final newToday = context.today;
     setState(() {
       _deviceContext = context;
-      if (_startDate.difference(oldToday).inDays == 30 &&
-          _endDate.difference(oldToday).inDays == 35) {
-        _startDate = newToday.add(const Duration(days: 30));
-        _endDate = newToday.add(const Duration(days: 35));
+      if (_startDate.difference(oldToday).inDays == 0 &&
+          _endDate.difference(oldToday).inDays == 5) {
+        _startDate = newToday;
+        _endDate = newToday.add(const Duration(days: 5));
       }
     });
   }
 
   DateTime _today() {
-    final value = _deviceContext?.today ?? DateTime.now();
+    final value = _deviceContext?.today ?? _travelAgentNow();
     return DateTime(value.year, value.month, value.day);
   }
 
@@ -269,6 +272,17 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     });
   }
 
+  List<String> get _visiblePreferenceOptions {
+    final options = [..._preferenceOptions];
+    for (final preference in _preferences) {
+      final alreadyVisible = options.any(
+        (option) => option.toLowerCase() == preference.toLowerCase(),
+      );
+      if (!alreadyVisible) options.add(preference);
+    }
+    return options;
+  }
+
   Future<void> _showImagePicker() async {
     final image = await showModalBottomSheet<String>(
       context: context,
@@ -367,12 +381,14 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
     CreateTripAiResponse aiResponse;
     try {
-      aiResponse = await _assistant.createTripReply(
-        message: text,
-        currentDraft: _pendingDraft ?? CreateTripDraft(currency: _currency),
-        history: _chatMessages,
-        profileLanguage: widget.profileLanguage,
-      );
+      aiResponse = await _assistant
+          .createTripReply(
+            message: text,
+            currentDraft: _pendingDraft ?? CreateTripDraft(currency: _currency),
+            history: _chatMessages,
+            profileLanguage: widget.profileLanguage,
+          )
+          .timeout(_createTripChatTurnTimeout);
       _lastAiError = null;
     } catch (error) {
       final fallbackDraft = _parseTripDraft(text, _pendingDraft);
@@ -883,6 +899,28 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     await _generateTrip();
   }
 
+  Future<void> _createManualTrip() async {
+    final budget = _parsedBudget();
+    if (budget <= 0) {
+      setState(() => _formError = 'Enter a budget greater than zero.');
+      return;
+    }
+
+    final place = _manualPlaceFromInput(_destination.text.trim());
+    if (place == null) {
+      setState(() => _formError = 'Enter a destination.');
+      return;
+    }
+
+    final plan = _manualStarterPlan();
+
+    setState(() {
+      _usedFallbackPlan = false;
+      _formError = null;
+    });
+    _createTripFromPlan(place: place, budget: budget, plan: plan);
+  }
+
   Future<void> _editPendingDraft() async {
     final draft = _pendingDraft;
     if (draft == null) return;
@@ -1169,9 +1207,23 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     );
   }
 
+  int _parsedBudget() =>
+      int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+
+  PlaceSuggestion? _manualPlaceFromInput(String typed) {
+    if (_selectedPlace != null) return _selectedPlace;
+    if (typed.length < 2) return null;
+    return PlaceSuggestion(
+      name: typed,
+      formatted: typed,
+      latitude: 0,
+      longitude: 0,
+      placeId: typed.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-'),
+    );
+  }
+
   Future<void> _generateTrip() async {
-    final budget =
-        int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+    final budget = _parsedBudget();
     if (budget <= 0) {
       setState(() => _formError = 'Enter a budget greater than zero.');
       return;
@@ -1205,18 +1257,20 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
     GeneratedTripPlan plan;
     try {
-      plan = await _assistant.generateTripPlan(
-        place: place,
-        startDate: _startDate,
-        endDate: _endDate,
-        budget: budget,
-        groupType: _group,
-        preferences: _preferences.toList(),
-        currency: _currency,
-        airline: _airline.text.trim(),
-        flightConfirmation: _flightConfirmation.text.trim(),
-        profileLanguage: widget.profileLanguage,
-      );
+      plan = await _assistant
+          .generateTripPlan(
+            place: place,
+            startDate: _startDate,
+            endDate: _endDate,
+            budget: budget,
+            groupType: _group,
+            preferences: _preferences.toList(),
+            currency: _currency,
+            airline: _airline.text.trim(),
+            flightConfirmation: _flightConfirmation.text.trim(),
+            profileLanguage: widget.profileLanguage,
+          )
+          .timeout(_tripGenerationTurnTimeout);
       if (plan.items.isEmpty) {
         throw Exception('AI returned no schedule items.');
       }
@@ -1232,7 +1286,15 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
     if (!mounted) return;
     setState(() => _isGenerating = false);
+    _createTripFromPlan(place: place, budget: budget, plan: plan);
+  }
 
+  void _createTripFromPlan({
+    required PlaceSuggestion place,
+    required int budget,
+    required GeneratedTripPlan plan,
+  }) {
+    final bookings = _bookingsWithManualDetails(plan.bookings);
     widget.onGenerate(
       Trip(
         id: 't-${DateTime.now().millisecondsSinceEpoch}',
@@ -1253,16 +1315,35 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ..._imagesForDestination(place.name),
         ],
         items: plan.items,
-        bookings: _bookingsWithManualDetails(plan.bookings),
+        bookings: bookings,
         checklist: plan.checklist,
         preferences: _preferences.toList(),
         budgetCategories: _defaultBudgetCategories(
           budget: budget,
           actual: 0,
           items: plan.items,
-          bookings: plan.bookings,
+          bookings: bookings,
         ),
       ),
+    );
+  }
+
+  GeneratedTripPlan _manualStarterPlan() {
+    return const GeneratedTripPlan(
+      items: [],
+      bookings: [],
+      checklist: [
+        ChecklistCategory('Essentials', [
+          'Passport or ID',
+          'Wallet and payment cards',
+          'Phone charger',
+        ]),
+        ChecklistCategory('To decide', [
+          'Accommodation',
+          'Transportation',
+          'Reservations',
+        ]),
+      ],
     );
   }
 
@@ -1294,15 +1375,15 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             const SizedBox(height: 22),
             CreateOptionCard(
               icon: Icons.explore_rounded,
-              title: 'Plan Step-by-Step',
-              text: 'Explore ideas, compare pacing, then let AI draft it.',
+              title: 'AI Trip Builder',
+              text: 'Fill the essentials, then let AI create the route.',
               onTap: () => setState(() => _mode = 1),
             ),
             const SizedBox(height: 12),
             CreateOptionCard(
               icon: Icons.auto_awesome_rounded,
-              title: 'Plan with AI',
-              text: 'Search a real city, choose dates, tags, and generate.',
+              title: 'AI Chat Planner',
+              text: 'Describe the trip in chat and let AI shape the draft.',
               onTap: _startAiChat,
             ),
             const SizedBox(height: 12),
@@ -1483,39 +1564,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         padding: _responsivePagePadding(context, top: 18),
         children: [
           TopBar(
-            title: _mode == 1 ? 'Plan with AI' : 'Create Manually',
+            title: _mode == 1 ? 'AI Trip Builder' : 'Create Manually',
             onBack: () => setState(() => _mode = 0),
           ),
           const SizedBox(height: 18),
-          SegmentedButton<int>(
-            segments: [
-              ButtonSegment(
-                value: 1,
-                label: Text(appText(context, 'AI Flow')),
-                icon: const Icon(Icons.auto_awesome_rounded),
-              ),
-              ButtonSegment(
-                value: 2,
-                label: Text(appText(context, 'Manual')),
-                icon: const Icon(Icons.edit_note_rounded),
-              ),
-            ],
-            selected: {_mode},
-            onSelectionChanged: (value) => setState(() => _mode = value.first),
-          ),
-          const SizedBox(height: 18),
+          if (_mode == 1) const AnimatedGlobe(),
           if (_mode == 1) ...[
-            const AnimatedGlobe(),
-            const SizedBox(height: 14),
-            FormNotice(
-              message: appText(
-                context,
-                'Tell AI the basics below. It will build stops, bookings, and a packing list.',
-              ),
-            ),
-          ],
-          const SizedBox(height: 18),
-          if (_mode == 1) ...[
+            const SizedBox(height: 18),
             GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _showImagePicker,
@@ -1571,6 +1626,43 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               ),
             ),
             const SizedBox(height: 14),
+          ] else ...[
+            GlassPanel(
+              child: Row(
+                children: [
+                  const IconBadge(icon: Icons.edit_note_rounded, size: 46),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          appText(context, 'Manual starter trip'),
+                          style: const TextStyle(
+                            color: _primary,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          appText(
+                            context,
+                            'No AI call. This starts with an empty schedule you can build yourself.',
+                          ),
+                          style: const TextStyle(
+                            color: _secondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
           ],
           TextField(
             controller: _destination,
@@ -1610,18 +1702,29 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             onPickEnd: _pickEndDate,
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _budget,
-            keyboardType: TextInputType.number,
-            textInputAction: TextInputAction.next,
-            inputFormatters: const [_GroupedNumberInputFormatter()],
-            decoration: InputDecoration(
-              labelText: appText(context, 'Total budget'),
-              hintText: _budgetHintText(context),
-              suffixText: _hasBudgetText
-                  ? appText(context, _currencyDisplayName(_currency))
-                  : null,
-            ),
+          ResponsiveSplit(
+            children: [
+              TextField(
+                controller: _budget,
+                keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.next,
+                inputFormatters: const [_GroupedNumberInputFormatter()],
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Total budget'),
+                  hintText: _budgetHintText(context),
+                  suffixText: _hasBudgetText ? _currency : null,
+                ),
+              ),
+              FullTapDropdownField(
+                label: 'Currency',
+                value: _currency,
+                options: _currencyOptions,
+                onChanged: (value) => setState(() {
+                  _currency = value;
+                  _formError = null;
+                }),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           FullTapDropdownField(
@@ -1653,7 +1756,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: _preferenceOptions.map((preference) {
+            children: _visiblePreferenceOptions.map((preference) {
               final selected = _preferences.contains(preference);
               return FilterChip(
                 selected: selected,
@@ -1693,9 +1796,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 22),
-          const PlanningIdeaStrip(),
-          if (_usedFallbackPlan) ...[
+          if (_mode == 1) ...[
+            const SizedBox(height: 22),
+            const PlanningIdeaStrip(),
+          ],
+          if (_mode == 1 && _usedFallbackPlan) ...[
             const SizedBox(height: 16),
             FormNotice(
               message: appText(
@@ -1713,11 +1818,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             const GeneratingTripPanel()
           else
             PrimaryButton(
-              label: _mode == 1 ? 'Generate with AI' : 'Create schedule',
+              label: _mode == 1 ? 'Generate with AI' : 'Create manually',
               icon: _mode == 1
                   ? Icons.auto_awesome_rounded
-                  : Icons.arrow_forward_rounded,
-              onPressed: _generateTrip,
+                  : Icons.edit_note_rounded,
+              onPressed: _mode == 1 ? _generateTrip : _createManualTrip,
             ),
         ],
       ),

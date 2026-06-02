@@ -65,8 +65,6 @@ const _zhHantTwText = {
   'Rain window': '降雨時段',
   'Kyoto rain expected after 2 PM.': '京都下午 2 點後可能下雨。',
   'ADD PRIMARY PHOTO': '新增主要照片',
-  'Tell AI the basics below. It will build stops, bookings, and a packing list.':
-      '告訴 AI 基本資訊，它會建立停靠點、預訂和打包清單。',
   'AI generation was unavailable, so a local draft plan was created.':
       'AI 生成功能暫時無法使用，因此已建立本機草稿計畫。',
   'Generating schedule...': '正在產生日程...',

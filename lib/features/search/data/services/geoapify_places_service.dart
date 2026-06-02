@@ -26,10 +26,25 @@ class GeoapifyPlacesService {
   Future<List<PlaceSuggestion>> _searchDestinationsDirectly(
     String query,
   ) async {
+    final results = await Future.wait([
+      _fetchDestinationsByType(query, 'country'),
+      _fetchDestinationsByType(query, 'city'),
+    ]);
+
+    return _rankPlaceSuggestions([
+      ...results[0],
+      ...results[1],
+    ], query).take(6).toList();
+  }
+
+  Future<List<PlaceSuggestion>> _fetchDestinationsByType(
+    String query,
+    String type,
+  ) async {
     final url = Uri.https('api.geoapify.com', '/v1/geocode/autocomplete', {
       'text': query,
       'format': 'json',
-      'type': 'city',
+      'type': type,
       'limit': '6',
       'apiKey': LocalApiKeys.geoapifyApiKey,
     });
@@ -50,5 +65,45 @@ class GeoapifyPlacesService {
         .map((item) => PlaceSuggestion.fromMap(Map<String, dynamic>.from(item)))
         .where((place) => place.latitude != 0 && place.longitude != 0)
         .toList();
+  }
+
+  List<PlaceSuggestion> _rankPlaceSuggestions(
+    List<PlaceSuggestion> suggestions,
+    String query,
+  ) {
+    final seen = <String>{};
+    final unique = suggestions.where((place) {
+      final key = place.placeId.trim().isEmpty
+          ? place.formatted
+          : place.placeId;
+      return seen.add(key);
+    }).toList();
+    final normalizedQuery = _normalizedPlaceName(query);
+
+    unique.sort((a, b) {
+      final scoreA = _placeRankScore(a, normalizedQuery);
+      final scoreB = _placeRankScore(b, normalizedQuery);
+      if (scoreA != scoreB) return scoreA.compareTo(scoreB);
+      return a.name.length.compareTo(b.name.length);
+    });
+
+    return unique;
+  }
+
+  int _placeRankScore(PlaceSuggestion place, String normalizedQuery) {
+    final name = _normalizedPlaceName(place.name);
+    final country = _normalizedPlaceName(place.country ?? '');
+    final formatted = _normalizedPlaceName(place.formatted);
+    final isCountry =
+        place.resultType == 'country' ||
+        (country.isNotEmpty && name == country);
+
+    if (isCountry && (name == normalizedQuery || country == normalizedQuery)) {
+      return 0;
+    }
+    if (name == normalizedQuery) return 1;
+    if (formatted == normalizedQuery) return 2;
+    if (isCountry) return 3;
+    return 4;
   }
 }

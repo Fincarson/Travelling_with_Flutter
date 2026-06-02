@@ -1,21 +1,31 @@
 part of travel_agent_app;
 
 class CurrentTripCard extends StatelessWidget {
-  const CurrentTripCard({required this.trip, required this.onTap, super.key});
+  const CurrentTripCard({
+    required this.trip,
+    required this.onTap,
+    this.onStart,
+    super.key,
+  });
   final Trip trip;
   final VoidCallback onTap;
+  final VoidCallback? onStart;
 
   @override
   Widget build(BuildContext context) {
-    final nextItem = trip.items.isEmpty ? null : trip.items.first;
+    final hasStarted = trip.status == TripStatus.ongoing;
+    final runtime = _tripRuntimePlan(trip);
     final booking = trip.bookings.isEmpty ? null : trip.bookings.first;
     final image = trip.images.isEmpty
         ? destinations.first.image
         : trip.images.first;
-    final nextTitle = nextItem?.activity ?? trip.destination;
-    final nextDetail = nextItem == null
-        ? '${trip.startDate} / ${trip.endDate}'
-        : '${nextItem.time} / Day ${nextItem.day} route';
+    final eyebrow = hasStarted ? _runtimeEyebrow(runtime) : 'READY TO GO';
+    final nextTitle = hasStarted
+        ? _runtimeTitle(trip, runtime)
+        : 'Start your trip';
+    final nextDetail = hasStarted
+        ? _runtimeDetail(trip, runtime)
+        : '${trip.destination} / ${trip.startDate} to ${trip.endDate}';
 
     return GlassPanel(
       padding: const EdgeInsets.all(14),
@@ -38,7 +48,7 @@ class CurrentTripCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            appText(context, 'UP NEXT'),
+                            appText(context, eyebrow),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -79,6 +89,10 @@ class CurrentTripCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
+          if (hasStarted) ...[
+            _RuntimeDayStrip(runtime: runtime),
+            const SizedBox(height: 14),
+          ],
           ResponsiveSplit(
             children: [
               StatCard(
@@ -96,10 +110,95 @@ class CurrentTripCard extends StatelessWidget {
               ),
             ],
           ),
+          if (onStart != null) ...[
+            const SizedBox(height: 14),
+            PrimaryButton(
+              label: 'Start your trip',
+              icon: Icons.play_arrow_rounded,
+              onPressed: onStart!,
+            ),
+          ],
         ],
       ),
     );
   }
+}
+
+class _RuntimeDayStrip extends StatelessWidget {
+  const _RuntimeDayStrip({required this.runtime});
+
+  final _TripRuntimePlan runtime;
+
+  @override
+  Widget build(BuildContext context) {
+    final next = runtime.nextItem;
+    final nextStart = runtime.nextItemStartAt;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEAF6FF),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          const IconBadge(icon: Icons.today_rounded, size: 42),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LabelText('Day ${runtime.currentDay} of ${runtime.totalDays}'),
+                const SizedBox(height: 3),
+                Text(
+                  next == null
+                      ? 'No more scheduled stops today'
+                      : nextStart == null
+                      ? next.activity
+                      : '${_clockLabel(nextStart)} / ${next.activity}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _primary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _runtimeEyebrow(_TripRuntimePlan runtime) {
+  return switch (runtime.phase) {
+    _TripRuntimePhase.beforeStart => 'STARTING SOON',
+    _TripRuntimePhase.afterTrip => 'TRIP WRAPPED',
+    _ => 'UP NEXT',
+  };
+}
+
+String _runtimeTitle(Trip trip, _TripRuntimePlan runtime) {
+  final next = runtime.nextItem;
+  if (runtime.phase == _TripRuntimePhase.beforeStart) {
+    return 'Trip starts ${trip.startDate}';
+  }
+  if (runtime.phase == _TripRuntimePhase.afterTrip) return 'Trip complete';
+  return next?.activity ?? 'Day ${runtime.currentDay} is open';
+}
+
+String _runtimeDetail(Trip trip, _TripRuntimePlan runtime) {
+  final next = runtime.nextItem;
+  if (runtime.phase == _TripRuntimePhase.beforeStart) {
+    return '${trip.destination} / ${trip.startDate} to ${trip.endDate}';
+  }
+  if (runtime.phase == _TripRuntimePhase.afterTrip) {
+    return '${trip.destination} / ${trip.startDate} to ${trip.endDate}';
+  }
+  if (next == null) return 'Day ${runtime.currentDay} / no more stops';
+  return '${next.time} / Day ${next.day} route';
 }
 
 class HeroTripCard extends StatelessWidget {
@@ -453,8 +552,9 @@ class TripListCard extends StatelessWidget {
 }
 
 class ScheduleTile extends StatelessWidget {
-  const ScheduleTile({required this.item, super.key});
+  const ScheduleTile({required this.item, this.onDelete, super.key});
   final ScheduleItem item;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -497,6 +597,14 @@ class ScheduleTile extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.w900),
               ),
             ),
+            if (onDelete != null) ...[
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: appText(context, 'Remove activity'),
+                onPressed: onDelete,
+                icon: const Icon(Icons.delete_outline_rounded),
+              ),
+            ],
           ],
         ),
       ),

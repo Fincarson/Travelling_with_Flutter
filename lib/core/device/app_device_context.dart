@@ -44,13 +44,13 @@ class AppDeviceContext {
 }
 
 class AppDeviceContextService {
-  Future<AppDeviceContext> load({bool requestLocation = false}) async {
-    final now = DateTime.now();
-    Position? position;
+  static const _locationTimeout = Duration(seconds: 4);
 
-    if (requestLocation) {
-      position = await _tryCurrentPosition();
-    }
+  Future<AppDeviceContext> load({bool requestLocation = false}) async {
+    final now = _travelAgentNow();
+    final position = await _tryCurrentPosition(
+      requestPermission: requestLocation,
+    ).timeout(_locationTimeout, onTimeout: () => null);
 
     return AppDeviceContext(
       now: now,
@@ -62,13 +62,15 @@ class AppDeviceContextService {
     );
   }
 
-  Future<Position?> _tryCurrentPosition() async {
+  Future<Position?> _tryCurrentPosition({
+    required bool requestPermission,
+  }) async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) return null;
 
       var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
+      if (permission == LocationPermission.denied && requestPermission) {
         permission = await Geolocator.requestPermission();
       }
       if (permission == LocationPermission.denied ||
@@ -77,13 +79,21 @@ class AppDeviceContextService {
       }
 
       return Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.low,
-        timeLimit: const Duration(seconds: 6),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.low,
+          timeLimit: _locationTimeout,
+        ),
       );
     } catch (_) {
       return null;
     }
   }
+}
+
+DateTime _travelAgentNow() {
+  const override = String.fromEnvironment('TRAVEL_AGENT_NOW');
+  if (override.isEmpty) return DateTime.now();
+  return DateTime.tryParse(override)?.toLocal() ?? DateTime.now();
 }
 
 String _timeKey(DateTime date) =>
