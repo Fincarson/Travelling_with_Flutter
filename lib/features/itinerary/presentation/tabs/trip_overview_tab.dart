@@ -18,10 +18,18 @@ class TripOverviewTab extends StatelessWidget {
       0,
       (total, item) => total + item.actual,
     );
+    final runtime = _tripRuntimePlan(trip);
+    final previewItems = trip.status == TripStatus.ongoing
+        ? runtime.todaysItems
+        : trip.items.take(3).toList();
 
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
       children: [
+        if (trip.status == TripStatus.ongoing) ...[
+          _TodayPlanPanel(runtime: runtime),
+          const SizedBox(height: 12),
+        ],
         ResponsiveSplit(
           children: [
             StatCard(
@@ -62,10 +70,61 @@ class TripOverviewTab extends StatelessWidget {
         for (final booking in trip.bookings.take(2))
           BookingTile(booking: booking),
         const SizedBox(height: 12),
-        const SectionHeader(title: 'First schedule stops'),
+        SectionHeader(
+          title: trip.status == TripStatus.ongoing
+              ? 'Today schedule'
+              : 'First schedule stops',
+        ),
         const SizedBox(height: 10),
-        for (final item in trip.items.take(3)) ScheduleTile(item: item),
+        if (previewItems.isEmpty)
+          GlassPanel(
+            child: Text(
+              appText(context, 'No activities yet'),
+              style: const TextStyle(
+                color: _primary,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        for (final item in previewItems) ScheduleTile(item: item),
       ],
+    );
+  }
+}
+
+class _TodayPlanPanel extends StatelessWidget {
+  const _TodayPlanPanel({required this.runtime});
+
+  final _TripRuntimePlan runtime;
+
+  @override
+  Widget build(BuildContext context) {
+    final next = runtime.nextItem;
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const LabelText('Running today'),
+          const SizedBox(height: 8),
+          Text(
+            'Day ${runtime.currentDay} of ${runtime.totalDays}',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: _primary,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            next == null
+                ? 'No more scheduled stops are waiting right now.'
+                : 'Next: ${next.activity} at ${next.time}',
+            style: const TextStyle(
+              color: _secondary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

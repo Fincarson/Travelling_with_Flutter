@@ -8,6 +8,9 @@ class TravelDataRepository {
   DocumentReference<Map<String, dynamic>> _userDoc(String accountId) =>
       _firestore.collection('travel_users').doc(accountId);
 
+  DocumentReference<Map<String, dynamic>> _publicUserDoc(String accountId) =>
+      _firestore.collection('public_users').doc(accountId);
+
   CollectionReference<Map<String, dynamic>> _legacyTripsRef(String accountId) =>
       _userDoc(accountId).collection('trips');
 
@@ -36,25 +39,19 @@ class TravelDataRepository {
   Future<void> saveUser(String accountId, UserProfile profile) {
     final batch = _firestore.batch();
     batch.set(_userDoc(accountId), profile.toMap(), SetOptions(merge: true));
-    batch.set(
-      _firestore.collection('public_users').doc(accountId),
-      {
-        'displayName': _displayNameFor(profile),
-        'emailLower': profile.email.trim().toLowerCase(),
-        'photoUrl': profile.photoUrl,
-        'updatedAt': FieldValue.serverTimestamp(),
-      },
-      SetOptions(merge: true),
-    );
+    batch.set(_publicUserDoc(accountId), {
+      'displayName': _displayNameFor(profile),
+      'emailLower': profile.email.trim().toLowerCase(),
+      'photoUrl': profile.photoUrl,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
     return batch.commit();
   }
 
   Future<List<Trip>> loadTrips(String accountId) async {
     await migrateLegacyTrips(accountId);
-    final snapshot = await _sharedTripsRef
-        .where('memberIds', arrayContains: accountId)
-        .get();
-    return _tripsFromSharedSnapshot(snapshot);
+    final memberships = await _membershipsRef(accountId).get();
+    return _tripsFromMemberships(memberships.docs);
   }
 
   Stream<List<Trip>> watchTrips(String accountId) {
@@ -69,24 +66,21 @@ class TravelDataRepository {
       }
 
       if (controller.isClosed) return;
-      subscription = _sharedTripsRef
-          .where('memberIds', arrayContains: accountId)
-          .snapshots()
-          .listen(
-            (snapshot) async {
-              try {
-                final trips = await _tripsFromSharedSnapshot(snapshot);
-                if (!controller.isClosed) controller.add(trips);
-              } catch (error, stackTrace) {
-                if (!controller.isClosed) {
-                  controller.addError(error, stackTrace);
-                }
-              }
-            },
-            onError: (Object error, StackTrace stackTrace) {
-              if (!controller.isClosed) controller.addError(error, stackTrace);
-            },
-          );
+      subscription = _membershipsRef(accountId).snapshots().listen(
+        (snapshot) async {
+          try {
+            final trips = await _tripsFromMemberships(snapshot.docs);
+            if (!controller.isClosed) controller.add(trips);
+          } catch (error, stackTrace) {
+            if (!controller.isClosed) {
+              controller.addError(error, stackTrace);
+            }
+          }
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          if (!controller.isClosed) controller.addError(error, stackTrace);
+        },
+      );
     });
 
     controller.onCancel = () => subscription?.cancel();
@@ -95,6 +89,31 @@ class TravelDataRepository {
 
   Future<void> saveTrip(String accountId, Trip trip) {
     return _writeSharedTrip(accountId: accountId, trip: trip);
+  }
+
+  Future<void> startTrip(
+    String accountId, {
+    required Trip trip,
+    Trip? previousActive,
+  }) async {
+    await migrateLegacyTrips(accountId);
+    final batch = _firestore.batch();
+    if (previousActive != null && previousActive.id != trip.id) {
+      batch.update(_sharedTripDoc(previousActive.id), {
+        'status': TripStatus.upcoming.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }
+    batch.update(_sharedTripDoc(trip.id), {
+      'status': TripStatus.ongoing.name,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+  }
+
+  Future<void> deleteTrip(String accountId, String tripId) async {
+    await migrateLegacyTrips(accountId);
+    await _removeAccountFromTrip(accountId, tripId);
   }
 
   Future<void> migrateLegacyTrips(String accountId) async {
@@ -123,16 +142,22 @@ class TravelDataRepository {
     await cleanupBatch.commit();
   }
 
-  Future<List<Trip>> _tripsFromSharedSnapshot(
-    QuerySnapshot<Map<String, dynamic>> snapshot,
+  Future<List<Trip>> _tripsFromMemberships(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> memberships,
   ) async {
-    final docs = [...snapshot.docs]
+    final docs = [...memberships]
       ..sort((a, b) {
         final bUpdated = _timestampMillis(b.data()['updatedAt']);
         final aUpdated = _timestampMillis(a.data()['updatedAt']);
         return bUpdated.compareTo(aUpdated);
       });
-    return Future.wait(docs.map(_tripFromSharedDoc));
+    final trips = <Trip>[];
+    for (final membership in docs) {
+      final tripDoc = await _sharedTripDoc(membership.id).get();
+      if (!tripDoc.exists) continue;
+      trips.add(await _tripFromSharedDoc(tripDoc));
+    }
+    return trips;
   }
 
   Future<Trip> _tripFromSharedDoc(
@@ -149,6 +174,7 @@ class TravelDataRepository {
         snapshots[0].docs
             .map((doc) => _orderedDocData(doc))
             .map(ScheduleItem.fromMap)
+            .where((item) => !_isLegacyManualStarterItem(item))
             .toList()
           ..sort(_compareScheduleItems);
 
@@ -450,7 +476,7 @@ class TravelDataRepository {
     DocumentReference<Map<String, dynamic>> tripRef, {
     required List<String> allMemberIds,
   }) async {
-    final references = <DocumentReference<Map<String, dynamic>>>[];
+    final childReferences = <DocumentReference<Map<String, dynamic>>>[];
 
     for (final collectionName in const [
       'itineraryItems',
@@ -461,21 +487,24 @@ class TravelDataRepository {
       'aiRuns',
     ]) {
       final snapshot = await tripRef.collection(collectionName).get();
-      references.addAll(snapshot.docs.map((doc) => doc.reference));
+      childReferences.addAll(snapshot.docs.map((doc) => doc.reference));
     }
 
     final channels = await tripRef.collection('channels').get();
     for (final channel in channels.docs) {
       final messages = await channel.reference.collection('messages').get();
-      references.addAll(messages.docs.map((doc) => doc.reference));
-      references.add(channel.reference);
+      childReferences.addAll(messages.docs.map((doc) => doc.reference));
+      childReferences.add(channel.reference);
     }
 
+    await _deleteReferences(childReferences);
+
+    final rootReferences = <DocumentReference<Map<String, dynamic>>>[];
     for (final memberId in allMemberIds) {
-      references.add(_membershipsRef(memberId).doc(tripRef.id));
+      rootReferences.add(_membershipsRef(memberId).doc(tripRef.id));
     }
-    references.add(tripRef);
-    await _deleteReferences(references);
+    rootReferences.add(tripRef);
+    await _deleteReferences(rootReferences);
   }
 
   Future<void> _deleteReferences(

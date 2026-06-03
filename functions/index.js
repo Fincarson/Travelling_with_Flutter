@@ -1,24 +1,45 @@
+/* global process */
+
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
-const {defineSecret} = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 
 admin.initializeApp();
 
-const geoapifyApiKey = defineSecret("GEOAPIFY_API_KEY");
-const openAiApiKey = defineSecret("OPENAI_API_KEY");
 const openAiModel = "gpt-5.5";
+const openAiTimeoutMs = 50000;
+
+function geoapifyApiKey() {
+  return String(process.env.GEOAPIFY_API_KEY ?? "").trim();
+}
+
+function openAiApiKey() {
+  return String(process.env.OPENAI_API_KEY ?? "").trim();
+}
 
 const travelAssistantInstructions = [
   "You are a concise travel planning assistant inside a mobile app.",
   "Help with itinerary order, budget tradeoffs, packing, food, transit,",
   "and practical destination advice. Keep replies friendly and short.",
+  "Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset",
+  "as the source of truth for today, tomorrow, and relative dates.",
+  "Use appContext.location only for near-me or location-aware requests.",
 ].join(" ");
 
 const tripPlanInstructions = [
   "Generate a practical travel itinerary for a mobile travel app.",
   "Use realistic attraction names, reasonable pacing, and approximate costs.",
   "Keep activities suitable for the destination, dates, budget, group, and tags.",
+  "Use appContext.localDate and appContext.timeZoneOffset as today's context.",
+  "Use startLocation as the trip origin when provided. If startLocation is missing, use appContext.location when available.",
+  "Day 1 must start with realistic transportation from the trip origin to the destination before destination activities.",
+  "The final trip day must include realistic return transportation home after destination activities.",
+  "For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.",
+  "When moving to a different city or district, or when returning home, include pack-up/preparation wording before the transport.",
+  "Choose transport by distance: local transit/taxi for nearby trips, train/bus/high-speed rail for regional trips, and flights only for genuinely long-distance trips.",
+  "Never suggest a plane for short regional travel such as Hsinchu to Taipei.",
+  "Use web search data for current attraction names, transportation options, ticket prices, and local food costs.",
+  "Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.",
 ].join(" ");
 
 const createTripInstructions = [
@@ -27,10 +48,56 @@ const createTripInstructions = [
   "Ask for exactly one missing important field at a time.",
   "When useful, create a tappable widget with 2 to 4 options.",
   "Widget option values must be short user messages the app can send back.",
+  "When asking for dates, include a 'Pick exact dates' option with value '__pick_dates__'.",
+  "Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset as the source of truth for today, tomorrow, next weekend, and relative dates.",
+  "Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.",
   "Required final fields: destination, startDate, endDate, budget, groupType.",
   "Dates must be ISO yyyy-MM-dd. groupType must be Solo, Friends, Family, or Tour.",
   "If the user names a currency, set currency to USD, TWD, IDR, JPY, or EUR.",
 ].join(" ");
+
+function aiLanguageName(profileLanguage, outputLanguage) {
+  const explicit = String(outputLanguage ?? "").trim();
+  if (explicit) return explicit;
+  switch (String(profileLanguage ?? "en")) {
+    case "id":
+      return "Indonesian";
+    case "zh":
+    case "zh_Hant_TW":
+    case "zh-TW":
+      return "Traditional Chinese";
+    case "ja":
+      return "Japanese";
+    case "ko":
+      return "Korean";
+    case "es":
+      return "Spanish";
+    case "fr":
+      return "French";
+    case "de":
+      return "German";
+    case "it":
+      return "Italian";
+    case "pt":
+      return "Portuguese";
+    case "th":
+      return "Thai";
+    case "vi":
+      return "Vietnamese";
+    case "ar":
+      return "Arabic";
+    default:
+      return "English";
+  }
+}
+
+function outputLanguageInstructions(profileLanguage, outputLanguage) {
+  const language = aiLanguageName(profileLanguage, outputLanguage);
+  return [
+    `Write all user-facing text in ${language}.`,
+    "Do not infer language from currency; currency only controls money values.",
+  ].join(" ");
+}
 
 const tripPlanFormat = {
   type: "json_schema",
@@ -179,10 +246,44 @@ const createTripReplyFormat = {
   },
 };
 
+const scheduleStopFormat = {
+  type: "json_schema",
+  name: "generated_schedule_stop",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      day: {type: "integer"},
+      time: {type: "string"},
+      activity: {type: "string"},
+      type: {
+        type: "string",
+        enum: [
+          "place",
+          "food",
+          "restaurant",
+          "walk",
+          "museum",
+          "beach",
+          "shopping",
+          "train",
+          "flight",
+          "hotel",
+          "cafe",
+          "hiking",
+          "temple",
+        ],
+      },
+      cost: {type: "integer"},
+    },
+    required: ["day", "time", "activity", "type", "cost"],
+  },
+};
+
 exports.searchPlaces = onCall(
   {
     region: "us-central1",
-    secrets: [geoapifyApiKey],
   },
   async (request) => {
     const query = String(request.data?.query ?? "").trim();
@@ -190,53 +291,206 @@ exports.searchPlaces = onCall(
       return {results: []};
     }
 
-    const url = new URL("https://api.geoapify.com/v1/geocode/autocomplete");
-    url.searchParams.set("text", query);
-    url.searchParams.set("format", "json");
-    url.searchParams.set("type", "city");
-    url.searchParams.set("limit", "6");
-    url.searchParams.set("apiKey", geoapifyApiKey.value());
+    const apiKey = geoapifyApiKey();
+    if (!apiKey) {
+      logger.error("Geoapify search is not configured");
+      throw new HttpsError(
+        "failed-precondition",
+        "Place search is not configured.",
+      );
+    }
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      logger.error("Geoapify search failed", {
-        status: response.status,
+    try {
+      const [countryResults, cityResults] = await Promise.all([
+        fetchGeoapifyAutocomplete({query, type: "country", apiKey}),
+        fetchGeoapifyAutocomplete({query, type: "city", apiKey}),
+      ]);
+
+      return {
+        results: rankGeoapifyResults(
+          [...countryResults, ...cityResults],
+          query,
+        ).slice(0, 6),
+      };
+    } catch (error) {
+      logger.error("Geoapify search request failed", {
         query,
+        message: error?.message,
       });
       throw new HttpsError("unavailable", "Place search is unavailable.");
     }
-
-    const body = await response.json();
-    const results = Array.isArray(body.results) ? body.results : [];
-
-    return {
-      results: results.map((item) => {
-        const city = item.city ?? item.county ?? item.state ?? item.name;
-        const country = item.country;
-        const formatted = item.formatted ?? city ?? "Unknown place";
-        const name = city
-          ? country
-            ? `${city}, ${country}`
-            : city
-          : formatted;
-
-        return {
-          name,
-          formatted,
-          latitude: item.lat ?? 0,
-          longitude: item.lon ?? 0,
-          placeId: item.place_id ?? formatted,
-          country: country ?? null,
-        };
-      }),
-    };
   },
 );
+
+exports.reversePlace = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const latitude = Number(request.data?.latitude);
+    const longitude = Number(request.data?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      throw new HttpsError("invalid-argument", "Location is required.");
+    }
+
+    const apiKey = geoapifyApiKey();
+    if (!apiKey) {
+      logger.error("Geoapify reverse lookup is not configured");
+      throw new HttpsError(
+        "failed-precondition",
+        "Current location lookup is not configured.",
+      );
+    }
+
+    try {
+      const result = await fetchGeoapifyReverse({
+        latitude,
+        longitude,
+        apiKey,
+      });
+      return {result: result ? normalizeGeoapifyResult(result) : null};
+    } catch (error) {
+      logger.error("Geoapify reverse lookup failed", {
+        latitude,
+        longitude,
+        message: error?.message,
+      });
+      throw new HttpsError(
+        "unavailable",
+        "Current location lookup is unavailable.",
+      );
+    }
+  },
+);
+
+async function fetchGeoapifyAutocomplete({query, type, apiKey}) {
+  const url = new URL("https://api.geoapify.com/v1/geocode/autocomplete");
+  url.searchParams.set("text", query);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("type", type);
+  url.searchParams.set("limit", "6");
+  url.searchParams.set("apiKey", apiKey);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Geoapify ${type} search failed with ${response.status}: ` +
+      detail.slice(0, 300),
+    );
+  }
+
+  const body = await response.json();
+  return Array.isArray(body.results) ? body.results : [];
+}
+
+async function fetchGeoapifyReverse({latitude, longitude, apiKey}) {
+  const url = new URL("https://api.geoapify.com/v1/geocode/reverse");
+  url.searchParams.set("lat", String(latitude));
+  url.searchParams.set("lon", String(longitude));
+  url.searchParams.set("format", "json");
+  url.searchParams.set("apiKey", apiKey);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Geoapify reverse lookup failed with ${response.status}: ` +
+      detail.slice(0, 300),
+    );
+  }
+
+  const body = await response.json();
+  return Array.isArray(body.results) && body.results.length
+    ? body.results[0]
+    : null;
+}
+
+function normalizeGeoapifyResult(item) {
+  const resultType = item.result_type ?? item.type ?? null;
+  const country = item.country ?? null;
+  const locality = item.name ?? item.city ?? item.county ?? item.state ??
+    (resultType === "country" ? country : null);
+  const formatted = item.formatted ?? locality ?? "Unknown place";
+  const name = placeNameWithCountry(locality || formatted, country);
+
+  return {
+    name,
+    formatted,
+    latitude: item.lat ?? 0,
+    longitude: item.lon ?? 0,
+    placeId: item.place_id ?? formatted,
+    country,
+    resultType,
+  };
+}
+
+function placeNameWithCountry(value, country) {
+  const name = String(value ?? "").trim();
+  const countryName = String(country ?? "").trim();
+  if (!countryName) return name;
+
+  const parts = name
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part);
+  const lastPart = parts.length ? parts[parts.length - 1] : name;
+  if (
+    normalizedPlaceName(name) === normalizedPlaceName(countryName) ||
+    normalizedPlaceName(lastPart) === normalizedPlaceName(countryName)
+  ) {
+    return name;
+  }
+  return `${name}, ${countryName}`;
+}
+
+function rankGeoapifyResults(results, query) {
+  const seen = new Set();
+  const normalizedQuery = normalizedPlaceName(query);
+  return results
+    .map(normalizeGeoapifyResult)
+    .filter((place) => place.latitude !== 0 && place.longitude !== 0)
+    .filter((place) => {
+      const key = String(place.placeId || place.formatted);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => {
+      const scoreA = geoapifyRankScore(a, normalizedQuery);
+      const scoreB = geoapifyRankScore(b, normalizedQuery);
+      if (scoreA !== scoreB) return scoreA - scoreB;
+      return a.name.length - b.name.length;
+    });
+}
+
+function geoapifyRankScore(place, normalizedQuery) {
+  const name = normalizedPlaceName(place.name);
+  const country = normalizedPlaceName(place.country ?? "");
+  const formatted = normalizedPlaceName(place.formatted);
+  const isCountry = place.resultType === "country" ||
+    Boolean(country && name === country);
+
+  if (isCountry && (name === normalizedQuery || country === normalizedQuery)) {
+    return 0;
+  }
+  if (name === normalizedQuery) return 1;
+  if (formatted === normalizedQuery) return 2;
+  if (isCountry) return 3;
+  return 4;
+}
+
+function normalizedPlaceName(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
 
 exports.chatWithAssistant = onCall(
   {
     region: "us-central1",
-    secrets: [openAiApiKey],
   },
   async (request) => {
     const message = String(request.data?.message ?? "").trim();
@@ -247,20 +501,20 @@ exports.chatWithAssistant = onCall(
       throw new HttpsError("invalid-argument", "Message is too long.");
     }
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${openAiApiKey.value()}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const response = await fetchOpenAiResponses({
+      payload: {
         model: openAiModel,
         instructions: travelAssistantInstructions,
-        input: message,
+        input: JSON.stringify({
+          message,
+          appContext: request.data?.appContext ?? null,
+        }),
         store: false,
         reasoning: {effort: "low"},
         text: {verbosity: "low"},
-      }),
+      },
+      logContext: "OpenAI chat failed",
+      publicMessage: "AI chat is unavailable.",
     });
 
     if (!response.ok) {
@@ -284,7 +538,6 @@ exports.chatWithAssistant = onCall(
 exports.generateTripPlan = onCall(
   {
     region: "us-central1",
-    secrets: [openAiApiKey],
   },
   async (request) => {
     const data = request.data ?? {};
@@ -298,23 +551,44 @@ exports.generateTripPlan = onCall(
       throw new HttpsError("invalid-argument", "Trip details are required.");
     }
 
+    const languageInstructions = outputLanguageInstructions(
+      data.profileLanguage,
+      data.outputLanguage,
+    );
+
     const plan = await createStructuredResponse({
-      instructions: tripPlanInstructions,
+      instructions: `${tripPlanInstructions} ${languageInstructions}`,
       input: {
         destination,
         formattedAddress: String(place.formatted ?? destination),
+        destinationLocation: {
+          latitude: Number(place.latitude ?? 0),
+          longitude: Number(place.longitude ?? 0),
+        },
         startDate,
         endDate,
         budget,
         currency: String(data.currency ?? "USD"),
+        profileLanguage: String(data.profileLanguage ?? "en"),
+        outputLanguage: aiLanguageName(data.profileLanguage, data.outputLanguage),
         groupType: String(data.groupType ?? "Solo"),
         preferences: Array.isArray(data.preferences) ? data.preferences : [],
         flight: {
           airline: String(data.airline ?? ""),
           confirmation: String(data.flightConfirmation ?? ""),
         },
+        startLocation: data.startLocation ?? null,
+        appContext: data.appContext ?? null,
       },
       format: tripPlanFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "low",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "required",
       logContext: "OpenAI itinerary generation failed",
       publicMessage: "AI itinerary generation failed.",
     });
@@ -323,10 +597,58 @@ exports.generateTripPlan = onCall(
   },
 );
 
+exports.generateScheduleStop = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const data = request.data ?? {};
+    const destination = String(data.destination ?? "").trim();
+    const targetDay = Number.parseInt(data.targetDay, 10);
+    const requestText = String(data.request ?? "").trim();
+
+    if (!destination || !Number.isFinite(targetDay)) {
+      throw new HttpsError("invalid-argument", "Trip day is required.");
+    }
+    if (requestText.length > 800) {
+      throw new HttpsError("invalid-argument", "Description is too long.");
+    }
+
+    const item = await createStructuredResponse({
+      instructions: [
+        "Generate exactly one practical schedule stop for a mobile travel app.",
+        "Fit it into the requested trip day without duplicating existing stops.",
+        "Use current local time and location only if the request asks for nearby or location-aware help.",
+        "Keep the activity title concise, specific, and useful during the trip.",
+        "Return only JSON matching the schema.",
+      ].join(" "),
+      input: {
+        destination,
+        startDate: String(data.startDate ?? ""),
+        endDate: String(data.endDate ?? ""),
+        currency: String(data.currency ?? "USD"),
+        budget: Number.parseInt(data.budget, 10) || 0,
+        groupType: String(data.groupType ?? "Solo"),
+        preferences: Array.isArray(data.preferences) ? data.preferences : [],
+        targetDay,
+        request: requestText || "Suggest a useful trip stop.",
+        existingSchedule: Array.isArray(data.existingSchedule)
+          ? data.existingSchedule
+          : [],
+        appContext: data.appContext ?? null,
+      },
+      format: scheduleStopFormat,
+      logContext: "OpenAI schedule stop generation failed",
+      publicMessage: "AI schedule stop generation failed.",
+    });
+
+    return {item};
+  },
+);
+
 exports.createTripReply = onCall(
   {
     region: "us-central1",
-    secrets: [openAiApiKey],
   },
   async (request) => {
     const message = String(request.data?.message ?? "").trim();
@@ -337,8 +659,13 @@ exports.createTripReply = onCall(
       throw new HttpsError("invalid-argument", "Message is too long.");
     }
 
+    const languageInstructions = outputLanguageInstructions(
+      request.data?.profileLanguage,
+      request.data?.outputLanguage,
+    );
+
     const reply = await createStructuredResponse({
-      instructions: createTripInstructions,
+      instructions: `${createTripInstructions} ${languageInstructions}`,
       input: {
         latestMessage: message,
         currentDraft: request.data?.currentDraft ?? {},
@@ -346,6 +673,12 @@ exports.createTripReply = onCall(
           ? request.data.history.slice(-8)
           : [],
         today: request.data?.today ?? null,
+        profileLanguage: String(request.data?.profileLanguage ?? "en"),
+        outputLanguage: aiLanguageName(
+          request.data?.profileLanguage,
+          request.data?.outputLanguage,
+        ),
+        appContext: request.data?.appContext ?? null,
       },
       format: createTripReplyFormat,
       logContext: "OpenAI create trip chat failed",
@@ -360,26 +693,33 @@ async function createStructuredResponse({
   instructions,
   input,
   format,
+  tools,
+  toolChoice,
   logContext,
   publicMessage,
 }) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${openAiApiKey.value()}`,
-      "Content-Type": "application/json",
+  const payload = {
+    model: openAiModel,
+    instructions,
+    input: JSON.stringify(input),
+    store: false,
+    reasoning: {effort: "low"},
+    text: {
+      verbosity: "low",
+      format,
     },
-    body: JSON.stringify({
-      model: openAiModel,
-      instructions,
-      input: JSON.stringify(input),
-      store: false,
-      reasoning: {effort: "low"},
-      text: {
-        verbosity: "low",
-        format,
-      },
-    }),
+  };
+  if (Array.isArray(tools) && tools.length) {
+    payload.tools = tools;
+  }
+  if (toolChoice) {
+    payload.tool_choice = toolChoice;
+  }
+
+  const response = await fetchOpenAiResponses({
+    payload,
+    logContext,
+    publicMessage,
   });
 
   if (!response.ok) {
@@ -393,6 +733,31 @@ async function createStructuredResponse({
 
   const body = await response.json();
   return decodeJsonObject(outputText(body));
+}
+
+async function fetchOpenAiResponses({payload, logContext, publicMessage}) {
+  try {
+    return await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openAiApiKey()}`,
+        "Content-Type": "application/json",
+      },
+      signal: AbortSignal.timeout(openAiTimeoutMs),
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    const timedOut = error?.name === "AbortError" ||
+      error?.name === "TimeoutError";
+    logger.error(logContext, {
+      timeoutMs: openAiTimeoutMs,
+      message: error?.message,
+    });
+    throw new HttpsError(
+      timedOut ? "deadline-exceeded" : "unavailable",
+      publicMessage,
+    );
+  }
 }
 
 function outputText(responseBody) {

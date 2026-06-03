@@ -13,7 +13,7 @@ class ProfileScreen extends StatefulWidget {
 
   final AuthenticatedAccount account;
   final UserProfile user;
-  final ValueChanged<UserProfile> onSave;
+  final Future<void> Function(UserProfile profile) onSave;
   final Future<void> Function() onSignOut;
   final Future<void> Function() onDeleteAccount;
   final VoidCallback onOpenPerformance;
@@ -29,17 +29,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   var _isSigningOut = false;
   var _isDeleting = false;
+  var _isSaving = false;
   late final Set<String> _interests = {...widget.user.interests};
   late var _language = widget.user.language;
   late var _notificationsEnabled = widget.user.notificationsEnabled;
   late var _themeMode = widget.user.themeMode;
   final _customInterest = TextEditingController();
+  final _deviceContextService = AppDeviceContextService();
+  var _locationAccessEnabled = true;
+  var _isUpdatingLocationAccess = false;
 
   @override
   void dispose() {
     _name.dispose();
     _customInterest.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant ProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.user == widget.user || _isSaving) return;
+    _name.text = widget.user.name;
+    _interests
+      ..clear()
+      ..addAll(widget.user.interests);
+    _language = widget.user.language;
+    _notificationsEnabled = widget.user.notificationsEnabled;
+    _themeMode = widget.user.themeMode;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadLocationAccess());
+  }
+
+  Future<void> _loadLocationAccess() async {
+    final enabled = await _deviceContextService.isLocationAccessEnabled();
+    if (!mounted) return;
+    setState(() => _locationAccessEnabled = enabled);
   }
 
   Future<void> _signOut() async {
@@ -56,9 +85,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     language: _language,
     notificationsEnabled: _notificationsEnabled,
     themeMode: _themeMode,
+    performanceSettings: widget.user.performanceSettings,
   );
 
-  void _saveDraft() => widget.onSave(_draftProfile());
+  Future<void> _saveDraft({bool showFeedback = false}) async {
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+    try {
+      await widget.onSave(_draftProfile());
+      if (!mounted) return;
+      if (showFeedback) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(appText(context, 'Profile saved.'))),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not save profile: $error')));
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
 
   Future<void> _editInterests() async {
     final draft = {..._interests};
@@ -183,7 +232,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ..clear()
           ..addAll(selected);
       });
-      _saveDraft();
+      unawaited(_saveDraft());
     }
   }
 
@@ -227,7 +276,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       onSelected: (value) {
         setState(() => _language = value);
         AppLocaleController.setProfileLanguage(value);
-        _saveDraft();
+        unawaited(_saveDraft());
       },
     );
   }
@@ -240,7 +289,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       labelFor: (value) => appText(context, value),
       onSelected: (value) {
         setState(() => _themeMode = value);
-        _saveDraft();
+        unawaited(_saveDraft());
       },
     );
   }
@@ -321,6 +370,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _setLocationAccess(bool enabled) async {
+    if (_isUpdatingLocationAccess) return;
+    setState(() => _isUpdatingLocationAccess = true);
+    var nextValue = enabled;
+    var message = enabled
+        ? 'Location access enabled.'
+        : 'Location access disabled for this app.';
+    try {
+      if (enabled) {
+        final status = await _deviceContextService.enableLocationAccess();
+        nextValue = status == AppLocationAccessStatus.granted;
+        switch (status) {
+          case AppLocationAccessStatus.granted:
+            message = 'Location access enabled.';
+          case AppLocationAccessStatus.denied:
+            message = 'Location permission was denied.';
+          case AppLocationAccessStatus.deniedForever:
+            message =
+                'Android will not show the popup again. App settings opened.';
+          case AppLocationAccessStatus.serviceDisabled:
+            message = 'Turn on device location services, then try again.';
+        }
+      } else {
+        await _deviceContextService.setLocationAccessEnabled(false);
+      }
+      if (!mounted) return;
+      setState(() => _locationAccessEnabled = nextValue);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(appText(context, message))));
+    } finally {
+      if (mounted) setState(() => _isUpdatingLocationAccess = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ScreenScaffold(
@@ -370,8 +454,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 : _localizedSettingValue(_language, 'off'),
             onTap: () {
               setState(() => _notificationsEnabled = !_notificationsEnabled);
-              _saveDraft();
+              unawaited(_saveDraft());
             },
+          ),
+          LocationAccessTile(
+            enabled: _locationAccessEnabled,
+            busy: _isUpdatingLocationAccess,
+            onChanged: _setLocationAccess,
           ),
           SettingsTile(
             icon: Icons.palette_outlined,
@@ -399,8 +488,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 20),
           PrimaryButton(
             label: _profileText(_language, 'saveProfile'),
-            icon: Icons.check_rounded,
-            onPressed: _saveDraft,
+            icon: _isSaving ? Icons.hourglass_top_rounded : Icons.check_rounded,
+            onPressed: _isSaving ? null : () => _saveDraft(showFeedback: true),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(

@@ -12,17 +12,20 @@ class TravelAgentApp extends StatefulWidget {
 class _TravelAgentAppState extends State<TravelAgentApp> {
   final _repository = TravelDataRepository(FirebaseFirestore.instance);
   final _authService = AccountAuthService();
+  final _notificationService = TripNotificationService();
+  static const _localProfilePrefix = 'travel_agent.profile.';
   StreamSubscription<UserProfile?>? _userSubscription;
   StreamSubscription<List<Trip>>? _tripsSubscription;
-  var _showOnboarding = true;
   var _isLoading = true;
   var _tab = _NavTab.home;
   var _screen = _Screen.dashboard;
   var _isChatRoomOpen = false;
+  var _tripDetailInitialTab = 0;
   var _user = const UserProfile(name: '', email: '', interests: []);
   final List<Trip> _trips = [];
   Trip? _selectedTrip;
   Trip? _activeTrip;
+  String? _pendingTripAiPrompt;
   String? _accountId;
   String? _loadError;
 
@@ -35,40 +38,58 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   Future<void> _loadSavedState() async {
     final accountId = widget.account.uid;
 
+    var loadError = <String>[];
+    final localProfile = await _loadLocalProfile(accountId);
+    UserProfile? remoteProfile;
     try {
-      final profile = await _repository.loadUser(accountId);
+      remoteProfile = await _repository.loadUser(accountId);
+    } catch (error) {
+      loadError.add('Could not sync profile data: $error');
+    }
+
+    final loadedProfile = remoteProfile ?? localProfile;
+    final user =
+        loadedProfile ??
+        UserProfile(
+          name: widget.account.name,
+          email: widget.account.email ?? '',
+          photoUrl: widget.account.photoUrl,
+          interests: const [],
+          language: 'en',
+          notificationsEnabled: true,
+          themeMode: 'Light',
+        );
+
+    if (!mounted) return;
+    setState(() {
+      _accountId = accountId;
+      _user = user;
+      _isLoading = false;
+      _loadError = loadError.isEmpty ? null : loadError.join('\n');
+    });
+    AppLocaleController.setProfileLanguage(user.language);
+    await PerformanceScope.of(context).update(user.performanceSettings);
+    if (loadedProfile != null) {
+      await _saveLocalProfile(accountId, user);
+    }
+
+    try {
       final trips = await _repository.loadTrips(accountId);
       if (!mounted) return;
-      final user =
-          profile ??
-          UserProfile(
-            name: widget.account.name,
-            email: widget.account.email ?? '',
-            photoUrl: widget.account.photoUrl,
-            interests: const [],
-            language: 'en',
-            notificationsEnabled: true,
-            themeMode: 'Light',
-          );
       setState(() {
-        _accountId = accountId;
-        _user = user;
         _trips
           ..clear()
           ..addAll(trips);
         _activeTrip = _firstOngoingTrip(trips);
-        _showOnboarding = profile == null;
-        _isLoading = false;
+        _loadError = loadError.isEmpty ? null : loadError.join('\n');
       });
-      AppLocaleController.setProfileLanguage(user.language);
-      _watchAccountData(accountId);
+      unawaited(_syncTripReminders());
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _loadError = 'Could not load online trip data: $error';
-        _isLoading = false;
-      });
+      setState(() => _loadError = 'Could not load online trip data: $error');
     }
+
+    _watchAccountData(accountId);
   }
 
   void _watchAccountData(String accountId) {
@@ -82,10 +103,14 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             if (!mounted || profile == null) return;
             setState(() {
               _user = profile;
-              _showOnboarding = false;
               _loadError = null;
             });
+            unawaited(_syncTripReminders());
             AppLocaleController.setProfileLanguage(profile.language);
+            unawaited(
+              PerformanceScope.of(context).update(profile.performanceSettings),
+            );
+            unawaited(_saveLocalProfile(accountId, profile));
           },
           onError: (Object error) {
             if (!mounted) return;
@@ -110,6 +135,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               }
               _loadError = null;
             });
+            unawaited(_syncTripReminders());
           },
           onError: (Object error) {
             if (!mounted) return;
@@ -123,26 +149,28 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _selectedTrip = trip;
       _screen = _Screen.tripDetail;
       _tab = _NavTab.trips;
+      _tripDetailInitialTab = 0;
+      _pendingTripAiPrompt = null;
     });
   }
 
-  Future<void> _completeOnboarding(UserProfile profile) async {
-    final accountId = widget.account.uid;
-
-    setState(() {
-      _accountId = accountId;
-      _user = profile;
-      _showOnboarding = false;
-      _loadError = null;
-    });
-    AppLocaleController.setProfileLanguage(profile.language);
-
-    try {
-      await _repository.saveUser(accountId, profile);
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _loadError = 'Could not save profile online: $error');
+  void _openTripAssistant(String prompt) {
+    final trip =
+        _activeTrip ?? _selectedTrip ?? (_trips.isEmpty ? null : _trips.first);
+    if (trip == null) {
+      setState(() {
+        _screen = _Screen.chatList;
+        _tab = _NavTab.chat;
+      });
+      return;
     }
+    setState(() {
+      _selectedTrip = trip;
+      _screen = _Screen.tripDetail;
+      _tab = _NavTab.trips;
+      _tripDetailInitialTab = 6;
+      _pendingTripAiPrompt = prompt;
+    });
   }
 
   Future<void> _saveProfile(UserProfile profile) async {
@@ -150,15 +178,59 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _user = profile;
       _loadError = null;
     });
+    unawaited(_syncTripReminders());
     AppLocaleController.setProfileLanguage(profile.language);
 
     final accountId = _accountId ?? widget.account.uid;
+    await _saveLocalProfile(accountId, profile);
     try {
       await _repository.saveUser(accountId, profile);
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = 'Could not save profile online: $error');
+      rethrow;
     }
+  }
+
+  Future<void> _savePerformanceSettings(AppPerformanceSettings settings) async {
+    final profile = _user.copyWith(performanceSettings: settings);
+    setState(() {
+      _user = profile;
+      _loadError = null;
+    });
+
+    final accountId = _accountId ?? widget.account.uid;
+    await _saveLocalProfile(accountId, profile);
+    try {
+      await _repository.saveUser(accountId, profile);
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _loadError = 'Could not save performance settings online: $error',
+      );
+      rethrow;
+    }
+  }
+
+  Future<UserProfile?> _loadLocalProfile(String accountId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('$_localProfilePrefix$accountId');
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      return UserProfile.fromMap(decoded);
+    } catch (_) {
+      await prefs.remove('$_localProfilePrefix$accountId');
+      return null;
+    }
+  }
+
+  Future<void> _saveLocalProfile(String accountId, UserProfile profile) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      '$_localProfilePrefix$accountId',
+      jsonEncode(profile.toLocalMap()),
+    );
   }
 
   Future<void> _createTrip(Trip trip) async {
@@ -173,14 +245,28 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   Future<void> _startTrip(Trip trip) async {
-    final previousActive = _activeTrip;
-    final started = trip.copyWith(status: TripStatus.ongoing);
-    final saved = await _saveTripOnline(started);
-    if (!saved) return;
+    if (trip.status == TripStatus.ongoing) return;
+
+    final previousActive = _activeTrip ?? _firstOngoingTrip(_trips);
     if (previousActive != null && previousActive.id != trip.id) {
-      await _saveTripOnline(
-        previousActive.copyWith(status: TripStatus.upcoming),
+      final confirmed = await _confirmReplaceActiveTrip(
+        currentTrip: previousActive,
+        nextTrip: trip,
       );
+      if (!confirmed || !mounted) return;
+    }
+
+    final accountId = _accountId ?? widget.account.uid;
+    try {
+      await _repository.startTrip(
+        accountId,
+        trip: trip,
+        previousActive: previousActive,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _loadError = 'Could not start trip: $error');
+      return;
     }
     if (!mounted) return;
     await _refreshTripsFromBackend(selectTripId: trip.id);
@@ -189,6 +275,28 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _screen = _Screen.dashboard;
       _tab = _NavTab.home;
     });
+    unawaited(_syncTripReminders());
+  }
+
+  Future<void> _deleteTrip(Trip trip) async {
+    final confirmed = await _confirmDeleteTrip(trip);
+    if (!confirmed || !mounted) return;
+
+    final accountId = _accountId ?? widget.account.uid;
+    try {
+      await _repository.deleteTrip(accountId, trip.id);
+      if (!mounted) return;
+      setState(() {
+        _trips.removeWhere((item) => item.id == trip.id);
+        if (_selectedTrip?.id == trip.id) _selectedTrip = null;
+        if (_activeTrip?.id == trip.id) _activeTrip = null;
+        _loadError = null;
+      });
+      await _refreshTripsFromBackend();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _loadError = 'Could not remove trip: $error');
+    }
   }
 
   Future<void> _updateTrip(Trip trip) async {
@@ -209,6 +317,65 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     }
   }
 
+  Future<bool> _confirmDeleteTrip(Trip trip) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(appText(context, 'Remove this trip?')),
+        content: Text(
+          appText(
+            context,
+            'This will permanently remove ${trip.destination}. This cannot be undone.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(appText(context, 'Cancel')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFE5484D),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(appText(context, 'Remove')),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<bool> _confirmReplaceActiveTrip({
+    required Trip currentTrip,
+    required Trip nextTrip,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(appText(context, 'Start a different trip?')),
+        content: Text(
+          appText(
+            context,
+            'Starting ${nextTrip.destination} will stop ${currentTrip.destination} and reset it back to upcoming.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(appText(context, 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(appText(context, 'Start trip')),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   Future<void> _refreshTripsFromBackend({String? selectTripId}) async {
     final accountId = _accountId ?? widget.account.uid;
     try {
@@ -224,6 +391,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             _matchingTrip(trips, _selectedTrip);
         _loadError = null;
       });
+      unawaited(_syncTripReminders());
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = 'Could not refresh trip data: $error');
@@ -267,11 +435,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           bottom: false,
           child: _isLoading
               ? const LoadingScreen()
-              : _showOnboarding
-              ? OnboardingScreen(
-                  account: widget.account,
-                  onComplete: _completeOnboarding,
-                )
               : Stack(
                   children: [
                     AnimatedSwitcher(
@@ -347,10 +510,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
                 _tab = _NavTab.add;
               }),
               onOpenTrip: _openTrip,
-              onAskAi: (_) => setState(() {
-                _screen = _Screen.chatList;
-                _tab = _NavTab.chat;
-              }),
+              onStartTrip: _startTrip,
+              onAskAi: _openTripAssistant,
               onOpenInfo: () => setState(() => _screen = _Screen.info),
               onOpenTranslate: () =>
                   setState(() => _screen = _Screen.translate),
@@ -369,6 +530,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               }),
               onOpenTrip: _openTrip,
               onStartTrip: _startTrip,
+              onDeleteTrip: _deleteTrip,
             ),
             performance,
           ),
@@ -412,10 +574,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             _tab = _NavTab.add;
           }),
           onOpenTrip: _openTrip,
-          onAskAi: (_) => setState(() {
-            _screen = _Screen.chatList;
-            _tab = _NavTab.chat;
-          }),
+          onStartTrip: _startTrip,
+          onAskAi: _openTripAssistant,
           onOpenInfo: () => setState(() => _screen = _Screen.info),
           onOpenTranslate: () => setState(() => _screen = _Screen.translate),
           onOpenMap: () => setState(() => _screen = _Screen.map),
@@ -423,6 +583,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       case _Screen.create:
         return CreateTripScreen(
           key: const ValueKey('create'),
+          profileLanguage: _user.language,
           onBack: () => setState(() {
             _screen = _Screen.dashboard;
             _tab = _NavTab.home;
@@ -430,9 +591,24 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onGenerate: _createTrip,
         );
       case _Screen.tripDetail:
+        final trip = _selectedTrip;
+        if (trip == null) {
+          return _NoTripSelectedScreen(
+            key: const ValueKey('no-trip-detail'),
+            title: 'Trip',
+            onBack: () => setState(() {
+              _screen = _Screen.dashboard;
+              _tab = _NavTab.home;
+            }),
+            onCreate: () => setState(() {
+              _screen = _Screen.create;
+              _tab = _NavTab.add;
+            }),
+          );
+        }
         return TripDetailScreen(
-          key: ValueKey('trip-detail-${_selectedTrip?.id}'),
-          trip: _selectedTrip ?? mockKyotoTrip,
+          key: ValueKey('trip-detail-${trip.id}'),
+          trip: trip,
           onBack: () => setState(() {
             _screen = _Screen.dashboard;
             _tab = _NavTab.home;
@@ -445,6 +621,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onOpenPacking: () => setState(() => _screen = _Screen.packing),
           onOpenMap: () => setState(() => _screen = _Screen.map),
           onUpdateTrip: _updateTrip,
+          initialTabIndex: _tripDetailInitialTab,
+          initialAiPrompt: _pendingTripAiPrompt,
         );
       case _Screen.trips:
         return TripsScreen(
@@ -457,6 +635,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           }),
           onOpenTrip: _openTrip,
           onStartTrip: _startTrip,
+          onDeleteTrip: _deleteTrip,
         );
       case _Screen.chatList:
         return ChatListScreen(
@@ -480,11 +659,24 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         return PerformanceSettingsScreen(
           key: const ValueKey('performance'),
           onBack: () => setState(() => _screen = _Screen.profile),
+          onSettingsChanged: _savePerformanceSettings,
         );
       case _Screen.map:
+        final trip = _selectedTrip;
+        if (trip == null) {
+          return _NoTripSelectedScreen(
+            key: const ValueKey('no-trip-map'),
+            title: 'Map',
+            onBack: () => setState(() => _screen = _Screen.dashboard),
+            onCreate: () => setState(() {
+              _screen = _Screen.create;
+              _tab = _NavTab.add;
+            }),
+          );
+        }
         return MapScreen(
           key: const ValueKey('map'),
-          trip: _selectedTrip ?? mockKyotoTrip,
+          trip: trip,
           onBack: () => setState(
             () => _screen = _selectedTrip == null
                 ? _Screen.dashboard
@@ -502,15 +694,39 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onBack: () => setState(() => _screen = _Screen.dashboard),
         );
       case _Screen.budget:
+        final trip = _selectedTrip;
+        if (trip == null) {
+          return _NoTripSelectedScreen(
+            key: const ValueKey('no-trip-budget'),
+            title: 'Budget',
+            onBack: () => setState(() => _screen = _Screen.dashboard),
+            onCreate: () => setState(() {
+              _screen = _Screen.create;
+              _tab = _NavTab.add;
+            }),
+          );
+        }
         return BudgetScreen(
           key: const ValueKey('budget'),
-          trip: _selectedTrip ?? mockKyotoTrip,
+          trip: trip,
           onBack: () => setState(() => _screen = _Screen.tripDetail),
         );
       case _Screen.packing:
+        final trip = _selectedTrip;
+        if (trip == null) {
+          return _NoTripSelectedScreen(
+            key: const ValueKey('no-trip-packing'),
+            title: 'Packing',
+            onBack: () => setState(() => _screen = _Screen.dashboard),
+            onCreate: () => setState(() {
+              _screen = _Screen.create;
+              _tab = _NavTab.add;
+            }),
+          );
+        }
         return PackingScreen(
           key: const ValueKey('packing'),
-          trip: _selectedTrip ?? mockKyotoTrip,
+          trip: trip,
           onBack: () => setState(() => _screen = _Screen.tripDetail),
         );
     }
@@ -529,9 +745,75 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     });
   }
 
+  Future<void> _syncTripReminders() {
+    return _notificationService.syncTripReminders(
+      activeTrip: _activeTrip,
+      enabled: _user.notificationsEnabled,
+    );
+  }
+
   void _setChatRoomOpen(bool isOpen) {
     if (_isChatRoomOpen == isOpen) return;
     setState(() => _isChatRoomOpen = isOpen);
+  }
+}
+
+class _NoTripSelectedScreen extends StatelessWidget {
+  const _NoTripSelectedScreen({
+    required this.title,
+    required this.onBack,
+    required this.onCreate,
+    super.key,
+  });
+
+  final String title;
+  final VoidCallback onBack;
+  final VoidCallback onCreate;
+
+  @override
+  Widget build(BuildContext context) {
+    return ScreenScaffold(
+      bottomPadding: 92,
+      child: ListView(
+        padding: _responsivePagePadding(context, top: 18, bottom: 112),
+        children: [
+          TopBar(title: title, onBack: onBack),
+          const SizedBox(height: 18),
+          GlassPanel(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const IconBadge(icon: Icons.travel_explore_rounded, size: 48),
+                const SizedBox(height: 14),
+                Text(
+                  appText(context, 'No trip yet'),
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: _primary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  appText(context, 'Create a trip to use this page.'),
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontWeight: FontWeight.w700,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                PrimaryButton(
+                  label: 'Create trip',
+                  icon: Icons.add_rounded,
+                  onPressed: onCreate,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

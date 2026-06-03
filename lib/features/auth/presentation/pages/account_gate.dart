@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -18,6 +20,8 @@ class AccountGate extends StatefulWidget {
 
 class _AccountGateState extends State<AccountGate> {
   late final Future<AuthenticatedAccount?> _rememberedAccount;
+  final _deviceContextService = AppDeviceContextService();
+  final _locationPromptedAccountIds = <String>{};
 
   AccountAuthService get _authService => widget._authService;
 
@@ -48,11 +52,17 @@ class _AccountGateState extends State<AccountGate> {
               );
             }
 
+            unawaited(_requestLocationAfterLogin(account.uid));
             return TravelAgentApp(key: ValueKey(account.uid), account: account);
           },
         );
       },
     );
+  }
+
+  Future<void> _requestLocationAfterLogin(String accountId) async {
+    if (!_locationPromptedAccountIds.add(accountId)) return;
+    await _deviceContextService.load(requestLocation: true);
   }
 }
 

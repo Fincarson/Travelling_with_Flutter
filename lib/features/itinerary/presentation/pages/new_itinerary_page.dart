@@ -4,27 +4,37 @@ class CreateTripScreen extends StatefulWidget {
   const CreateTripScreen({
     required this.onBack,
     required this.onGenerate,
+    required this.profileLanguage,
     super.key,
   });
   final VoidCallback onBack;
   final ValueChanged<Trip> onGenerate;
+  final String profileLanguage;
 
   @override
   State<CreateTripScreen> createState() => _CreateTripScreenState();
 }
 
 class _CreateTripScreenState extends State<CreateTripScreen> {
+  static const _createTripChatTurnTimeout = Duration(seconds: 15);
+  static const _tripGenerationTurnTimeout = Duration(seconds: 60);
+
   final _places = GeoapifyPlacesService();
   final _assistant = TravelAssistantService();
+  final _deviceContextService = AppDeviceContextService();
   final _destination = TextEditingController();
   final _budget = TextEditingController();
   final _chatInput = TextEditingController();
   final _customPreference = TextEditingController();
+  final _startLocation = TextEditingController();
   final _airline = TextEditingController();
   final _flightConfirmation = TextEditingController();
   Timer? _searchTimer;
+  Timer? _originSearchTimer;
   PlaceSuggestion? _selectedPlace;
+  PlaceSuggestion? _selectedOriginPlace;
   List<PlaceSuggestion> _placeSuggestions = const [];
+  List<PlaceSuggestion> _originSuggestions = const [];
   final List<CreateTripChatMessage> _chatMessages = [];
   CreateTripDraft? _pendingDraft;
   var _group = 'Friends';
@@ -32,6 +42,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _mode = 0;
   String? _formError;
   var _isSearching = false;
+  var _isOriginSearching = false;
   var _isGenerating = false;
   var _isThinking = false;
   var _usedFallbackPlan = false;
@@ -39,10 +50,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _appliedDeviceCurrency = false;
   var _hasBudgetText = false;
   String? _lastAiError;
-  DateTime _startDate = DateTime.now().add(const Duration(days: 30));
-  DateTime _endDate = DateTime.now().add(const Duration(days: 35));
+  AppDeviceContext? _deviceContext;
+  TripStartLocation? _tripStartLocation;
+  DateTime _startDate = _travelAgentNow();
+  DateTime _endDate = _travelAgentNow().add(const Duration(days: 5));
   String? _selectedImage;
   final Set<String> _preferences = {'Culture', 'Food'};
+  final Set<String> _planningGoalIds = {};
 
   static const _preferenceOptions = [
     'Culture',
@@ -62,6 +76,45 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   static const _groupOptions = ['Friends', 'Family', 'Tour'];
   static const _twdToIdrFallbackRate = 562.0;
 
+  static const _planningGoals = [
+    PlanningGoal(
+      id: 'local_food',
+      icon: Icons.restaurant_rounded,
+      title: 'Food',
+      text: 'Local meals',
+      tag: 'Local food',
+      prompt:
+          'AI focus: include local food, market meals, cafes, and realistic meal timing.',
+    ),
+    PlanningGoal(
+      id: 'low_walking',
+      icon: Icons.directions_walk_rounded,
+      title: 'Route',
+      text: 'Less walking',
+      tag: 'Low walking',
+      prompt:
+          'AI focus: reduce walking distance, group nearby stops, and prefer easy transit.',
+    ),
+    PlanningGoal(
+      id: 'rain_ready',
+      icon: Icons.cloud_rounded,
+      title: 'Weather',
+      text: 'Rain backup',
+      tag: 'Rain-ready',
+      prompt:
+          'AI focus: include indoor backups and weather-flexible activities.',
+    ),
+    PlanningGoal(
+      id: 'family_pace',
+      icon: Icons.family_restroom_rounded,
+      title: 'Pace',
+      text: 'Easy day',
+      tag: 'Easy pace',
+      prompt:
+          'AI focus: leave buffer time, avoid overpacking the day, and keep the route comfortable.',
+    ),
+  ];
+
   static const _galleryOptions = [
     'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=600',
     'https://images.unsplash.com/photo-1542051841857-5f90071e7989?q=80&w=600',
@@ -75,6 +128,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   void initState() {
     super.initState();
     _budget.addListener(_syncBudgetTextState);
+    unawaited(_loadDeviceContext());
   }
 
   @override
@@ -94,11 +148,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   @override
   void dispose() {
     _searchTimer?.cancel();
+    _originSearchTimer?.cancel();
     _budget.removeListener(_syncBudgetTextState);
     _destination.dispose();
     _budget.dispose();
     _chatInput.dispose();
     _customPreference.dispose();
+    _startLocation.dispose();
     _airline.dispose();
     _flightConfirmation.dispose();
     super.dispose();
@@ -108,6 +164,183 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final hasText = _budget.text.trim().isNotEmpty;
     if (hasText == _hasBudgetText) return;
     setState(() => _hasBudgetText = hasText);
+  }
+
+  Future<void> _loadDeviceContext() async {
+    final context = await _deviceContextService.load();
+    if (!mounted) return;
+    final oldToday = _today();
+    final newToday = context.today;
+    setState(() {
+      _deviceContext = context;
+      _tripStartLocation ??= TripStartLocation.fromContext(context);
+      if (_tripStartLocation?.isCurrentLocation == true &&
+          _startLocation.text.trim().isEmpty) {
+        _startLocation.text = _tripStartLocation!.label;
+      }
+      if (_startDate.difference(oldToday).inDays == 0 &&
+          _endDate.difference(oldToday).inDays == 5) {
+        _startDate = newToday;
+        _endDate = newToday.add(const Duration(days: 5));
+      }
+    });
+  }
+
+  DateTime _today() {
+    final value = _deviceContext?.today ?? _travelAgentNow();
+    return DateTime(value.year, value.month, value.day);
+  }
+
+  void _scheduleOriginSearch(String value) {
+    _originSearchTimer?.cancel();
+    setState(() {
+      _selectedOriginPlace = null;
+      _tripStartLocation = null;
+      _formError = null;
+      _isOriginSearching = value.trim().length >= 3;
+      if (value.trim().isEmpty) _originSuggestions = const [];
+    });
+    _originSearchTimer = Timer(
+      const Duration(milliseconds: 450),
+      () => _searchOrigins(value),
+    );
+  }
+
+  Future<void> _searchOrigins(String value) async {
+    final query = value.trim();
+    if (query.length < 3) {
+      if (!mounted) return;
+      setState(() {
+        _isOriginSearching = false;
+        _originSuggestions = const [];
+      });
+      return;
+    }
+
+    try {
+      final suggestions = await _places.searchDestinations(query);
+      if (!mounted || _startLocation.text.trim() != query) return;
+      setState(() {
+        _originSuggestions = suggestions;
+        _isOriginSearching = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isOriginSearching = false;
+        _originSuggestions = const [];
+        _formError =
+            'Start location search is unavailable. You can still type a starting point.';
+      });
+    }
+  }
+
+  void _selectOriginPlace(PlaceSuggestion place) {
+    setState(() {
+      _selectedOriginPlace = place;
+      _tripStartLocation = TripStartLocation.fromPlace(place);
+      _startLocation.text = place.name;
+      _originSuggestions = const [];
+      _formError = null;
+    });
+  }
+
+  Future<void> _useCurrentStartLocation() async {
+    setState(() {
+      _isOriginSearching = true;
+      _formError = null;
+      _selectedOriginPlace = null;
+      _originSuggestions = const [];
+      _tripStartLocation = null;
+      _startLocation.text = 'Finding your location...';
+    });
+    final status = await _deviceContextService.enableLocationAccess();
+    if (!mounted) return;
+    if (status != AppLocationAccessStatus.granted) {
+      setState(() {
+        _isOriginSearching = false;
+        _tripStartLocation = null;
+        _formError = switch (status) {
+          AppLocationAccessStatus.denied =>
+            'Location permission was denied. Turn it on or type a starting place.',
+          AppLocationAccessStatus.deniedForever =>
+            'Android will not show the permission popup again. App settings opened.',
+          AppLocationAccessStatus.serviceDisabled =>
+            'Turn on device location services, then try again.',
+          AppLocationAccessStatus.granted => null,
+        };
+        _startLocation.clear();
+      });
+      return;
+    }
+
+    final context = await _deviceContextService.loadCurrentLocation();
+    if (!mounted) return;
+    final start = TripStartLocation.fromContext(context);
+    setState(() {
+      _deviceContext = context;
+      if (start == null) {
+        _isOriginSearching = false;
+        _tripStartLocation = null;
+        _startLocation.text = 'Location unavailable';
+        _formError =
+            'Location access is on, but the phone has not returned coordinates yet. Try again or type a starting place.';
+      } else {
+        final coordinateLabel = _coordinateLocationLabel(
+          start.latitude!,
+          start.longitude!,
+        );
+        _tripStartLocation = TripStartLocation(
+          label: coordinateLabel,
+          latitude: start.latitude,
+          longitude: start.longitude,
+          isCurrentLocation: true,
+        );
+        _startLocation.text = coordinateLabel;
+      }
+    });
+    if (start == null) return;
+
+    PlaceSuggestion? resolvedPlace;
+    try {
+      resolvedPlace = await _places
+          .reverseLocation(
+            latitude: start.latitude!,
+            longitude: start.longitude!,
+          )
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _isOriginSearching = false;
+      if (resolvedPlace == null) return;
+      _selectedOriginPlace = resolvedPlace;
+      _tripStartLocation = TripStartLocation(
+        label: resolvedPlace.name,
+        latitude: start.latitude,
+        longitude: start.longitude,
+        isCurrentLocation: true,
+      );
+      _startLocation.text = resolvedPlace.name;
+    });
+  }
+
+  String _coordinateLocationLabel(double latitude, double longitude) {
+    return '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}';
+  }
+
+  TripStartLocation? _startLocationForGeneration(
+    AppDeviceContext generationContext,
+  ) {
+    final existing = _tripStartLocation;
+    if (existing?.isCurrentLocation == true) return existing;
+    if (_selectedOriginPlace != null) {
+      return TripStartLocation.fromPlace(_selectedOriginPlace!);
+    }
+    if (existing != null) return existing;
+    final typed = _startLocation.text.trim();
+    if (typed.isNotEmpty) return TripStartLocation(label: typed);
+    return TripStartLocation.fromContext(generationContext);
   }
 
   void _schedulePlaceSearch(String value) {
@@ -145,7 +378,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       if (!mounted) return;
       setState(() {
         _isSearching = false;
-        _formError = 'Could not search places right now: $error';
+        _placeSuggestions = const [];
+        _formError =
+            'Place search is unavailable. You can still generate using the destination you typed.';
       });
     }
   }
@@ -160,7 +395,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _pickStartDate() async {
-    final today = DateTime.now();
+    final today = _today();
     final firstDate = DateTime(today.year, today.month, today.day);
     final initialDate = _startDate.isBefore(firstDate) ? firstDate : _startDate;
     final date = await showDatePicker(
@@ -180,7 +415,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _pickEndDate() async {
-    final today = DateTime.now();
+    final today = _today();
     final firstDate = _startDate.isBefore(today)
         ? DateTime(today.year, today.month, today.day)
         : _startDate;
@@ -199,7 +434,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _pickDateRange() async {
-    final today = DateTime.now();
+    final today = _today();
     final firstDate = DateTime(today.year, today.month, today.day);
     final initialStart = _startDate.isBefore(firstDate)
         ? firstDate
@@ -240,6 +475,42 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _customPreference.clear();
       _formError = null;
     });
+  }
+
+  void _togglePlanningGoal(String id) {
+    setState(() {
+      if (_planningGoalIds.contains(id)) {
+        _planningGoalIds.remove(id);
+      } else {
+        _planningGoalIds.add(id);
+      }
+      _formError = null;
+    });
+  }
+
+  List<PlanningGoal> get _selectedPlanningGoals => _planningGoals
+      .where((goal) => _planningGoalIds.contains(goal.id))
+      .toList();
+
+  List<String> get _aiGenerationPreferences => [
+    ..._preferences,
+    ..._selectedPlanningGoals.map((goal) => goal.prompt),
+  ];
+
+  List<String> get _savedTripPreferences => [
+    ..._preferences,
+    ..._selectedPlanningGoals.map((goal) => goal.tag),
+  ];
+
+  List<String> get _visiblePreferenceOptions {
+    final options = [..._preferenceOptions];
+    for (final preference in _preferences) {
+      final alreadyVisible = options.any(
+        (option) => option.toLowerCase() == preference.toLowerCase(),
+      );
+      if (!alreadyVisible) options.add(preference);
+    }
+    return options;
   }
 
   Future<void> _showImagePicker() async {
@@ -304,7 +575,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _sendCreateTripChat([String? value]) async {
-    final text = (value ?? _chatInput.text).trim();
+    var text = (value ?? _chatInput.text).trim();
+    if (text == _customDateRangeValue) {
+      final rangeText = await _pickCreateTripChatDateRange();
+      if (rangeText == null) return;
+      text = rangeText;
+    }
     if (text.isEmpty || _isThinking || _isGenerating) return;
 
     _chatInput.clear();
@@ -335,11 +611,14 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
     CreateTripAiResponse aiResponse;
     try {
-      aiResponse = await _assistant.createTripReply(
-        message: text,
-        currentDraft: _pendingDraft ?? CreateTripDraft(currency: _currency),
-        history: _chatMessages,
-      );
+      aiResponse = await _assistant
+          .createTripReply(
+            message: text,
+            currentDraft: _pendingDraft ?? CreateTripDraft(currency: _currency),
+            history: _chatMessages,
+            profileLanguage: widget.profileLanguage,
+          )
+          .timeout(_createTripChatTurnTimeout);
       _lastAiError = null;
     } catch (error) {
       final fallbackDraft = _parseTripDraft(text, _pendingDraft);
@@ -377,13 +656,37 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     });
   }
 
+  Future<String?> _pickCreateTripChatDateRange() async {
+    final today = _today();
+    final firstDate = DateTime(today.year, today.month, today.day);
+    final draft = _pendingDraft;
+    final initialStart = draft?.startDate ?? _startDate;
+    final safeStart = initialStart.isBefore(firstDate)
+        ? firstDate
+        : initialStart;
+    final initialEnd = draft?.endDate ?? _endDate;
+    final safeEnd = initialEnd.isBefore(safeStart)
+        ? safeStart.add(const Duration(days: 4))
+        : initialEnd;
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: firstDate,
+      lastDate: DateTime(2028, 12, 31),
+      initialDateRange: DateTimeRange(start: safeStart, end: safeEnd),
+    );
+    if (range == null) return null;
+    return '${_dateKey(range.start)} to ${_dateKey(range.end)}';
+  }
+
   String _friendlyAiError(Object error) {
     final text = error.toString();
     if (text.contains('not-found') ||
         text.contains('NOT_FOUND') ||
+        text.contains('failed-precondition') ||
+        text.contains('SERVICE_DISABLED') ||
         text.contains('generateTripPlan') ||
         text.contains('createTripReply')) {
-      return 'AI is not connected yet. Deploy the Firebase Functions or run Flutter with an OPENAI_API_KEY dart define. I used the local draft parser for now.';
+      return 'AI is not connected yet. Set the Firebase Function secrets and deploy Functions, or run Flutter with an OPENAI_API_KEY dart define. I used the local draft parser for now.';
     }
     if (text.contains('unauthenticated') ||
         text.contains('permission-denied')) {
@@ -477,7 +780,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     ).firstMatch(text);
     if (durationMatch != null && (startDate == null || endDate == null)) {
       final duration = math.max(1, int.parse(durationMatch.group(1)!));
-      final today = DateTime.now();
+      final today = _today();
       startDate = lower.contains('tomorrow')
           ? today.add(const Duration(days: 1))
           : today;
@@ -553,7 +856,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   int _fullYear(String? value) {
-    final year = int.tryParse(value ?? '') ?? DateTime.now().year;
+    final year = int.tryParse(value ?? '') ?? _today().year;
     return year < 100 ? 2000 + year : year;
   }
 
@@ -611,7 +914,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ],
         );
       case 'dates':
-        final base = DateTime.now().add(const Duration(days: 21));
+        final base = _today().add(const Duration(days: 21));
         final threeDayEnd = base.add(const Duration(days: 2));
         final fiveDayEnd = base.add(const Duration(days: 4));
         final sevenDayEnd = base.add(const Duration(days: 6));
@@ -632,6 +935,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               label: '7 days',
               value: '${_dateKey(base)} to ${_dateKey(sevenDayEnd)}',
               description: 'More room for day trips',
+            ),
+            const CreateTripChoiceOption(
+              label: 'Pick exact dates',
+              value: _customDateRangeValue,
+              description: 'Open the calendar',
             ),
           ],
         );
@@ -821,6 +1129,44 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     await _generateTrip();
   }
 
+  Future<void> _createManualTrip() async {
+    final budget = _parsedBudget();
+    if (budget <= 0) {
+      setState(() => _formError = 'Enter a budget greater than zero.');
+      return;
+    }
+
+    final place = _manualPlaceFromInput(_destination.text.trim());
+    if (place == null) {
+      setState(() => _formError = 'Enter a destination.');
+      return;
+    }
+
+    final generationContext = await _deviceContextService.load(
+      requestLocation: _startLocation.text.trim().isEmpty,
+    );
+    if (!mounted) return;
+    final startLocation = _startLocationForGeneration(generationContext);
+    final plan = _manualStarterPlan(
+      place: place,
+      startLocation: startLocation,
+      currency: _currency,
+    );
+
+    setState(() {
+      _deviceContext = generationContext;
+      _tripStartLocation = startLocation;
+      _usedFallbackPlan = false;
+      _formError = null;
+    });
+    _createTripFromPlan(
+      place: place,
+      budget: budget,
+      plan: plan,
+      startLocation: startLocation,
+    );
+  }
+
   Future<void> _editPendingDraft() async {
     final draft = _pendingDraft;
     if (draft == null) return;
@@ -844,7 +1190,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           return StatefulBuilder(
             builder: (context, setSheetState) {
               Future<void> pickStart() async {
-                final today = DateTime.now();
+                final today = _today();
                 final firstDate = DateTime(today.year, today.month, today.day);
                 final date = await showDatePicker(
                   context: context,
@@ -1096,11 +1442,23 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       if (suggestions.isNotEmpty) {
         return suggestions.first;
       }
-    } catch (_) {
-      if (_mode == 1) rethrow;
-    }
+    } catch (_) {}
 
-    if (_mode == 1) return null;
+    return PlaceSuggestion(
+      name: typed,
+      formatted: typed,
+      latitude: 0,
+      longitude: 0,
+      placeId: typed.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-'),
+    );
+  }
+
+  int _parsedBudget() =>
+      int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+
+  PlaceSuggestion? _manualPlaceFromInput(String typed) {
+    if (_selectedPlace != null) return _selectedPlace;
+    if (typed.length < 2) return null;
     return PlaceSuggestion(
       name: typed,
       formatted: typed,
@@ -1111,8 +1469,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _generateTrip() async {
-    final budget =
-        int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+    final budget = _parsedBudget();
     if (budget <= 0) {
       setState(() => _formError = 'Enter a budget greater than zero.');
       return;
@@ -1144,19 +1501,33 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _formError = null;
     });
 
+    final generationContext = await _deviceContextService.load(
+      requestLocation: true,
+    );
+    if (!mounted) return;
+    final startLocation = _startLocationForGeneration(generationContext);
+    setState(() {
+      _deviceContext = generationContext;
+      _tripStartLocation = startLocation;
+    });
+
     GeneratedTripPlan plan;
     try {
-      plan = await _assistant.generateTripPlan(
-        place: place,
-        startDate: _startDate,
-        endDate: _endDate,
-        budget: budget,
-        groupType: _group,
-        preferences: _preferences.toList(),
-        currency: _currency,
-        airline: _airline.text.trim(),
-        flightConfirmation: _flightConfirmation.text.trim(),
-      );
+      plan = await _assistant
+          .generateTripPlan(
+            place: place,
+            startDate: _startDate,
+            endDate: _endDate,
+            budget: budget,
+            groupType: _group,
+            preferences: _aiGenerationPreferences,
+            currency: _currency,
+            airline: _airline.text.trim(),
+            flightConfirmation: _flightConfirmation.text.trim(),
+            profileLanguage: widget.profileLanguage,
+            startLocation: startLocation,
+          )
+          .timeout(_tripGenerationTurnTimeout);
       if (plan.items.isEmpty) {
         throw Exception('AI returned no schedule items.');
       }
@@ -1164,15 +1535,32 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       plan = _fallbackTripPlan(
         place: place,
         startDate: _startDate,
+        endDate: _endDate,
         budget: budget,
-        preferences: _preferences.toList(),
+        preferences: _aiGenerationPreferences,
+        currency: _currency,
+        startLocation: startLocation,
       );
       _usedFallbackPlan = true;
     }
 
     if (!mounted) return;
     setState(() => _isGenerating = false);
+    _createTripFromPlan(
+      place: place,
+      budget: budget,
+      plan: plan,
+      startLocation: startLocation,
+    );
+  }
 
+  void _createTripFromPlan({
+    required PlaceSuggestion place,
+    required int budget,
+    required GeneratedTripPlan plan,
+    required TripStartLocation? startLocation,
+  }) {
+    final bookings = _bookingsWithManualDetails(plan.bookings);
     widget.onGenerate(
       Trip(
         id: 't-${DateTime.now().millisecondsSinceEpoch}',
@@ -1181,6 +1569,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         formattedAddress: place.formatted,
         latitude: place.latitude,
         longitude: place.longitude,
+        originLabel: startLocation?.label,
+        originLatitude: startLocation?.latitude,
+        originLongitude: startLocation?.longitude,
         startDate: _dateKey(_startDate),
         endDate: _dateKey(_endDate),
         budget: budget,
@@ -1193,16 +1584,47 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ..._imagesForDestination(place.name),
         ],
         items: plan.items,
-        bookings: _bookingsWithManualDetails(plan.bookings),
+        bookings: bookings,
         checklist: plan.checklist,
-        preferences: _preferences.toList(),
+        preferences: _savedTripPreferences,
         budgetCategories: _defaultBudgetCategories(
           budget: budget,
           actual: 0,
           items: plan.items,
-          bookings: plan.bookings,
+          bookings: bookings,
         ),
       ),
+    );
+  }
+
+  GeneratedTripPlan _manualStarterPlan({
+    required PlaceSuggestion place,
+    required TripStartLocation? startLocation,
+    required String currency,
+  }) {
+    final dayCount = _tripDayCount(_startDate, _endDate);
+    return _planWithTripTransport(
+      GeneratedTripPlan(
+        items: [],
+        bookings: [],
+        checklist: [
+          const ChecklistCategory('Essentials', [
+            'Passport or ID',
+            'Wallet and payment cards',
+            'Phone charger',
+          ]),
+          ChecklistCategory('To decide', [
+            if (dayCount > 1) 'Accommodation',
+            'Transportation',
+            'Reservations',
+          ]),
+        ],
+      ),
+      place: place,
+      startDate: _startDate,
+      endDate: _endDate,
+      startLocation: startLocation,
+      currency: currency,
     );
   }
 
@@ -1221,32 +1643,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     return [manualFlight, ...generated];
   }
 
-  void _useTemplateTrip() {
-    widget.onGenerate(
-      Trip(
-        id: 't-${DateTime.now().millisecondsSinceEpoch}',
-        destination: mockKyotoTrip.destination,
-        startDate: '2026-06-15',
-        endDate: '2026-06-20',
-        budget: mockKyotoTrip.budget,
-        spent: 0,
-        groupType: mockKyotoTrip.groupType,
-        currency: mockKyotoTrip.currency,
-        status: TripStatus.upcoming,
-        images: mockKyotoTrip.images,
-        items: mockKyotoTrip.items,
-        bookings: mockKyotoTrip.bookings,
-        checklist: mockKyotoTrip.checklist,
-        preferences: mockKyotoTrip.preferences,
-        budgetCategories: mockKyotoTrip.budgetCategories,
-        placeId: mockKyotoTrip.placeId,
-        formattedAddress: mockKyotoTrip.formattedAddress,
-        latitude: mockKyotoTrip.latitude,
-        longitude: mockKyotoTrip.longitude,
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_mode == 0) {
@@ -1260,15 +1656,15 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             const SizedBox(height: 22),
             CreateOptionCard(
               icon: Icons.explore_rounded,
-              title: 'Plan Step-by-Step',
-              text: 'Explore ideas, compare pacing, then let AI draft it.',
+              title: 'AI Trip Builder',
+              text: 'Fill the essentials, then let AI create the route.',
               onTap: () => setState(() => _mode = 1),
             ),
             const SizedBox(height: 12),
             CreateOptionCard(
               icon: Icons.auto_awesome_rounded,
-              title: 'Plan with AI',
-              text: 'Search a real city, choose dates, tags, and generate.',
+              title: 'AI Chat Planner',
+              text: 'Describe the trip in chat and let AI shape the draft.',
               onTap: _startAiChat,
             ),
             const SizedBox(height: 12),
@@ -1277,13 +1673,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               title: 'Create Manually',
               text: 'Enter destination, dates, budget, people, and tags.',
               onTap: () => setState(() => _mode = 2),
-            ),
-            const SizedBox(height: 12),
-            CreateOptionCard(
-              icon: Icons.work_rounded,
-              title: 'Use Saved Trip Template',
-              text: 'Start from a polished Kyoto sample and edit later.',
-              onTap: _useTemplateTrip,
             ),
           ],
         ),
@@ -1456,39 +1845,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         padding: _responsivePagePadding(context, top: 18),
         children: [
           TopBar(
-            title: _mode == 1 ? 'Plan with AI' : 'Create Manually',
+            title: _mode == 1 ? 'AI Trip Builder' : 'Create Manually',
             onBack: () => setState(() => _mode = 0),
           ),
           const SizedBox(height: 18),
-          SegmentedButton<int>(
-            segments: [
-              ButtonSegment(
-                value: 1,
-                label: Text(appText(context, 'AI Flow')),
-                icon: const Icon(Icons.auto_awesome_rounded),
-              ),
-              ButtonSegment(
-                value: 2,
-                label: Text(appText(context, 'Manual')),
-                icon: const Icon(Icons.edit_note_rounded),
-              ),
-            ],
-            selected: {_mode},
-            onSelectionChanged: (value) => setState(() => _mode = value.first),
-          ),
-          const SizedBox(height: 18),
+          if (_mode == 1) const AnimatedGlobe(),
           if (_mode == 1) ...[
-            const AnimatedGlobe(),
-            const SizedBox(height: 14),
-            FormNotice(
-              message: appText(
-                context,
-                'Tell AI the basics below. It will build stops, bookings, and a packing list.',
-              ),
-            ),
-          ],
-          const SizedBox(height: 18),
-          if (_mode == 1) ...[
+            const SizedBox(height: 18),
             GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _showImagePicker,
@@ -1544,6 +1907,43 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               ),
             ),
             const SizedBox(height: 14),
+          ] else ...[
+            GlassPanel(
+              child: Row(
+                children: [
+                  const IconBadge(icon: Icons.edit_note_rounded, size: 46),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          appText(context, 'Manual starter trip'),
+                          style: const TextStyle(
+                            color: _primary,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          appText(
+                            context,
+                            'No AI call. This starts with an empty schedule you can build yourself.',
+                          ),
+                          style: const TextStyle(
+                            color: _secondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
           ],
           TextField(
             controller: _destination,
@@ -1575,6 +1975,91 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             ),
           ],
           const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _startLocation,
+                  onChanged: _scheduleOriginSearch,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Start from'),
+                    hintText: appText(context, 'Current location or Hsinchu'),
+                    prefixIcon: const Icon(Icons.trip_origin_rounded),
+                    suffixIcon: _isOriginSearching
+                        ? const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              IconButton.filled(
+                tooltip: appText(context, 'Use current location'),
+                style: IconButton.styleFrom(
+                  backgroundColor: _primary,
+                  foregroundColor: Colors.white,
+                  fixedSize: const Size(54, 54),
+                ),
+                onPressed: _isOriginSearching ? null : _useCurrentStartLocation,
+                icon: const Icon(Icons.my_location_rounded),
+              ),
+            ],
+          ),
+          if (_selectedOriginPlace != null) ...[
+            const SizedBox(height: 10),
+            SelectedPlaceCard(place: _selectedOriginPlace!),
+          ] else if (_originSuggestions.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            PlaceSuggestionList(
+              suggestions: _originSuggestions,
+              onSelect: _selectOriginPlace,
+            ),
+          ] else if (_tripStartLocation?.isCurrentLocation == true) ...[
+            const SizedBox(height: 10),
+            GlassPanel(
+              child: Row(
+                children: [
+                  const IconBadge(icon: Icons.my_location_rounded, size: 46),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          appText(context, 'Current location'),
+                          style: const TextStyle(
+                            color: _primary,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          appText(
+                            context,
+                            'Used for Day 1 transport and the return-home leg.',
+                          ),
+                          style: const TextStyle(
+                            color: _secondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
           DateRangeCard(
             startDate: _startDate,
             endDate: _endDate,
@@ -1583,18 +2068,29 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             onPickEnd: _pickEndDate,
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _budget,
-            keyboardType: TextInputType.number,
-            textInputAction: TextInputAction.next,
-            inputFormatters: const [_GroupedNumberInputFormatter()],
-            decoration: InputDecoration(
-              labelText: appText(context, 'Total budget'),
-              hintText: _budgetHintText(context),
-              suffixText: _hasBudgetText
-                  ? appText(context, _currencyDisplayName(_currency))
-                  : null,
-            ),
+          ResponsiveSplit(
+            children: [
+              TextField(
+                controller: _budget,
+                keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.next,
+                inputFormatters: const [_GroupedNumberInputFormatter()],
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Total budget'),
+                  hintText: _budgetHintText(context),
+                  suffixText: _hasBudgetText ? _currency : null,
+                ),
+              ),
+              FullTapDropdownField(
+                label: 'Currency',
+                value: _currency,
+                options: _currencyOptions,
+                onChanged: (value) => setState(() {
+                  _currency = value;
+                  _formError = null;
+                }),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           FullTapDropdownField(
@@ -1626,7 +2122,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: _preferenceOptions.map((preference) {
+            children: _visiblePreferenceOptions.map((preference) {
               final selected = _preferences.contains(preference);
               return FilterChip(
                 selected: selected,
@@ -1666,9 +2162,15 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 22),
-          const PlanningIdeaStrip(),
-          if (_usedFallbackPlan) ...[
+          if (_mode == 1) ...[
+            const SizedBox(height: 22),
+            PlanningIdeaStrip(
+              goals: _planningGoals,
+              selectedGoalIds: _planningGoalIds,
+              onToggle: _togglePlanningGoal,
+            ),
+          ],
+          if (_mode == 1 && _usedFallbackPlan) ...[
             const SizedBox(height: 16),
             FormNotice(
               message: appText(
@@ -1686,11 +2188,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             const GeneratingTripPanel()
           else
             PrimaryButton(
-              label: _mode == 1 ? 'Generate with AI' : 'Create schedule',
+              label: _mode == 1 ? 'Generate with AI' : 'Create manually',
               icon: _mode == 1
                   ? Icons.auto_awesome_rounded
-                  : Icons.arrow_forward_rounded,
-              onPressed: _generateTrip,
+                  : Icons.edit_note_rounded,
+              onPressed: _mode == 1 ? _generateTrip : _createManualTrip,
             ),
         ],
       ),

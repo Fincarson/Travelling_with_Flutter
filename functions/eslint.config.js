@@ -8,6 +8,7 @@ module.exports = [
       sourceType: "commonjs",
       globals: {
         exports: "writable",
+        AbortSignal: "readonly",
         fetch: "readonly",
         require: "readonly",
         URL: "readonly",

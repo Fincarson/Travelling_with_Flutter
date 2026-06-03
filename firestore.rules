@@ -28,6 +28,12 @@ service cloud.firestore {
         request.auth.uid in tripData(tripId).memberIds;
     }
 
+    function canReadTripResource() {
+      return signedIn() &&
+        resource.data.memberIds is list &&
+        request.auth.uid in resource.data.memberIds;
+    }
+
     function roleForTrip(tripId) {
       return tripData(tripId).roles[request.auth.uid];
     }
@@ -361,7 +367,7 @@ service cloud.firestore {
     }
 
     match /trips/{tripId} {
-      allow read: if canReadTrip(tripId);
+      allow read: if canReadTripResource();
       allow create: if canCreateOwnedTrip();
       allow update: if isOwner(tripId) ||
         (isEditor(tripId) && editorTripFieldsOnly());
