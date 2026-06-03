@@ -195,6 +195,10 @@ const _zhHantTwText = {
   'Actual': '實際',
   'Free': '免費',
   'Start': '開始',
+  'Delete': '刪除',
+  'Delete trip': '刪除旅程',
+  'Trip options': '旅程選項',
+  'Undo': '復原',
   'Travel Info': '旅行資訊',
   'Weather': '天氣',
   'Rain expected after 2 PM. Move outdoor shrines earlier.':
