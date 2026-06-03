@@ -6,6 +6,40 @@ class ScheduleTab extends StatefulWidget {
   final Trip trip;
   final ValueChanged<Trip> onSave;
 
+  @override
+  State<ScheduleTab> createState() => _ScheduleTabState();
+}
+
+class _ScheduleTabState extends State<ScheduleTab> {
+  late int _selectedDay;
+
+  Trip get trip => widget.trip;
+  ValueChanged<Trip> get onSave => widget.onSave;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedDay = _tripRuntimePlan(widget.trip).currentDay;
+  }
+
+  @override
+  void didUpdateWidget(covariant ScheduleTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final days = _scheduleDays(widget.trip.items);
+    if (!days.contains(_selectedDay)) {
+      _selectedDay = days.first;
+    }
+  }
+
+  List<int> _scheduleDays(List<ScheduleItem> items) {
+    final totalDays = _tripRuntimePlan(widget.trip).totalDays;
+    final days = <int>{for (var day = 1; day <= totalDays; day++) day};
+    for (final item in items) {
+      days.add(math.max(1, item.day));
+    }
+    return days.toList()..sort();
+  }
+
   Future<void> _addScheduleStop(BuildContext context) async {
     final mode = await showModalBottomSheet<_ScheduleStopMode>(
       context: context,
@@ -312,7 +346,9 @@ class ScheduleTab extends StatefulWidget {
       grouped.putIfAbsent(item.day, () => []).add((index: index, item: item));
     }
     final days = _scheduleDays(widget.trip.items);
-    final selectedItems = grouped[_selectedDay] ?? const <ScheduleItem>[];
+    final visibleDays = grouped.containsKey(_selectedDay)
+        ? [_selectedDay]
+        : const <int>[];
 
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
@@ -326,7 +362,7 @@ class ScheduleTab extends StatefulWidget {
         PrimaryButton(
           label: 'Add Destination',
           icon: Icons.add_rounded,
-          onPressed: () => _addDestination(context),
+          onPressed: () => _addScheduleStop(context),
         ),
         const SizedBox(height: 16),
         if (trip.status == TripStatus.ongoing) ...[
@@ -390,7 +426,7 @@ class ScheduleTab extends StatefulWidget {
           ),
           const SizedBox(height: 12),
         ],
-        for (final day in grouped.keys.toList()..sort()) ...[
+        for (final day in visibleDays) ...[
           LabelText('${appText(context, 'Day')} $day'),
           const SizedBox(height: 10),
           for (final entry in grouped[day]!)
@@ -416,6 +452,38 @@ class ScheduleTab extends StatefulWidget {
               ),
             ),
         ],
+      ],
+    );
+  }
+}
+
+class _ScheduleDayTabs extends StatelessWidget {
+  const _ScheduleDayTabs({
+    required this.days,
+    required this.selectedDay,
+    required this.onSelect,
+  });
+
+  final List<int> days;
+  final int selectedDay;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 92,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: days.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final day = days[index];
+          return _ScheduleDayTab(
+            day: day,
+            selected: day == selectedDay,
+            onTap: () => onSelect(day),
+          );
+        },
       ),
     );
   }

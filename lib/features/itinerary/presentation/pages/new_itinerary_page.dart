@@ -5,14 +5,30 @@ class CreateTripScreen extends StatefulWidget {
     required this.onBack,
     required this.onGenerate,
     required this.profileLanguage,
+    required this.savedTrips,
     super.key,
   });
   final VoidCallback onBack;
   final ValueChanged<Trip> onGenerate;
   final String profileLanguage;
+  final List<Trip> savedTrips;
 
   @override
   State<CreateTripScreen> createState() => _CreateTripScreenState();
+}
+
+class _TripTemplate {
+  const _TripTemplate({
+    required this.trip,
+    required this.source,
+    required this.description,
+    required this.badge,
+  });
+
+  final Trip trip;
+  final String source;
+  final String description;
+  final String badge;
 }
 
 class _CreateTripScreenState extends State<CreateTripScreen> {
@@ -52,6 +68,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   String? _lastAiError;
   AppDeviceContext? _deviceContext;
   TripStartLocation? _tripStartLocation;
+  int? _manualExpandedStep;
+  final Set<int> _manualCompletedSteps = {};
   DateTime _startDate = _travelAgentNow();
   DateTime _endDate = _travelAgentNow().add(const Duration(days: 5));
   String? _selectedImage;
@@ -124,6 +142,225 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     'https://images.unsplash.com/photo-1533105079780-92b9be482077?q=80&w=600',
   ];
 
+  static const _recommendedTemplates = [
+    _TripTemplate(
+      source: 'Online recommendation',
+      description:
+          'A city-first route with food neighborhoods, shrines, museums, and easy transit.',
+      badge: 'Trending',
+      trip: Trip(
+        id: 'template-tokyo-food-culture',
+        title: 'Tokyo food and culture',
+        destination: 'Tokyo, Japan',
+        startDate: '2026-09-10',
+        endDate: '2026-09-15',
+        budget: 4200,
+        spent: 0,
+        groupType: 'Friends',
+        currency: 'USD',
+        status: TripStatus.upcoming,
+        images: [
+          'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=900',
+          'https://images.unsplash.com/photo-1542051841857-5f90071e7989?q=80&w=900',
+        ],
+        preferences: ['Food', 'Culture', 'Shopping'],
+        items: [
+          ScheduleItem(
+            1,
+            '10:00 AM',
+            'Shinjuku arrival and station-area orientation',
+            Icons.train_rounded,
+            0,
+          ),
+          ScheduleItem(
+            1,
+            '01:00 PM',
+            'Omoide Yokocho lunch crawl',
+            Icons.restaurant_rounded,
+            55,
+          ),
+          ScheduleItem(
+            2,
+            '09:30 AM',
+            'Meiji Shrine and Harajuku walk',
+            Icons.temple_buddhist_rounded,
+            0,
+          ),
+          ScheduleItem(
+            3,
+            '11:00 AM',
+            'Ueno museums and Ameyoko market',
+            Icons.museum_rounded,
+            45,
+          ),
+          ScheduleItem(
+            4,
+            '05:00 PM',
+            'Shibuya crossing, dinner, and skyline views',
+            Icons.restaurant_rounded,
+            80,
+          ),
+        ],
+        bookings: [
+          Booking(
+            'Tokyo hotel placeholder',
+            '2026-09-10',
+            '15:00',
+            'HOTEL-TBD',
+            980,
+            Icons.hotel_rounded,
+          ),
+          Booking(
+            'Airport rail transfer',
+            '2026-09-10',
+            '11:00',
+            'TRANSIT-TBD',
+            40,
+            Icons.train_rounded,
+          ),
+        ],
+        checklist: [
+          ChecklistCategory('Essentials', [
+            'Passport',
+            'Transit card setup',
+            'Comfortable walking shoes',
+          ]),
+          ChecklistCategory('Reservations', [
+            'Popular restaurant shortlist',
+            'Museum tickets',
+          ]),
+        ],
+        budgetCategories: [
+          BudgetCategory(
+            id: 'transport',
+            category: 'Transport',
+            planned: 900,
+            actual: 0,
+          ),
+          BudgetCategory(
+            id: 'stay',
+            category: 'Stay',
+            planned: 1200,
+            actual: 0,
+          ),
+          BudgetCategory(id: 'food', category: 'Food', planned: 900, actual: 0),
+          BudgetCategory(
+            id: 'activities',
+            category: 'Activities',
+            planned: 700,
+            actual: 0,
+          ),
+        ],
+      ),
+    ),
+    _TripTemplate(
+      source: 'Online recommendation',
+      description:
+          'A calmer beach-and-nature plan with temples, rice terraces, and slow mornings.',
+      badge: 'Relaxed',
+      trip: Trip(
+        id: 'template-bali-nature-reset',
+        title: 'Bali nature reset',
+        destination: 'Bali, Indonesia',
+        startDate: '2026-10-05',
+        endDate: '2026-10-11',
+        budget: 3200,
+        spent: 0,
+        groupType: 'Family',
+        currency: 'USD',
+        status: TripStatus.upcoming,
+        images: [
+          'https://images.unsplash.com/photo-1537996194471-e657df975ab4?q=80&w=900',
+          'https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?q=80&w=900',
+        ],
+        preferences: ['Nature', 'Relax', 'Culture'],
+        items: [
+          ScheduleItem(
+            1,
+            '11:00 AM',
+            'Arrive in Ubud and settle into the villa',
+            Icons.hotel_rounded,
+            0,
+          ),
+          ScheduleItem(
+            2,
+            '08:30 AM',
+            'Tegalalang rice terrace walk',
+            Icons.hiking_rounded,
+            20,
+          ),
+          ScheduleItem(
+            3,
+            '09:00 AM',
+            'Tirta Empul temple visit',
+            Icons.temple_buddhist_rounded,
+            15,
+          ),
+          ScheduleItem(
+            4,
+            '10:30 AM',
+            'Seminyak beach morning and seafood lunch',
+            Icons.beach_access_rounded,
+            65,
+          ),
+          ScheduleItem(
+            5,
+            '04:30 PM',
+            'Uluwatu sunset and dinner',
+            Icons.restaurant_rounded,
+            85,
+          ),
+        ],
+        bookings: [
+          Booking(
+            'Ubud villa placeholder',
+            '2026-10-05',
+            '15:00',
+            'STAY-TBD',
+            760,
+            Icons.hotel_rounded,
+          ),
+          Booking(
+            'Private driver day',
+            '2026-10-07',
+            '08:00',
+            'DRIVER-TBD',
+            120,
+            Icons.train_rounded,
+          ),
+        ],
+        checklist: [
+          ChecklistCategory('Essentials', [
+            'Passport',
+            'Sun protection',
+            'Swimwear',
+          ]),
+          ChecklistCategory('Comfort', [
+            'Light layers',
+            'Mosquito repellent',
+            'Temple scarf or sarong',
+          ]),
+        ],
+        budgetCategories: [
+          BudgetCategory(
+            id: 'transport',
+            category: 'Transport',
+            planned: 650,
+            actual: 0,
+          ),
+          BudgetCategory(id: 'stay', category: 'Stay', planned: 900, actual: 0),
+          BudgetCategory(id: 'food', category: 'Food', planned: 620, actual: 0),
+          BudgetCategory(
+            id: 'activities',
+            category: 'Activities',
+            planned: 500,
+            actual: 0,
+          ),
+        ],
+      ),
+    ),
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -162,7 +399,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
   void _syncBudgetTextState() {
     final hasText = _budget.text.trim().isNotEmpty;
-    if (hasText == _hasBudgetText) return;
     setState(() => _hasBudgetText = hasText);
   }
 
@@ -394,45 +630,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     });
   }
 
-  Future<void> _pickStartDate() async {
-    final today = _today();
-    final firstDate = DateTime(today.year, today.month, today.day);
-    final initialDate = _startDate.isBefore(firstDate) ? firstDate : _startDate;
-    final date = await showDatePicker(
-      context: context,
-      initialDate: initialDate,
-      firstDate: firstDate,
-      lastDate: DateTime(2028, 12, 31),
-    );
-    if (date == null) return;
-    setState(() {
-      _startDate = date;
-      if (_endDate.isBefore(_startDate)) {
-        _endDate = _startDate.add(const Duration(days: 4));
-      }
-      _formError = null;
-    });
-  }
-
-  Future<void> _pickEndDate() async {
-    final today = _today();
-    final firstDate = _startDate.isBefore(today)
-        ? DateTime(today.year, today.month, today.day)
-        : _startDate;
-    final initialDate = _endDate.isBefore(firstDate) ? firstDate : _endDate;
-    final date = await showDatePicker(
-      context: context,
-      initialDate: initialDate,
-      firstDate: firstDate,
-      lastDate: DateTime(2028, 12, 31),
-    );
-    if (date == null) return;
-    setState(() {
-      _endDate = date;
-      _formError = null;
-    });
-  }
-
   Future<void> _pickDateRange() async {
     final today = _today();
     final firstDate = DateTime(today.year, today.month, today.day);
@@ -447,6 +644,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       firstDate: firstDate,
       lastDate: DateTime(2028, 12, 31),
       initialDateRange: DateTimeRange(start: initialStart, end: initialEnd),
+      builder: _roundedDateRangePickerBuilder,
     );
     if (range == null) return;
     setState(() {
@@ -673,9 +871,46 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       firstDate: firstDate,
       lastDate: DateTime(2028, 12, 31),
       initialDateRange: DateTimeRange(start: safeStart, end: safeEnd),
+      builder: _roundedDateRangePickerBuilder,
     );
     if (range == null) return null;
     return '${_dateKey(range.start)} to ${_dateKey(range.end)}';
+  }
+
+  Widget _roundedDateRangePickerBuilder(BuildContext context, Widget? child) {
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(
+        datePickerTheme: theme.datePickerTheme.copyWith(
+          rangePickerShape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(28),
+          ),
+          rangeSelectionBackgroundColor: const Color(
+            0xFFACCBE0,
+          ).withValues(alpha: .32),
+          rangeSelectionOverlayColor: WidgetStatePropertyAll(
+            const Color(0xFF355872).withValues(alpha: .08),
+          ),
+          dayShape: WidgetStateProperty.resolveWith<OutlinedBorder?>((states) {
+            if (states.contains(WidgetState.selected)) {
+              return RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              );
+            }
+            if (states.contains(WidgetState.hovered) ||
+                states.contains(WidgetState.focused)) {
+              return RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              );
+            }
+            return RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            );
+          }),
+        ),
+      ),
+      child: child ?? const SizedBox.shrink(),
+    );
   }
 
   String _friendlyAiError(Object error) {
@@ -1643,6 +1878,928 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     return [manualFlight, ...generated];
   }
 
+  List<_TripTemplate> get _pastTripTemplates => widget.savedTrips
+      .where((trip) => trip.status == TripStatus.past)
+      .map(
+        (trip) => _TripTemplate(
+          trip: trip,
+          source: 'Past trip',
+          description:
+              'Reuse your saved route, budget categories, checklist, and schedule stops.',
+          badge: 'Saved',
+        ),
+      )
+      .toList();
+
+  void _openTemplatePicker() {
+    setState(() {
+      _mode = 4;
+      _formError = null;
+    });
+  }
+
+  int _templateLengthDays(Trip trip) {
+    final start = _parseTripDate(trip.startDate);
+    final end = _parseTripDate(trip.endDate);
+    if (start == null || end == null || end.isBefore(start)) {
+      return _tripRuntimePlan(trip).totalDays;
+    }
+    return math.max(1, end.difference(start).inDays + 1);
+  }
+
+  Trip _tripFromTemplate(Trip template) {
+    final start = _today().add(const Duration(days: 30));
+    final end = start.add(Duration(days: _templateLengthDays(template) - 1));
+    final budgetCategories = template.budgetCategories.isEmpty
+        ? _defaultBudgetCategories(
+            budget: template.budget,
+            actual: 0,
+            items: template.items,
+            bookings: template.bookings,
+          )
+        : template.budgetCategories
+              .map((category) => category.copyWith(actual: 0))
+              .toList();
+
+    return Trip(
+      id: 't-${DateTime.now().millisecondsSinceEpoch}',
+      title: template.title.trim().isEmpty
+          ? template.destination
+          : template.title,
+      destination: template.destination,
+      placeId: template.placeId,
+      formattedAddress: template.formattedAddress,
+      latitude: template.latitude,
+      longitude: template.longitude,
+      originLabel: template.originLabel,
+      originLatitude: template.originLatitude,
+      originLongitude: template.originLongitude,
+      startDate: _dateKey(start),
+      endDate: _dateKey(end),
+      budget: template.budget,
+      spent: 0,
+      groupType: template.groupType,
+      currency: template.currency,
+      status: TripStatus.upcoming,
+      images: template.images.isEmpty
+          ? _imagesForDestination(template.destination)
+          : template.images,
+      items: template.items,
+      bookings: template.bookings,
+      checklist: template.checklist,
+      preferences: template.preferences,
+      budgetCategories: budgetCategories,
+    );
+  }
+
+  Future<void> _confirmTemplateFromPreview(
+    BuildContext sheetContext,
+    _TripTemplate template,
+  ) async {
+    final sheetNavigator = Navigator.of(sheetContext);
+    final confirmed = await showDialog<bool>(
+      context: sheetContext,
+      builder: (context) => AlertDialog(
+        title: Text(appText(context, 'Use this template?')),
+        content: Text(
+          appText(
+            context,
+            'A new itinerary will be created from this preview. You can edit dates, bookings, and activities after it is created.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(appText(context, 'Cancel')),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.check_rounded),
+            label: Text(appText(context, 'Use template')),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || confirmed != true) return;
+    sheetNavigator.pop();
+    widget.onGenerate(_tripFromTemplate(template.trip));
+  }
+
+  Future<void> _showTemplatePreview(_TripTemplate template) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _TemplatePreviewSheet(
+        template: template,
+        lengthDays: _templateLengthDays(template.trip),
+        onConfirm: () => _confirmTemplateFromPreview(context, template),
+      ),
+    );
+  }
+
+  bool _isManualStepValid(int index) {
+    return switch (index) {
+      0 => _destination.text.trim().isNotEmpty,
+      1 => _parsedBudget() > 0,
+      2 => _group.trim().isNotEmpty && _preferences.isNotEmpty,
+      3 => true,
+      _ => false,
+    };
+  }
+
+  bool _isManualStepComplete(int index) {
+    if (!_manualCompletedSteps.contains(index)) return false;
+    return _isManualStepValid(index);
+  }
+
+  String _manualStepError(int index) {
+    return switch (index) {
+      0 => 'Enter a destination before continuing.',
+      1 => 'Enter a budget greater than zero before continuing.',
+      2 => 'Choose at least one travel style before continuing.',
+      _ => '',
+    };
+  }
+
+  void _toggleManualStep(int index) {
+    setState(() {
+      _manualExpandedStep = _manualExpandedStep == index ? null : index;
+      _formError = null;
+    });
+  }
+
+  void _completeManualStep(int index) {
+    if (!_isManualStepValid(index)) {
+      setState(() => _formError = _manualStepError(index));
+      return;
+    }
+
+    setState(() {
+      _manualCompletedSteps.add(index);
+      _manualExpandedStep = index < 3 ? index + 1 : null;
+      _formError = null;
+    });
+  }
+
+  void _applyAiRouteIdea({
+    required String destination,
+    String? origin,
+    List<String> preferences = const [],
+  }) {
+    setState(() {
+      _destination.text = destination;
+      if (origin != null) _startLocation.text = origin;
+      _selectedPlace = null;
+      _selectedOriginPlace = null;
+      _placeSuggestions = const [];
+      _originSuggestions = const [];
+      _preferences.addAll(preferences);
+      _formError = null;
+    });
+  }
+
+  void _applyAiTimingIdea({
+    required int startOffsetDays,
+    required int days,
+    required String budget,
+    required String currency,
+  }) {
+    final start = _today().add(Duration(days: startOffsetDays));
+    setState(() {
+      _startDate = start;
+      _endDate = start.add(Duration(days: math.max(1, days) - 1));
+      _budget.text = budget;
+      _currency = currency;
+      _hasBudgetText = budget.trim().isNotEmpty;
+      _formError = null;
+    });
+  }
+
+  void _applyAiStyleIdea({
+    required String group,
+    required List<String> preferences,
+  }) {
+    setState(() {
+      _group = group;
+      _preferences.addAll(preferences);
+      _formError = null;
+    });
+  }
+
+  void _applyAiBookingIdea({
+    required String airline,
+    required String confirmation,
+  }) {
+    setState(() {
+      _airline.text = airline;
+      _flightConfirmation.text = confirmation;
+      _formError = null;
+    });
+  }
+
+  Widget _buildAiTripBuilderPage(BuildContext context) {
+    final tripLength = math.max(1, _endDate.difference(_startDate).inDays + 1);
+    final budgetLabel = _hasBudgetText
+        ? '$_currency ${_budget.text}'
+        : _budgetHintText(context);
+    final horizontalPadding = _responsiveHorizontalPadding(context);
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final filterQuality = PerformanceScope.maybeSettingsOf(
+      context,
+    ).filterQuality;
+
+    return ScreenScaffold(
+      child: Column(
+        children: [
+          _ManualTopBar(
+            title: 'AI Trip Builder',
+            onBack: () => setState(() => _mode = 0),
+          ),
+          Expanded(
+            child: ListView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                22,
+                horizontalPadding,
+                34 + bottomInset,
+              ),
+              children: [
+                _AiBuilderHero(
+                  destination: _destination.text.trim(),
+                  tripLength: tripLength,
+                  budgetLabel: _hasBudgetText ? budgetLabel : '',
+                  selectedSuggestionCount: _planningGoalIds.length,
+                ),
+                const SizedBox(height: 14),
+                _AiPhotoPickerCard(
+                  selectedImage: _selectedImage,
+                  galleryOptions: _galleryOptions.take(3).toList(),
+                  filterQuality: filterQuality,
+                  onSelectImage: (image) => setState(() {
+                    _selectedImage = image;
+                    _formError = null;
+                  }),
+                  onTap: _showImagePicker,
+                ),
+                const SizedBox(height: 16),
+                _AiSuggestionDeck(
+                  goals: _planningGoals,
+                  selectedGoalIds: _planningGoalIds,
+                  onToggle: _togglePlanningGoal,
+                ),
+                const SizedBox(height: 16),
+                _AiStepCard(
+                  icon: Icons.route_rounded,
+                  title: 'Route brief',
+                  suggestion:
+                      'AI will use the destination and starting point to cluster nearby stops and reduce backtracking.',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _AiChoiceGrid(
+                        choices: [
+                          _AiChoice(
+                            icon: Icons.temple_buddhist_rounded,
+                            title: 'Culture route',
+                            text: 'Kyoto temples, food lanes, low backtrack',
+                            onTap: () => _applyAiRouteIdea(
+                              destination: 'Kyoto, Japan',
+                              origin: 'Kyoto Station',
+                              preferences: ['Culture', 'Food', 'Walking'],
+                            ),
+                          ),
+                          _AiChoice(
+                            icon: Icons.restaurant_rounded,
+                            title: 'Food-first city',
+                            text: 'Tokyo neighborhoods and market meals',
+                            onTap: () => _applyAiRouteIdea(
+                              destination: 'Tokyo, Japan',
+                              origin: 'Shinjuku Station',
+                              preferences: ['Food', 'Shopping', 'Nightlife'],
+                            ),
+                          ),
+                          _AiChoice(
+                            icon: Icons.beach_access_rounded,
+                            title: 'Slow reset',
+                            text: 'Bali nature, beaches, and relaxed pacing',
+                            onTap: () => _applyAiRouteIdea(
+                              destination: 'Bali, Indonesia',
+                              origin: 'Ngurah Rai Airport',
+                              preferences: ['Nature', 'Relax', 'Culture'],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _AiInputGrid(
+                        children: [
+                          _AiInputCard(
+                            label: 'Destination',
+                            icon: Icons.travel_explore_rounded,
+                            controller: _destination,
+                            hint: 'Tokyo, Japan',
+                            onChanged: _schedulePlaceSearch,
+                            loading: _isSearching,
+                          ),
+                          _AiInputCard(
+                            label: 'Start from',
+                            icon: Icons.trip_origin_rounded,
+                            controller: _startLocation,
+                            hint: 'Current location or Hsinchu',
+                            onChanged: _scheduleOriginSearch,
+                            loading: _isOriginSearching,
+                            action: IconButton(
+                              tooltip: appText(context, 'Use current location'),
+                              onPressed: _isOriginSearching
+                                  ? null
+                                  : _useCurrentStartLocation,
+                              icon: const Icon(Icons.my_location_rounded),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_selectedPlace != null) ...[
+                        const SizedBox(height: 10),
+                        SelectedPlaceCard(place: _selectedPlace!),
+                      ] else if (_placeSuggestions.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        PlaceSuggestionList(
+                          suggestions: _placeSuggestions,
+                          onSelect: _selectPlace,
+                        ),
+                      ],
+                      if (_selectedOriginPlace != null) ...[
+                        const SizedBox(height: 10),
+                        SelectedPlaceCard(place: _selectedOriginPlace!),
+                      ] else if (_originSuggestions.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        PlaceSuggestionList(
+                          suggestions: _originSuggestions,
+                          onSelect: _selectOriginPlace,
+                        ),
+                      ] else if (_tripStartLocation?.isCurrentLocation ==
+                          true) ...[
+                        const SizedBox(height: 10),
+                        const _AiContextNote(
+                          icon: Icons.my_location_rounded,
+                          title: 'Current location',
+                          text:
+                              'Used for Day 1 transport and the return-home leg.',
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _AiStepCard(
+                  icon: Icons.auto_graph_rounded,
+                  title: 'Timing and budget',
+                  suggestion:
+                      'AI will balance the daily pace against your budget, dates, and travel party.',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _AiChoiceGrid(
+                        choices: [
+                          _AiChoice(
+                            icon: Icons.flash_on_rounded,
+                            title: 'Long weekend',
+                            text: '4 days, compact route, USD 1800',
+                            onTap: () => _applyAiTimingIdea(
+                              startOffsetDays: 21,
+                              days: 4,
+                              budget: '1800',
+                              currency: 'USD',
+                            ),
+                          ),
+                          _AiChoice(
+                            icon: Icons.route_rounded,
+                            title: 'Balanced week',
+                            text: '6 days with buffer time, USD 3500',
+                            onTap: () => _applyAiTimingIdea(
+                              startOffsetDays: 30,
+                              days: 6,
+                              budget: '3500',
+                              currency: 'USD',
+                            ),
+                          ),
+                          _AiChoice(
+                            icon: Icons.savings_rounded,
+                            title: 'Budget aware',
+                            text: '5 days, low-cost picks, TWD 28000',
+                            onTap: () => _applyAiTimingIdea(
+                              startOffsetDays: 14,
+                              days: 5,
+                              budget: '28000',
+                              currency: 'TWD',
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _AiDateRangeCard(
+                        startDate: _startDate,
+                        endDate: _endDate,
+                        tripLength: tripLength,
+                        onTap: _pickDateRange,
+                      ),
+                      const SizedBox(height: 12),
+                      _AiInputGrid(
+                        children: [
+                          _AiInputCard(
+                            label: 'Total budget',
+                            icon: Icons.payments_rounded,
+                            controller: _budget,
+                            hint: _budgetHintText(context),
+                            keyboardType: TextInputType.number,
+                            inputFormatters: const [
+                              _GroupedNumberInputFormatter(),
+                            ],
+                          ),
+                          _AiPickerCard(
+                            label: 'Currency',
+                            icon: Icons.payments_outlined,
+                            value: _currency,
+                            options: _currencyOptions,
+                            onChanged: (value) => setState(() {
+                              _currency = value;
+                              _formError = null;
+                            }),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _AiStepCard(
+                  icon: Icons.psychology_rounded,
+                  title: 'AI taste profile',
+                  suggestion:
+                      'AI will prioritize the selected tags when choosing neighborhoods, meals, and activity types.',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _AiChoiceGrid(
+                        choices: [
+                          _AiChoice(
+                            icon: Icons.group_rounded,
+                            title: 'Friends energy',
+                            text: 'Food, shopping, nightlife, flexible pace',
+                            onTap: () => _applyAiStyleIdea(
+                              group: 'Friends',
+                              preferences: ['Food', 'Shopping', 'Nightlife'],
+                            ),
+                          ),
+                          _AiChoice(
+                            icon: Icons.family_restroom_rounded,
+                            title: 'Family comfort',
+                            text: 'Easy pace, culture, rain-ready stops',
+                            onTap: () => _applyAiStyleIdea(
+                              group: 'Family',
+                              preferences: ['Culture', 'Relax', 'Museums'],
+                            ),
+                          ),
+                          _AiChoice(
+                            icon: Icons.hiking_rounded,
+                            title: 'Active explorer',
+                            text: 'Nature, walking routes, adventure',
+                            onTap: () => _applyAiStyleIdea(
+                              group: 'Tour',
+                              preferences: ['Nature', 'Adventure', 'Walking'],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _AiInputGrid(
+                        children: [
+                          _AiPickerCard(
+                            label: 'Who is coming',
+                            icon: Icons.group_rounded,
+                            value: _group,
+                            options: _groupOptions,
+                            onChanged: (value) =>
+                                setState(() => _group = value),
+                          ),
+                          _AiCustomTagCard(
+                            controller: _customPreference,
+                            onAdd: _addCustomPreference,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _AiTagCloudCard(
+                        title: 'Trip Type',
+                        preferences: _visiblePreferenceOptions,
+                        selectedPreferences: _preferences,
+                        onToggle: _togglePreference,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _AiStepCard(
+                  icon: Icons.flight_takeoff_rounded,
+                  title: 'Booking clues',
+                  suggestion:
+                      'Optional booking details help AI anchor arrival and departure timing more accurately.',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _AiChoiceGrid(
+                        choices: [
+                          _AiChoice(
+                            icon: Icons.flight_land_rounded,
+                            title: 'No booking yet',
+                            text: 'Let AI keep arrival and return flexible',
+                            onTap: () => _applyAiBookingIdea(
+                              airline: '',
+                              confirmation: '',
+                            ),
+                          ),
+                          _AiChoice(
+                            icon: Icons.flight_takeoff_rounded,
+                            title: 'Flight booked',
+                            text: 'Save space for airline and confirmation',
+                            onTap: () => _applyAiBookingIdea(
+                              airline: 'Flight booked',
+                              confirmation: 'Add confirmation',
+                            ),
+                          ),
+                          _AiChoice(
+                            icon: Icons.schedule_rounded,
+                            title: 'Timing matters',
+                            text: 'AI should leave arrival-day buffer time',
+                            onTap: () => _applyAiBookingIdea(
+                              airline: 'Arrival timing important',
+                              confirmation: '',
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _AiInputGrid(
+                        children: [
+                          _AiInputCard(
+                            label: 'Airline optional',
+                            icon: Icons.flight_takeoff_rounded,
+                            controller: _airline,
+                            hint: 'Flight booking',
+                          ),
+                          _AiInputCard(
+                            label: 'Confirmation',
+                            icon: Icons.confirmation_number_rounded,
+                            controller: _flightConfirmation,
+                            hint: 'Confirmation number',
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                if (_usedFallbackPlan) ...[
+                  const SizedBox(height: 16),
+                  FormNotice(
+                    message: appText(
+                      context,
+                      'AI generation was unavailable, so a local draft plan was created.',
+                    ),
+                  ),
+                ],
+                if (_formError != null) ...[
+                  const SizedBox(height: 16),
+                  FormNotice(message: _formError!),
+                ],
+                const SizedBox(height: 22),
+                if (_isGenerating)
+                  const GeneratingTripPanel()
+                else
+                  _AiGenerateFooter(onGenerate: _generateTrip),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildManualTripPage(BuildContext context) {
+    final tripLength = math.max(1, _endDate.difference(_startDate).inDays + 1);
+    final budgetLabel = _hasBudgetText
+        ? '$_currency ${_budget.text}'
+        : _budgetHintText(context);
+    final horizontalPadding = _responsiveHorizontalPadding(context);
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final manualStepComplete = List.generate(4, _isManualStepComplete);
+    final completedStepCount = manualStepComplete.where((step) => step).length;
+
+    return ScreenScaffold(
+      child: Column(
+        children: [
+          _ManualTopBar(
+            title: 'Create Manually',
+            onBack: () => setState(() => _mode = 0),
+          ),
+          Expanded(
+            child: ListView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                22,
+                horizontalPadding,
+                34 + bottomInset,
+              ),
+              children: [
+                Text(
+                  appText(context, 'Trip Basics'),
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  appText(context, "Let's start with the basics"),
+                  style: const TextStyle(
+                    color: Color(0xFF42474C),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _ManualPreviewCard(
+                  completedSections: completedStepCount,
+                  totalSections: manualStepComplete.length,
+                  destination: _destination.text.trim(),
+                  startDate: _dateKey(_startDate),
+                  endDate: _dateKey(_endDate),
+                  tripLength: tripLength,
+                  budget: _hasBudgetText ? budgetLabel : '',
+                  group: _group,
+                  preferences: _preferences.toList(),
+                ),
+                const SizedBox(height: 14),
+                const _ManualInfoBanner(),
+                const SizedBox(height: 20),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final showRail = constraints.maxWidth >= 880;
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (showRail) ...[
+                          SizedBox(
+                            width: 260,
+                            child: _ManualStepRail(
+                              expandedStep: _manualExpandedStep,
+                              completedSteps: manualStepComplete,
+                            ),
+                          ),
+                          const SizedBox(width: 30),
+                        ],
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _ManualAccordionSection(
+                                icon: Icons.route_rounded,
+                                title: 'Route',
+                                subtitle:
+                                    'Set where the trip goes and where the first travel leg starts.',
+                                expanded: _manualExpandedStep == 0,
+                                complete: manualStepComplete[0],
+                                onToggle: () => _toggleManualStep(0),
+                                onContinue: () => _completeManualStep(0),
+                                children: [
+                                  _ManualGrid(
+                                    minTileWidth: 250,
+                                    children: [
+                                      _ManualFieldCard(
+                                        label: 'Destination',
+                                        trailing: _isSearching
+                                            ? const SizedBox.square(
+                                                dimension: 18,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                    ),
+                                              )
+                                            : const Icon(
+                                                Icons.location_on_rounded,
+                                              ),
+                                        child: _ManualTextField(
+                                          controller: _destination,
+                                          hint: 'Where do you want to go?',
+                                          onChanged: _schedulePlaceSearch,
+                                        ),
+                                      ),
+                                      _ManualFieldCard(
+                                        label: 'Start from',
+                                        icon: Icons.trip_origin_rounded,
+                                        trailing: IconButton(
+                                          tooltip: appText(
+                                            context,
+                                            'Use current location',
+                                          ),
+                                          onPressed: _isOriginSearching
+                                              ? null
+                                              : _useCurrentStartLocation,
+                                          icon: const Icon(
+                                            Icons.my_location_rounded,
+                                          ),
+                                        ),
+                                        child: _ManualTextField(
+                                          controller: _startLocation,
+                                          hint: 'Current location or Hsinchu',
+                                          onChanged: _scheduleOriginSearch,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (_selectedPlace != null) ...[
+                                    const SizedBox(height: 10),
+                                    SelectedPlaceCard(place: _selectedPlace!),
+                                  ] else if (_placeSuggestions.isNotEmpty) ...[
+                                    const SizedBox(height: 10),
+                                    PlaceSuggestionList(
+                                      suggestions: _placeSuggestions,
+                                      onSelect: _selectPlace,
+                                    ),
+                                  ],
+                                  if (_selectedOriginPlace != null) ...[
+                                    const SizedBox(height: 10),
+                                    SelectedPlaceCard(
+                                      place: _selectedOriginPlace!,
+                                    ),
+                                  ] else if (_originSuggestions.isNotEmpty) ...[
+                                    const SizedBox(height: 10),
+                                    PlaceSuggestionList(
+                                      suggestions: _originSuggestions,
+                                      onSelect: _selectOriginPlace,
+                                    ),
+                                  ] else if (_tripStartLocation
+                                          ?.isCurrentLocation ==
+                                      true) ...[
+                                    const SizedBox(height: 10),
+                                    const _ManualNoticeCard(
+                                      icon: Icons.my_location_rounded,
+                                      title: 'Current location',
+                                      text:
+                                          'Used for Day 1 transport and the return-home leg.',
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              _ManualAccordionSection(
+                                icon: Icons.calendar_month_rounded,
+                                title: 'Dates and budget',
+                                subtitle:
+                                    'One range picker controls the start date, end date, and duration.',
+                                expanded: _manualExpandedStep == 1,
+                                complete: manualStepComplete[1],
+                                onToggle: () => _toggleManualStep(1),
+                                onContinue: () => _completeManualStep(1),
+                                children: [
+                                  _ManualDateRangeCard(
+                                    startDate: _startDate,
+                                    endDate: _endDate,
+                                    tripLength: tripLength,
+                                    onTap: _pickDateRange,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  _ManualGrid(
+                                    minTileWidth: 220,
+                                    children: [
+                                      _ManualFieldCard(
+                                        label: 'Total budget',
+                                        icon: Icons.payments_rounded,
+                                        child: _ManualTextField(
+                                          controller: _budget,
+                                          hint: budgetLabel,
+                                          keyboardType: TextInputType.number,
+                                          inputFormatters: const [
+                                            _GroupedNumberInputFormatter(),
+                                          ],
+                                        ),
+                                      ),
+                                      _ManualDropdownCard(
+                                        label: 'Currency',
+                                        value: _currency,
+                                        icon: Icons.expand_more_rounded,
+                                        options: _currencyOptions,
+                                        onChanged: (value) => setState(() {
+                                          _currency = value;
+                                          _formError = null;
+                                        }),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              _ManualAccordionSection(
+                                icon: Icons.tune_rounded,
+                                title: 'Travel style',
+                                subtitle:
+                                    'Choose the travel party and the tags that should shape the starter trip.',
+                                expanded: _manualExpandedStep == 2,
+                                complete: manualStepComplete[2],
+                                onToggle: () => _toggleManualStep(2),
+                                onContinue: () => _completeManualStep(2),
+                                children: [
+                                  _ManualGrid(
+                                    minTileWidth: 220,
+                                    children: [
+                                      _ManualDropdownCard(
+                                        label: 'Who is coming',
+                                        value: _group,
+                                        icon: Icons.group_rounded,
+                                        options: _groupOptions,
+                                        onChanged: (value) =>
+                                            setState(() => _group = value),
+                                      ),
+                                      _ManualCustomTagCard(
+                                        controller: _customPreference,
+                                        onAdd: _addCustomPreference,
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  _ManualChipCard(
+                                    title: 'Trip Type',
+                                    preferences: _visiblePreferenceOptions,
+                                    selectedPreferences: _preferences,
+                                    onToggle: _togglePreference,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              _ManualAccordionSection(
+                                icon: Icons.flight_takeoff_rounded,
+                                title: 'Optional booking details',
+                                subtitle:
+                                    'Add flight details now, or leave them blank and fill bookings later.',
+                                expanded: _manualExpandedStep == 3,
+                                complete: manualStepComplete[3],
+                                onToggle: () => _toggleManualStep(3),
+                                onContinue: () => _completeManualStep(3),
+                                continueLabel: 'Done',
+                                children: [
+                                  _ManualGrid(
+                                    minTileWidth: 250,
+                                    children: [
+                                      _ManualFieldCard(
+                                        label: 'Airline optional',
+                                        icon: Icons.flight_takeoff_rounded,
+                                        child: _ManualTextField(
+                                          controller: _airline,
+                                          hint: 'Flight booking',
+                                        ),
+                                      ),
+                                      _ManualFieldCard(
+                                        label: 'Confirmation',
+                                        icon: Icons.confirmation_number_rounded,
+                                        child: _ManualTextField(
+                                          controller: _flightConfirmation,
+                                          hint: 'Confirmation number',
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              if (_formError != null) ...[
+                                const SizedBox(height: 16),
+                                FormNotice(message: _formError!),
+                              ],
+                              const SizedBox(height: 22),
+                              _ManualFooterActions(
+                                onCancel: () => setState(() => _mode = 0),
+                                onCreate: _createManualTrip,
+                                isCreating: _isGenerating,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_mode == 0) {
@@ -1673,6 +2830,50 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               title: 'Create Manually',
               text: 'Enter destination, dates, budget, people, and tags.',
               onTap: () => setState(() => _mode = 2),
+            ),
+            const SizedBox(height: 12),
+            CreateOptionCard(
+              icon: Icons.work_rounded,
+              title: 'Use Saved Trip Template',
+              text: 'Pick from past trips or UI-only online recommendations.',
+              onTap: _openTemplatePicker,
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_mode == 4) {
+      final pastTemplates = _pastTripTemplates;
+      return ScreenScaffold(
+        child: ListView(
+          padding: _responsivePagePadding(context, top: 18),
+          children: [
+            TopBar(
+              title: 'Trip templates',
+              onBack: () => setState(() => _mode = 0),
+            ),
+            const SizedBox(height: 16),
+            _TemplatePickerHero(
+              pastCount: pastTemplates.length,
+              recommendationCount: _recommendedTemplates.length,
+            ),
+            const SizedBox(height: 22),
+            const SectionHeader(title: 'Past trip templates'),
+            const SizedBox(height: 10),
+            if (pastTemplates.isEmpty)
+              const _EmptyTemplateState()
+            else
+              _TemplateCardGrid(
+                templates: pastTemplates,
+                onPreview: _showTemplatePreview,
+              ),
+            const SizedBox(height: 24),
+            const SectionHeader(title: 'Online recommendations'),
+            const SizedBox(height: 10),
+            _TemplateCardGrid(
+              templates: _recommendedTemplates,
+              onPreview: _showTemplatePreview,
             ),
           ],
         ),
@@ -1840,280 +3041,1169 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       );
     }
 
-    return ScreenScaffold(
-      child: ListView(
-        padding: _responsivePagePadding(context, top: 18),
+    if (_mode == 2) {
+      return _buildManualTripPage(context);
+    }
+
+    return _buildAiTripBuilderPage(context);
+  }
+}
+
+String _templateFormatNumber(int value) {
+  final text = value.toString();
+  final buffer = StringBuffer();
+  for (var i = 0; i < text.length; i++) {
+    final remaining = text.length - i;
+    buffer.write(text[i]);
+    if (remaining > 1 && remaining % 3 == 1) buffer.write(',');
+  }
+  return buffer.toString();
+}
+
+String _templateBudgetLabel(Trip trip) =>
+    '${trip.currency} ${_templateFormatNumber(trip.budget)}';
+
+String _templateImageFor(Trip trip) => trip.images.isNotEmpty
+    ? trip.images.first
+    : _imagesForDestination(trip.destination).first;
+
+class _TemplatePickerHero extends StatelessWidget {
+  const _TemplatePickerHero({
+    required this.pastCount,
+    required this.recommendationCount,
+  });
+
+  final int pastCount;
+  final int recommendationCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      padding: const EdgeInsets.all(16),
+      child: Row(
         children: [
-          TopBar(
-            title: _mode == 1 ? 'AI Trip Builder' : 'Create Manually',
-            onBack: () => setState(() => _mode = 0),
+          const IconBadge(icon: Icons.view_agenda_rounded, size: 52),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, 'Choose a starting point'),
+                  style: const TextStyle(
+                    color: _primary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  appText(
+                    context,
+                    'Preview saved past trips or recommendation cards before creating the itinerary.',
+                  ),
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    SmallPill(label: '$pastCount past'),
+                    SmallPill(label: '$recommendationCount recommended'),
+                  ],
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 18),
-          if (_mode == 1) const AnimatedGlobe(),
-          if (_mode == 1) ...[
-            const SizedBox(height: 18),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _showImagePicker,
-              child: SizedBox(
-                height: 128,
-                child: _selectedImage == null
-                    ? GlassPanel(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.add_photo_alternate_rounded,
-                              color: _accent,
-                              size: 30,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              appText(context, 'ADD PRIMARY PHOTO'),
-                              style: const TextStyle(
-                                color: _secondary,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : ClipRRect(
-                        borderRadius: BorderRadius.circular(24),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Image.network(
-                              _selectedImage!,
-                              fit: BoxFit.cover,
-                              filterQuality: PerformanceScope.maybeSettingsOf(
-                                context,
-                              ).filterQuality,
-                            ),
-                            Container(
-                              color: Colors.black.withValues(alpha: .18),
-                            ),
-                            const Center(
-                              child: Icon(
-                                Icons.add_photo_alternate_rounded,
-                                color: Colors.white,
-                                size: 32,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyTemplateState extends StatelessWidget {
+  const _EmptyTemplateState();
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      child: Row(
+        children: [
+          const IconBadge(icon: Icons.history_toggle_off_rounded, size: 44),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              appText(
+                context,
+                'No past trips yet. Completed trips will appear here as reusable templates.',
+              ),
+              style: const TextStyle(
+                color: _secondary,
+                fontWeight: FontWeight.w800,
+                height: 1.35,
               ),
             ),
-            const SizedBox(height: 14),
-          ] else ...[
-            GlassPanel(
-              child: Row(
-                children: [
-                  const IconBadge(icon: Icons.edit_note_rounded, size: 46),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TemplateCardGrid extends StatelessWidget {
+  const _TemplateCardGrid({required this.templates, required this.onPreview});
+
+  final List<_TripTemplate> templates;
+  final ValueChanged<_TripTemplate> onPreview;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final columns = width >= 1000
+            ? 3
+            : width >= 640
+            ? 2
+            : 1;
+        const spacing = 12.0;
+        final itemWidth = (width - spacing * (columns - 1)) / columns;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final template in templates)
+              SizedBox(
+                width: itemWidth,
+                child: _TemplateCard(
+                  template: template,
+                  onPreview: () => onPreview(template),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _TemplateCard extends StatelessWidget {
+  const _TemplateCard({required this.template, required this.onPreview});
+
+  final _TripTemplate template;
+  final VoidCallback onPreview;
+
+  @override
+  Widget build(BuildContext context) {
+    final trip = template.trip;
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(24),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onPreview,
+        child: Ink(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFEFF3F6)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .025),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
+                child: AspectRatio(
+                  aspectRatio: 1.75,
+                  child: Image.network(
+                    _templateImageFor(trip),
+                    fit: BoxFit.cover,
+                    filterQuality: PerformanceScope.maybeSettingsOf(
+                      context,
+                    ).filterQuality,
+                    errorBuilder: (_, __, ___) =>
+                        const ColoredBox(color: _primary),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        Text(
-                          appText(context, 'Manual starter trip'),
-                          style: const TextStyle(
-                            color: _primary,
-                            fontWeight: FontWeight.w900,
-                          ),
+                        SmallPill(label: template.badge),
+                        SmallPill(label: template.source),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      appText(
+                        context,
+                        trip.title.trim().isEmpty
+                            ? trip.destination
+                            : trip.title,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _primary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      appText(context, trip.destination),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _secondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      appText(context, template.description),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _secondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _TemplateMetaPill(
+                          icon: Icons.calendar_month_rounded,
+                          label: '${trip.startDate} / ${trip.endDate}',
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          appText(
-                            context,
-                            'No AI call. This starts with an empty schedule you can build yourself.',
-                          ),
-                          style: const TextStyle(
-                            color: _secondary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            height: 1.3,
-                          ),
+                        _TemplateMetaPill(
+                          icon: Icons.payments_rounded,
+                          label: _templateBudgetLabel(trip),
+                        ),
+                        _TemplateMetaPill(
+                          icon: Icons.route_rounded,
+                          label: '${trip.items.length} stops',
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: onPreview,
+                        icon: const Icon(Icons.visibility_rounded),
+                        label: Text(
+                          appText(context, 'Preview itinerary'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TemplatePreviewSheet extends StatelessWidget {
+  const _TemplatePreviewSheet({
+    required this.template,
+    required this.lengthDays,
+    required this.onConfirm,
+  });
+
+  final _TripTemplate template;
+  final int lengthDays;
+  final VoidCallback onConfirm;
+
+  @override
+  Widget build(BuildContext context) {
+    final trip = template.trip;
+    final height = MediaQuery.sizeOf(context).height;
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final title = trip.title.trim().isEmpty ? trip.destination : trip.title;
+
+    return SafeArea(
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 820),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              _responsiveHorizontalPadding(context),
+              16,
+              _responsiveHorizontalPadding(context),
+              16 + bottomInset,
+            ),
+            child: Container(
+              constraints: BoxConstraints(
+                maxHeight: math.min(height * .9, 760),
+              ),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(28),
+              ),
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 10, 10),
+                    child: Row(
+                      children: [
+                        IconBadge(
+                          icon: template.source == 'Past trip'
+                              ? Icons.history_rounded
+                              : Icons.public_rounded,
+                          size: 44,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                appText(context, title),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _primary,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              Text(
+                                appText(context, template.source),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _secondary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(22),
+                            child: AspectRatio(
+                              aspectRatio: 1.9,
+                              child: Image.network(
+                                _templateImageFor(trip),
+                                fit: BoxFit.cover,
+                                filterQuality: PerformanceScope.maybeSettingsOf(
+                                  context,
+                                ).filterQuality,
+                                errorBuilder: (_, __, ___) =>
+                                    const ColoredBox(color: _primary),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              SmallPill(label: '$lengthDays days'),
+                              SmallPill(label: _templateBudgetLabel(trip)),
+                              SmallPill(label: trip.groupType),
+                              for (final tag in trip.preferences.take(3))
+                                SmallPill(label: tag),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            appText(context, template.description),
+                            style: const TextStyle(
+                              color: _secondary,
+                              fontWeight: FontWeight.w800,
+                              height: 1.35,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          const LabelText('Itinerary preview'),
+                          const SizedBox(height: 10),
+                          for (final item in trip.items.take(10)) ...[
+                            _PreviewScheduleRow(item: item),
+                            const SizedBox(height: 8),
+                          ],
+                          if (trip.bookings.isNotEmpty) ...[
+                            const SizedBox(height: 14),
+                            const LabelText('Bookings'),
+                            const SizedBox(height: 10),
+                            for (final booking in trip.bookings.take(3)) ...[
+                              _PreviewBookingRow(booking: booking),
+                              const SizedBox(height: 8),
+                            ],
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: PrimaryButton(
+                      label: 'Use this template',
+                      icon: Icons.check_rounded,
+                      onPressed: onConfirm,
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TemplateMetaPill extends StatelessWidget {
+  const _TemplateMetaPill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFEFF3F6)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: _secondary),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              appText(context, label),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _secondary,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviewScheduleRow extends StatelessWidget {
+  const _PreviewScheduleRow({required this.item});
+
+  final ScheduleItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          IconBadge(icon: item.type, size: 38),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, 'Day ${item.day} / ${item.time}'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  appText(context, item.activity),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ],
+            ),
+          ),
+          if (item.cost > 0) ...[
+            const SizedBox(width: 8),
+            Text(
+              _templateFormatNumber(item.cost),
+              style: const TextStyle(
+                color: _primary,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
           ],
-          TextField(
-            controller: _destination,
-            onChanged: _schedulePlaceSearch,
-            textInputAction: TextInputAction.next,
-            decoration: InputDecoration(
-              labelText: appText(context, 'Destination'),
-              hintText: appText(context, 'Tokyo, Japan'),
-              suffixIcon: _isSearching
-                  ? const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: SizedBox(
-                        width: 18,
-                        height: 18,
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviewBookingRow extends StatelessWidget {
+  const _PreviewBookingRow({required this.booking});
+
+  final Booking booking;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _accent.withValues(alpha: .14),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          IconBadge(icon: booking.icon, size: 38),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, booking.title),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  appText(context, '${booking.date} / ${booking.time}'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiChoice {
+  const _AiChoice({
+    required this.icon,
+    required this.title,
+    required this.text,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String text;
+  final VoidCallback onTap;
+}
+
+class _AiChoiceGrid extends StatelessWidget {
+  const _AiChoiceGrid({required this.choices});
+
+  final List<_AiChoice> choices;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 780
+            ? 3
+            : constraints.maxWidth >= 520
+            ? 2
+            : 1;
+        final tileWidth =
+            (constraints.maxWidth - (10 * (columns - 1))) / columns;
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final choice in choices)
+              SizedBox(
+                width: tileWidth,
+                child: _AiChoiceCard(choice: choice),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AiChoiceCard extends StatelessWidget {
+  const _AiChoiceCard({required this.choice});
+
+  final _AiChoice choice;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: choice.onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 116),
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF4F8FA),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: const Color(0xFFACCBE0).withValues(alpha: .6),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      choice.icon,
+                      color: const Color(0xFF355872),
+                      size: 18,
+                    ),
+                  ),
+                  const Spacer(),
+                  const Icon(
+                    Icons.auto_awesome_rounded,
+                    color: Color(0xFF355872),
+                    size: 17,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                appText(context, choice.title),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF355872),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                appText(context, choice.text),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF42474C),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  height: 1.25,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiInputGrid extends StatelessWidget {
+  const _AiInputGrid({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 620 ? 2 : 1;
+        final tileWidth =
+            (constraints.maxWidth - (12 * (columns - 1))) / columns;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final child in children)
+              SizedBox(width: tileWidth, child: child),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AiInputCard extends StatelessWidget {
+  const _AiInputCard({
+    required this.label,
+    required this.icon,
+    required this.controller,
+    required this.hint,
+    this.onChanged,
+    this.keyboardType,
+    this.inputFormatters,
+    this.loading = false,
+    this.action,
+  });
+
+  final String label;
+  final IconData icon;
+  final TextEditingController controller;
+  final String hint;
+  final ValueChanged<String>? onChanged;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+  final bool loading;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 92),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8F0),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: const Color(0xFF355872), size: 19),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        appText(context, label),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF42474C),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (loading)
+                      const SizedBox.square(
+                        dimension: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-                    )
-                  : const Icon(Icons.travel_explore_rounded),
-            ),
-          ),
-          if (_selectedPlace != null) ...[
-            const SizedBox(height: 10),
-            SelectedPlaceCard(place: _selectedPlace!),
-          ] else if (_placeSuggestions.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            PlaceSuggestionList(
-              suggestions: _placeSuggestions,
-              onSelect: _selectPlace,
-            ),
-          ],
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _startLocation,
-                  onChanged: _scheduleOriginSearch,
+                  ],
+                ),
+                const SizedBox(height: 5),
+                TextField(
+                  controller: controller,
+                  onChanged: onChanged,
+                  keyboardType: keyboardType,
+                  inputFormatters: inputFormatters,
                   textInputAction: TextInputAction.next,
+                  style: const TextStyle(
+                    color: Color(0xFF1B1C19),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
                   decoration: InputDecoration(
-                    labelText: appText(context, 'Start from'),
-                    hintText: appText(context, 'Current location or Hsinchu'),
-                    prefixIcon: const Icon(Icons.trip_origin_rounded),
-                    suffixIcon: _isOriginSearching
-                        ? const Padding(
-                            padding: EdgeInsets.all(14),
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : null,
+                    isDense: true,
+                    hintText: appText(context, hint),
+                    hintStyle: TextStyle(
+                      color: const Color(0xFF72787C).withValues(alpha: .68),
+                      fontWeight: FontWeight.w600,
+                    ),
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              IconButton.filled(
-                tooltip: appText(context, 'Use current location'),
-                style: IconButton.styleFrom(
-                  backgroundColor: _primary,
-                  foregroundColor: Colors.white,
-                  fixedSize: const Size(54, 54),
-                ),
-                onPressed: _isOriginSearching ? null : _useCurrentStartLocation,
-                icon: const Icon(Icons.my_location_rounded),
-              ),
-            ],
-          ),
-          if (_selectedOriginPlace != null) ...[
-            const SizedBox(height: 10),
-            SelectedPlaceCard(place: _selectedOriginPlace!),
-          ] else if (_originSuggestions.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            PlaceSuggestionList(
-              suggestions: _originSuggestions,
-              onSelect: _selectOriginPlace,
+              ],
             ),
-          ] else if (_tripStartLocation?.isCurrentLocation == true) ...[
-            const SizedBox(height: 10),
-            GlassPanel(
-              child: Row(
+          ),
+          if (action != null) ...[const SizedBox(width: 8), action!],
+        ],
+      ),
+    );
+  }
+}
+
+class _AiPickerCard extends StatelessWidget {
+  const _AiPickerCard({
+    required this.label,
+    required this.icon,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+  });
+
+  final String label;
+  final IconData icon;
+  final String value;
+  final List<String> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      onSelected: onChanged,
+      position: PopupMenuPosition.under,
+      itemBuilder: (context) => [
+        for (final option in options)
+          PopupMenuItem(value: option, child: Text(appText(context, option))),
+      ],
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 92),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7F8F0),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, color: const Color(0xFF355872), size: 19),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const IconBadge(icon: Icons.my_location_rounded, size: 46),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          appText(context, 'Current location'),
-                          style: const TextStyle(
-                            color: _primary,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          appText(
-                            context,
-                            'Used for Day 1 transport and the return-home leg.',
-                          ),
-                          style: const TextStyle(
-                            color: _secondary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            height: 1.3,
-                          ),
-                        ),
-                      ],
+                  Text(
+                    appText(context, label),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF42474C),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    appText(context, value),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF355872),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
                 ],
               ),
             ),
+            const Icon(Icons.expand_more_rounded, color: Color(0xFF72787C)),
           ],
-          const SizedBox(height: 12),
-          DateRangeCard(
-            startDate: _startDate,
-            endDate: _endDate,
-            onPickRange: _pickDateRange,
-            onPickStart: _pickStartDate,
-            onPickEnd: _pickEndDate,
+        ),
+      ),
+    );
+  }
+}
+
+class _AiDateRangeCard extends StatelessWidget {
+  const _AiDateRangeCard({
+    required this.startDate,
+    required this.endDate,
+    required this.tripLength,
+    required this.onTap,
+  });
+
+  final DateTime startDate;
+  final DateTime endDate;
+  final int tripLength;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF7F8F0),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+            ),
           ),
-          const SizedBox(height: 12),
-          ResponsiveSplit(
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
             children: [
-              TextField(
-                controller: _budget,
-                keyboardType: TextInputType.number,
-                textInputAction: TextInputAction.next,
-                inputFormatters: const [_GroupedNumberInputFormatter()],
-                decoration: InputDecoration(
-                  labelText: appText(context, 'Total budget'),
-                  hintText: _budgetHintText(context),
-                  suffixText: _hasBudgetText ? _currency : null,
-                ),
+              _AiDateChip(
+                icon: Icons.today_rounded,
+                label: 'Start',
+                value: _dateKey(startDate),
               ),
-              FullTapDropdownField(
-                label: 'Currency',
-                value: _currency,
-                options: _currencyOptions,
-                onChanged: (value) => setState(() {
-                  _currency = value;
-                  _formError = null;
-                }),
+              _AiDateChip(
+                icon: Icons.event_available_rounded,
+                label: 'End',
+                value: _dateKey(endDate),
               ),
+              _AiDateChip(
+                icon: Icons.timelapse_rounded,
+                label: 'AI span',
+                value: '$tripLength ${tripLength == 1 ? 'day' : 'days'}',
+              ),
+              const _AiDateEditHint(),
             ],
           ),
-          const SizedBox(height: 12),
-          FullTapDropdownField(
-            label: 'Who is coming',
-            value: _group,
-            options: _groupOptions,
-            onChanged: (value) => setState(() => _group = value),
-          ),
-          const SizedBox(height: 12),
-          ResponsiveSplit(
-            children: [
-              TextField(
-                controller: _airline,
-                decoration: InputDecoration(
-                  labelText: appText(context, 'Airline optional'),
-                  prefixIcon: const Icon(Icons.flight_takeoff_rounded),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiDateChip extends StatelessWidget {
+  const _AiDateChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 128),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: const Color(0xFF355872), size: 17),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, label),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF72787C),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiDateEditHint extends StatelessWidget {
+  const _AiDateEditHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: const Color(0xFF355872),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.edit_calendar_rounded,
+            color: Colors.white,
+            size: 16,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            appText(context, 'Adjust dates'),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiCustomTagCard extends StatelessWidget {
+  const _AiCustomTagCard({required this.controller, required this.onAdd});
+
+  final TextEditingController controller;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return _AiInputCard(
+      label: 'Add AI instruction tag',
+      icon: Icons.label_rounded,
+      controller: controller,
+      hint: 'anime, halal food, wheelchair access',
+      action: IconButton.filled(
+        style: IconButton.styleFrom(
+          backgroundColor: const Color(0xFF355872),
+          foregroundColor: Colors.white,
+        ),
+        onPressed: onAdd,
+        icon: const Icon(Icons.add_rounded),
+      ),
+    );
+  }
+}
+
+class _AiTagCloudCard extends StatelessWidget {
+  const _AiTagCloudCard({
+    required this.title,
+    required this.preferences,
+    required this.selectedPreferences,
+    required this.onToggle,
+  });
+
+  final String title;
+  final List<String> preferences;
+  final Set<String> selectedPreferences;
+  final ValueChanged<String> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8F0),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.auto_awesome_rounded,
+                color: Color(0xFF355872),
+                size: 18,
               ),
-              TextField(
-                controller: _flightConfirmation,
-                decoration: InputDecoration(
-                  labelText: appText(context, 'Confirmation'),
-                  prefixIcon: const Icon(Icons.confirmation_number_rounded),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  appText(context, title),
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ],
@@ -2122,78 +4212,2187 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: _visiblePreferenceOptions.map((preference) {
-              final selected = _preferences.contains(preference);
-              return FilterChip(
-                selected: selected,
-                label: Text(appText(context, preference)),
-                onSelected: (_) => _togglePreference(preference),
-                selectedColor: _accent.withValues(alpha: .35),
-                checkmarkColor: _primary,
-                labelStyle: const TextStyle(fontWeight: FontWeight.w800),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 10),
-          Row(
             children: [
-              Expanded(
-                child: TextField(
-                  controller: _customPreference,
-                  decoration: InputDecoration(
-                    labelText: appText(context, 'Add custom tag'),
-                    hintText: appText(
-                      context,
-                      'e.g. anime, halal food, wheelchair access',
+              for (final preference in preferences)
+                FilterChip(
+                  selected: selectedPreferences.contains(preference),
+                  label: Text(appText(context, preference)),
+                  onSelected: (_) => onToggle(preference),
+                  selectedColor: const Color(0xFF355872),
+                  checkmarkColor: Colors.white,
+                  backgroundColor: Colors.white,
+                  side: BorderSide(
+                    color: selectedPreferences.contains(preference)
+                        ? const Color(0xFF355872)
+                        : const Color(0xFFC2C7CC).withValues(alpha: .45),
+                  ),
+                  labelStyle: TextStyle(
+                    color: selectedPreferences.contains(preference)
+                        ? Colors.white
+                        : const Color(0xFF42474C),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiContextNote extends StatelessWidget {
+  const _AiContextNote({
+    required this.icon,
+    required this.title,
+    required this.text,
+  });
+
+  final IconData icon;
+  final String title;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8FA),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: const Color(0xFF355872), size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: '${appText(context, title)}  ',
+                    style: const TextStyle(
+                      color: Color(0xFF355872),
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  onSubmitted: (_) => _addCustomPreference(),
+                  TextSpan(
+                    text: appText(context, text),
+                    style: const TextStyle(
+                      color: Color(0xFF42474C),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiBuilderHero extends StatelessWidget {
+  const _AiBuilderHero({
+    required this.destination,
+    required this.tripLength,
+    required this.budgetLabel,
+    required this.selectedSuggestionCount,
+  });
+
+  final String destination;
+  final int tripLength;
+  final String budgetLabel;
+  final int selectedSuggestionCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasDestination = destination.isNotEmpty;
+    final dayLabel = tripLength == 1
+        ? appText(context, 'day')
+        : appText(context, 'days');
+    final suggestionLabel = selectedSuggestionCount == 1
+        ? appText(context, 'AI focus')
+        : appText(context, 'AI focuses');
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF355872).withValues(alpha: .06),
+            blurRadius: 28,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF355872),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.auto_awesome_rounded,
+                  color: Colors.white,
+                  size: 23,
                 ),
               ),
-              const SizedBox(width: 10),
-              IconButton.filled(
-                style: IconButton.styleFrom(
-                  backgroundColor: _primary,
-                  foregroundColor: Colors.white,
-                  fixedSize: const Size(54, 54),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      appText(context, 'AI planning workspace'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF355872),
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      appText(
+                        context,
+                        'Add a few signals and AI will build a starter itinerary.',
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF42474C),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
                 ),
-                onPressed: _addCustomPreference,
-                icon: const Icon(Icons.add_rounded),
               ),
             ],
           ),
-          if (_mode == 1) ...[
-            const SizedBox(height: 22),
-            PlanningIdeaStrip(
-              goals: _planningGoals,
-              selectedGoalIds: _planningGoalIds,
-              onToggle: _togglePlanningGoal,
-            ),
-          ],
-          if (_mode == 1 && _usedFallbackPlan) ...[
-            const SizedBox(height: 16),
-            FormNotice(
-              message: appText(
-                context,
-                'AI generation was unavailable, so a local draft plan was created.',
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _AiHeroMetric(
+                icon: Icons.place_rounded,
+                label: 'Destination',
+                value: hasDestination
+                    ? destination
+                    : appText(context, 'Waiting for destination'),
+              ),
+              _AiHeroMetric(
+                icon: Icons.calendar_month_rounded,
+                label: 'Duration',
+                value: '$tripLength $dayLabel',
+              ),
+              _AiHeroMetric(
+                icon: Icons.payments_rounded,
+                label: 'Budget',
+                value: budgetLabel.isEmpty
+                    ? appText(context, 'Waiting for budget')
+                    : budgetLabel,
+              ),
+              _AiHeroMetric(
+                icon: Icons.psychology_alt_rounded,
+                label: 'Suggestions',
+                value: '$selectedSuggestionCount $suggestionLabel',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiHeroMetric extends StatelessWidget {
+  const _AiHeroMetric({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 148, maxWidth: 240),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7F8F0),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: const Color(0xFFC2C7CC).withValues(alpha: .22),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: const Color(0xFF355872)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    appText(context, label),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF72787C),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF355872),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
-          if (_formError != null) ...[
-            const SizedBox(height: 16),
-            FormNotice(message: _formError!),
-          ],
-          const SizedBox(height: 24),
-          if (_isGenerating)
-            const GeneratingTripPanel()
-          else
-            PrimaryButton(
-              label: _mode == 1 ? 'Generate with AI' : 'Create manually',
-              icon: _mode == 1
-                  ? Icons.auto_awesome_rounded
-                  : Icons.edit_note_rounded,
-              onPressed: _mode == 1 ? _generateTrip : _createManualTrip,
+        ),
+      ),
+    );
+  }
+}
+
+class _AiPhotoPickerCard extends StatelessWidget {
+  const _AiPhotoPickerCard({
+    required this.selectedImage,
+    required this.galleryOptions,
+    required this.filterQuality,
+    required this.onSelectImage,
+    required this.onTap,
+  });
+
+  final String? selectedImage;
+  final List<String> galleryOptions;
+  final FilterQuality filterQuality;
+  final ValueChanged<String> onSelectImage;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF355872).withValues(alpha: .05),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.wallpaper_rounded,
+                color: Color(0xFF355872),
+                size: 21,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  appText(context, 'AI cover suggestions'),
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onTap,
+                icon: const Icon(Icons.add_photo_alternate_rounded, size: 17),
+                label: Text(appText(context, 'More')),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 520;
+              final imageWidth = compact
+                  ? constraints.maxWidth
+                  : (constraints.maxWidth - 20) / 3;
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final image in galleryOptions)
+                    SizedBox(
+                      width: imageWidth,
+                      height: 112,
+                      child: _AiCoverSuggestionTile(
+                        image: image,
+                        selected: selectedImage == image,
+                        filterQuality: filterQuality,
+                        onTap: () => onSelectImage(image),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiCoverSuggestionTile extends StatelessWidget {
+  const _AiCoverSuggestionTile({
+    required this.image,
+    required this.selected,
+    required this.filterQuality,
+    required this.onTap,
+  });
+
+  final String image;
+  final bool selected;
+  final FilterQuality filterQuality;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.network(
+                image,
+                fit: BoxFit.cover,
+                filterQuality: filterQuality,
+              ),
+              Container(color: Colors.black.withValues(alpha: .2)),
+              Positioned(
+                left: 10,
+                bottom: 10,
+                right: 10,
+                child: Row(
+                  children: [
+                    Icon(
+                      selected
+                          ? Icons.check_circle_rounded
+                          : Icons.auto_awesome_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        appText(
+                          context,
+                          selected ? 'Selected' : 'Use this mood',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiSuggestionDeck extends StatelessWidget {
+  const _AiSuggestionDeck({
+    required this.goals,
+    required this.selectedGoalIds,
+    required this.onToggle,
+  });
+
+  final List<PlanningGoal> goals;
+  final Set<String> selectedGoalIds;
+  final ValueChanged<String> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8FA),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.tips_and_updates_rounded,
+                color: Color(0xFF355872),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  appText(context, 'AI suggestions'),
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            appText(
+              context,
+              'Tap the recommendation cards you want AI to emphasize.',
             ),
+            style: const TextStyle(
+              color: Color(0xFF42474C),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 760 ? 4 : 2;
+              final width =
+                  (constraints.maxWidth - (10 * (columns - 1))) / columns;
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final goal in goals)
+                    SizedBox(
+                      width: constraints.maxWidth < 430
+                          ? constraints.maxWidth
+                          : width,
+                      child: _AiSuggestionCard(
+                        goal: goal,
+                        selected: selectedGoalIds.contains(goal.id),
+                        onTap: () => onToggle(goal.id),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiSuggestionCard extends StatelessWidget {
+  const _AiSuggestionCard({
+    required this.goal,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final PlanningGoal goal;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 118),
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFF355872) : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFF355872)
+                  : const Color(0xFFC2C7CC).withValues(alpha: .28),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    goal.icon,
+                    color: selected ? Colors.white : const Color(0xFF355872),
+                    size: 20,
+                  ),
+                  const Spacer(),
+                  Icon(
+                    selected
+                        ? Icons.check_circle_rounded
+                        : Icons.add_circle_outline_rounded,
+                    color: selected ? Colors.white : const Color(0xFF72787C),
+                    size: 19,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                appText(context, goal.title),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected ? Colors.white : const Color(0xFF355872),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                appText(context, goal.text),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected
+                      ? Colors.white.withValues(alpha: .82)
+                      : const Color(0xFF42474C),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  height: 1.25,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                appText(context, goal.tag),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected
+                      ? Colors.white.withValues(alpha: .72)
+                      : const Color(0xFF72787C),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiStepCard extends StatelessWidget {
+  const _AiStepCard({
+    required this.icon,
+    required this.title,
+    required this.suggestion,
+    required this.child,
+  });
+
+  final IconData icon;
+  final String title;
+  final String suggestion;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF355872).withValues(alpha: .05),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFC8E7FC).withValues(alpha: .7),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: const Color(0xFF355872), size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  appText(context, title),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF4F8FA),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.auto_awesome_rounded,
+                  color: Color(0xFF355872),
+                  size: 18,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    appText(context, suggestion),
+                    style: const TextStyle(
+                      color: Color(0xFF42474C),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _AiGenerateFooter extends StatelessWidget {
+  const _AiGenerateFooter({required this.onGenerate});
+
+  final VoidCallback onGenerate;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.only(top: 18),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: const Color(0xFFC2C7CC).withValues(alpha: .3)),
+        ),
+      ),
+      child: FilledButton.icon(
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF355872),
+          foregroundColor: Colors.white,
+          minimumSize: const Size.fromHeight(54),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+          ),
+        ),
+        onPressed: onGenerate,
+        icon: const Icon(Icons.auto_awesome_rounded, size: 19),
+        label: Text(
+          appText(context, 'Generate with AI'),
+          style: const TextStyle(fontWeight: FontWeight.w900),
+        ),
+      ),
+    );
+  }
+}
+
+class _ManualTopBar extends StatelessWidget {
+  const _ManualTopBar({required this.title, required this.onBack});
+
+  final String title;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8F0).withValues(alpha: .9),
+        border: Border(
+          bottom: BorderSide(
+            color: const Color(0xFFC2C7CC).withValues(alpha: .32),
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF355872).withValues(alpha: .06),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          _responsiveHorizontalPadding(context),
+          10,
+          _responsiveHorizontalPadding(context),
+          10,
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                foregroundColor: const Color(0xFF42474C),
+              ),
+              onPressed: onBack,
+              icon: const Icon(Icons.arrow_back_rounded),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                appText(context, title),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF355872),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ManualStepRail extends StatelessWidget {
+  const _ManualStepRail({
+    required this.expandedStep,
+    required this.completedSteps,
+  });
+
+  final int? expandedStep;
+  final List<bool> completedSteps;
+
+  static const _steps = [
+    ('Trip Basics', 'Where, when, who'),
+    ('Destination', 'Where to visit'),
+    ('Timing', 'Dates and duration'),
+    ('Budget', 'Set your budget'),
+    ('Preferences', 'Travel style and needs'),
+    ('Review', 'Create and refine'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned(
+          left: 39,
+          top: 24,
+          bottom: 28,
+          child: Container(
+            width: 2,
+            color: const Color(0xFFC2C7CC).withValues(alpha: .35),
+          ),
+        ),
+        Column(
+          children: [
+            for (var index = 0; index < _steps.length; index++) ...[
+              _ManualStepItem(
+                number: index + 1,
+                title: _steps[index].$1,
+                text: _steps[index].$2,
+                active: expandedStep == index,
+                complete:
+                    index < completedSteps.length && completedSteps[index],
+              ),
+              if (index != _steps.length - 1) const SizedBox(height: 22),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ManualStepItem extends StatelessWidget {
+  const _ManualStepItem({
+    required this.number,
+    required this.title,
+    required this.text,
+    required this.active,
+    required this.complete,
+  });
+
+  final int number;
+  final String title;
+  final String text;
+  final bool active;
+  final bool complete;
+
+  @override
+  Widget build(BuildContext context) {
+    final titleColor = active
+        ? const Color(0xFF355872)
+        : const Color(0xFF42474C);
+    return Opacity(
+      opacity: active || complete ? 1 : .54,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: complete
+                  ? const Color(0xFF16A34A)
+                  : active
+                  ? const Color(0xFF355872)
+                  : const Color(0xFFE3E3DD),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: complete
+                    ? const Color(0xFF16A34A)
+                    : active
+                    ? const Color(0xFF355872)
+                    : const Color(0xFFC2C7CC),
+              ),
+              boxShadow: active
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFF355872).withValues(alpha: .18),
+                        blurRadius: 12,
+                        offset: const Offset(0, 5),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: complete
+                ? const Icon(Icons.check_rounded, color: Colors.white, size: 18)
+                : Text(
+                    '$number',
+                    style: TextStyle(
+                      color: active ? Colors.white : const Color(0xFF42474C),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, title),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: titleColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  appText(context, text),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF42474C),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualAccordionSection extends StatelessWidget {
+  const _ManualAccordionSection({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.expanded,
+    required this.complete,
+    required this.onToggle,
+    required this.onContinue,
+    required this.children,
+    this.continueLabel = 'Continue',
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool expanded;
+  final bool complete;
+  final VoidCallback onToggle;
+  final VoidCallback onContinue;
+  final List<Widget> children;
+  final String continueLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final performance = PerformanceScope.maybeSettingsOf(context);
+    final duration = performance.animationsEnabled
+        ? performance.transitionDuration
+        : Duration.zero;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFFFF),
+        borderRadius: BorderRadius.circular(expanded ? 18 : 999),
+        border: Border.all(
+          color: complete
+              ? const Color(0xFF16A34A).withValues(alpha: .45)
+              : const Color(0xFFC2C7CC).withValues(alpha: .24),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF355872).withValues(alpha: .05),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(expanded ? 18 : 999),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Material(
+              color: expanded ? const Color(0xFFF7F8F0) : Colors.white,
+              child: InkWell(
+                onTap: onToggle,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: complete
+                              ? const Color(0xFF16A34A)
+                              : const Color(0xFFC8E7FC).withValues(alpha: .65),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(
+                          complete ? Icons.check_rounded : icon,
+                          color: complete
+                              ? Colors.white
+                              : const Color(0xFF355872),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              appText(context, title),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF355872),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            if (expanded) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                appText(context, subtitle),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF42474C),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      AnimatedRotation(
+                        turns: expanded ? .5 : 0,
+                        duration: duration,
+                        child: const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: Color(0xFF72787C),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            AnimatedSize(
+              duration: duration,
+              curve: Curves.easeInOutCubic,
+              child: expanded
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          ...children,
+                          const SizedBox(height: 14),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFF355872),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                              ),
+                              onPressed: onContinue,
+                              icon: const Icon(
+                                Icons.arrow_forward_rounded,
+                                size: 18,
+                              ),
+                              label: Text(appText(context, continueLabel)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ManualGrid extends StatelessWidget {
+  const _ManualGrid({required this.children, required this.minTileWidth});
+
+  final List<Widget> children;
+  final double minTileWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        const spacing = 12.0;
+        final columns = math.max(
+          1,
+          ((width + spacing) / (minTileWidth + spacing)).floor(),
+        );
+        final itemWidth = (width - spacing * (columns - 1)) / columns;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final child in children)
+              SizedBox(width: itemWidth, child: child),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ManualFieldCard extends StatelessWidget {
+  const _ManualFieldCard({
+    required this.label,
+    required this.child,
+    this.icon,
+    this.trailing,
+  });
+
+  final String label;
+  final Widget child;
+  final IconData? icon;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 82),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .22),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF355872).withValues(alpha: .05),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  appText(context, label),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF42474C),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                child,
+              ],
+            ),
+          ),
+          if (trailing != null) ...[
+            const SizedBox(width: 8),
+            trailing!,
+          ] else if (icon != null) ...[
+            const SizedBox(width: 8),
+            Icon(icon, color: const Color(0xFF72787C), size: 22),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualTextField extends StatelessWidget {
+  const _ManualTextField({
+    required this.controller,
+    required this.hint,
+    this.onChanged,
+    this.keyboardType,
+    this.inputFormatters,
+  });
+
+  final TextEditingController controller;
+  final String hint;
+  final ValueChanged<String>? onChanged;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      onChanged: onChanged,
+      keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
+      textInputAction: TextInputAction.next,
+      style: const TextStyle(
+        color: Color(0xFF1B1C19),
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+      ),
+      decoration: InputDecoration(
+        isDense: true,
+        hintText: appText(context, hint),
+        hintStyle: TextStyle(
+          color: const Color(0xFF72787C).withValues(alpha: .7),
+          fontWeight: FontWeight.w600,
+        ),
+        filled: false,
+        fillColor: Colors.transparent,
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        contentPadding: EdgeInsets.zero,
+      ),
+    );
+  }
+}
+
+class _ManualDateRangeCard extends StatelessWidget {
+  const _ManualDateRangeCard({
+    required this.startDate,
+    required this.endDate,
+    required this.tripLength,
+    required this.onTap,
+  });
+
+  final DateTime startDate;
+  final DateTime endDate;
+  final int tripLength;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF7F8F0),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: const Color(0xFFC2C7CC).withValues(alpha: .28),
+            ),
+          ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 560;
+              final dateCards = [
+                _ManualDateSummary(
+                  label: 'Start',
+                  value: _dateKey(startDate),
+                  icon: Icons.today_rounded,
+                ),
+                _ManualDateSummary(
+                  label: 'End',
+                  value: _dateKey(endDate),
+                  icon: Icons.event_available_rounded,
+                ),
+                _ManualDateSummary(
+                  label: 'Duration',
+                  value: '$tripLength ${tripLength == 1 ? 'day' : 'days'}',
+                  icon: Icons.timelapse_rounded,
+                ),
+              ];
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.calendar_month_rounded,
+                        color: Color(0xFF355872),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          appText(context, 'Trip dates'),
+                          style: const TextStyle(
+                            color: Color(0xFF355872),
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.edit_calendar_rounded,
+                        color: Color(0xFF72787C),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (compact)
+                    Column(
+                      children: [
+                        for (var index = 0; index < dateCards.length; index++)
+                          Padding(
+                            padding: EdgeInsets.only(
+                              bottom: index == dateCards.length - 1 ? 0 : 8,
+                            ),
+                            child: dateCards[index],
+                          ),
+                      ],
+                    )
+                  else
+                    Row(
+                      children: [
+                        for (
+                          var index = 0;
+                          index < dateCards.length;
+                          index++
+                        ) ...[
+                          Expanded(child: dateCards[index]),
+                          if (index != dateCards.length - 1)
+                            const SizedBox(width: 10),
+                        ],
+                      ],
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ManualDateSummary extends StatelessWidget {
+  const _ManualDateSummary({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .22),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: const Color(0xFF72787C), size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, label),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF42474C),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  appText(context, value),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF1B1C19),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualDropdownCard extends StatelessWidget {
+  const _ManualDropdownCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.options,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final List<String> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      onSelected: onChanged,
+      position: PopupMenuPosition.under,
+      itemBuilder: (context) => [
+        for (final option in options)
+          PopupMenuItem(value: option, child: Text(appText(context, option))),
+      ],
+      child: _ManualFieldCard(
+        label: label,
+        icon: icon,
+        child: Text(
+          appText(context, value),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Color(0xFF1B1C19),
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ManualChipCard extends StatelessWidget {
+  const _ManualChipCard({
+    required this.title,
+    required this.preferences,
+    required this.selectedPreferences,
+    required this.onToggle,
+  });
+
+  final String title;
+  final List<String> preferences;
+  final Set<String> selectedPreferences;
+  final ValueChanged<String> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .22),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF355872).withValues(alpha: .05),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            appText(context, title),
+            style: const TextStyle(
+              color: Color(0xFF42474C),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final preference in preferences)
+                FilterChip(
+                  selected: selectedPreferences.contains(preference),
+                  label: Text(appText(context, preference)),
+                  onSelected: (_) => onToggle(preference),
+                  selectedColor: const Color(0xFF355872),
+                  checkmarkColor: Colors.white,
+                  backgroundColor: const Color(0xFFE3E3DD),
+                  side: BorderSide(
+                    color: selectedPreferences.contains(preference)
+                        ? const Color(0xFF355872)
+                        : const Color(0xFFC2C7CC).withValues(alpha: .45),
+                  ),
+                  labelStyle: TextStyle(
+                    color: selectedPreferences.contains(preference)
+                        ? Colors.white
+                        : const Color(0xFF42474C),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualCustomTagCard extends StatelessWidget {
+  const _ManualCustomTagCard({required this.controller, required this.onAdd});
+
+  final TextEditingController controller;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: _ManualFieldCard(
+            label: 'Add custom tag',
+            icon: Icons.label_rounded,
+            child: _ManualTextField(
+              controller: controller,
+              hint: 'anime, halal food, wheelchair access',
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        IconButton.filled(
+          style: IconButton.styleFrom(
+            backgroundColor: const Color(0xFF355872),
+            foregroundColor: Colors.white,
+            fixedSize: const Size(54, 54),
+          ),
+          onPressed: onAdd,
+          icon: const Icon(Icons.add_rounded),
+        ),
+      ],
+    );
+  }
+}
+
+class _ManualNoticeCard extends StatelessWidget {
+  const _ManualNoticeCard({
+    required this.icon,
+    required this.title,
+    required this.text,
+  });
+
+  final IconData icon;
+  final String title;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8FA),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: const Color(0xFF355872)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, title),
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  appText(context, text),
+                  style: const TextStyle(
+                    color: Color(0xFF42474C),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualPreviewCard extends StatelessWidget {
+  const _ManualPreviewCard({
+    required this.completedSections,
+    required this.totalSections,
+    required this.destination,
+    required this.startDate,
+    required this.endDate,
+    required this.tripLength,
+    required this.budget,
+    required this.group,
+    required this.preferences,
+  });
+
+  final int completedSections;
+  final int totalSections;
+  final String destination;
+  final String startDate;
+  final String endDate;
+  final int tripLength;
+  final String budget;
+  final String group;
+  final List<String> preferences;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = totalSections == 0
+        ? 0.0
+        : (completedSections / totalSections).clamp(0.0, 1.0);
+    final destinationText = destination.isEmpty
+        ? appText(context, 'Choose a destination')
+        : destination;
+    final budgetText = budget.isEmpty ? appText(context, 'Add budget') : budget;
+    final visiblePreferences = preferences.take(3).toList();
+    final preferenceText = visiblePreferences.isEmpty
+        ? appText(context, 'Pick travel style')
+        : [
+            group,
+            visiblePreferences.join(', '),
+            if (preferences.length > visiblePreferences.length)
+              '+${preferences.length - visiblePreferences.length} more',
+          ].where((value) => value.trim().isNotEmpty).join(' | ');
+    final dayLabel = tripLength == 1
+        ? appText(context, 'day')
+        : appText(context, 'days');
+    final imageUrl = _imagesForDestination(destinationText).first;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 660;
+        final image = _ManualPreviewImage(
+          imageUrl: imageUrl,
+          destination: destinationText,
+        );
+        final details = _ManualPreviewDetails(
+          destination: destinationText,
+          dateRange: '$startDate to $endDate',
+          duration: '$tripLength $dayLabel',
+          budget: budgetText,
+          preferenceText: preferenceText,
+          completedSections: completedSections,
+          totalSections: totalSections,
+          progress: progress.toDouble(),
+        );
+
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: const Color(0xFFC2C7CC).withValues(alpha: .22),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF355872).withValues(alpha: .06),
+                blurRadius: 28,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: isWide
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(width: 250, height: 248, child: image),
+                    const SizedBox(width: 16),
+                    Expanded(child: details),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(height: 178, child: image),
+                    const SizedBox(height: 14),
+                    details,
+                  ],
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _ManualPreviewImage extends StatelessWidget {
+  const _ManualPreviewImage({
+    required this.imageUrl,
+    required this.destination,
+  });
+
+  final String imageUrl;
+  final String destination;
+
+  @override
+  Widget build(BuildContext context) {
+    final filterQuality = PerformanceScope.maybeSettingsOf(
+      context,
+    ).filterQuality;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.network(
+            imageUrl,
+            fit: BoxFit.cover,
+            filterQuality: filterQuality,
+            errorBuilder: (context, error, stackTrace) => Container(
+              color: const Color(0xFFF4F8FA),
+              child: const Icon(
+                Icons.landscape_rounded,
+                color: Color(0xFFACCBE0),
+                size: 54,
+              ),
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withValues(alpha: .02),
+                  Colors.black.withValues(alpha: .46),
+                ],
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.bottomLeft,
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .9),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.visibility_rounded,
+                          color: Color(0xFF355872),
+                          size: 14,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          appText(context, 'Preview'),
+                          style: const TextStyle(
+                            color: Color(0xFF355872),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    destination,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      height: 1.05,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualPreviewDetails extends StatelessWidget {
+  const _ManualPreviewDetails({
+    required this.destination,
+    required this.dateRange,
+    required this.duration,
+    required this.budget,
+    required this.preferenceText,
+    required this.completedSections,
+    required this.totalSections,
+    required this.progress,
+  });
+
+  final String destination;
+  final String dateRange;
+  final String duration;
+  final String budget;
+  final String preferenceText;
+  final int completedSections;
+  final int totalSections;
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final isComplete = completedSections == totalSections;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: isComplete
+                      ? const Color(0xFF16A34A)
+                      : const Color(0xFFC8E7FC).withValues(alpha: .72),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  isComplete ? Icons.check_rounded : Icons.map_rounded,
+                  color: isComplete ? Colors.white : const Color(0xFF355872),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      appText(context, 'Trip preview'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF355872),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      appText(
+                        context,
+                        '$completedSections of $totalSections sections filled',
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF42474C),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: Stack(
+              children: [
+                Container(height: 8, color: const Color(0xFFE3E3DD)),
+                FractionallySizedBox(
+                  widthFactor: progress,
+                  child: Container(
+                    height: 8,
+                    color: isComplete
+                        ? const Color(0xFF16A34A)
+                        : const Color(0xFF355872),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _ManualPreviewInfoRow(
+            icon: Icons.place_rounded,
+            label: 'Destination',
+            value: destination,
+          ),
+          _ManualPreviewInfoRow(
+            icon: Icons.event_rounded,
+            label: 'Dates',
+            value: dateRange,
+            helper: duration,
+          ),
+          _ManualPreviewInfoRow(
+            icon: Icons.payments_rounded,
+            label: 'Budget',
+            value: budget,
+          ),
+          _ManualPreviewInfoRow(
+            icon: Icons.tune_rounded,
+            label: 'Style',
+            value: preferenceText,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualPreviewInfoRow extends StatelessWidget {
+  const _ManualPreviewInfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.helper,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final String? helper;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF4F8FA),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, color: const Color(0xFF355872), size: 17),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, label),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF72787C),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    height: 1.25,
+                  ),
+                ),
+                if (helper != null) ...[
+                  Text(
+                    helper!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF42474C),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualInfoBanner extends StatelessWidget {
+  const _ManualInfoBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 118),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8FA),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF355872).withValues(alpha: .05),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  appText(context, 'Not sure where to start?'),
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  appText(
+                    context,
+                    'Add the basics now, then build the day-by-day schedule after creation.',
+                  ),
+                  style: const TextStyle(
+                    color: Color(0xFF42474C),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 14),
+          const Icon(
+            Icons.landscape_rounded,
+            size: 68,
+            color: Color(0xFFACCBE0),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualFooterActions extends StatelessWidget {
+  const _ManualFooterActions({
+    required this.onCancel,
+    required this.onCreate,
+    required this.isCreating,
+  });
+
+  final VoidCallback onCancel;
+  final VoidCallback onCreate;
+  final bool isCreating;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.only(top: 18),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: const Color(0xFFC2C7CC).withValues(alpha: .3)),
+        ),
+      ),
+      child: Row(
+        children: [
+          TextButton(
+            onPressed: onCancel,
+            child: Text(
+              appText(context, 'Cancel'),
+              style: const TextStyle(
+                color: Color(0xFF42474C),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const Spacer(),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF355872),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            onPressed: isCreating ? null : onCreate,
+            icon: isCreating
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.arrow_forward_rounded, size: 18),
+            label: Text(
+              appText(context, isCreating ? 'Creating' : 'Create manually'),
+            ),
+          ),
         ],
       ),
     );
