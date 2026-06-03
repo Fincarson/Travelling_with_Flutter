@@ -450,28 +450,48 @@ class NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            color: active ? _primary : _secondary.withValues(alpha: .65),
-            size: active ? 28 : 24,
-          ),
-          const SizedBox(height: 3),
-          Text(
-            appText(context, label).toUpperCase(),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w900,
-              color: active ? _primary : _secondary.withValues(alpha: .65),
+    return Center(
+      child: Semantics(
+        button: true,
+        selected: active,
+        label: appText(context, label),
+        child: SizedBox(
+          width: 68,
+          height: 68,
+          child: Material(
+            color: active ? _accent.withValues(alpha: .18) : Colors.transparent,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: onTap,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    icon,
+                    color: active
+                        ? _primary
+                        : _secondary.withValues(alpha: .65),
+                    size: active ? 28 : 24,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    appText(context, label).toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      color: active
+                          ? _primary
+                          : _secondary.withValues(alpha: .65),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }

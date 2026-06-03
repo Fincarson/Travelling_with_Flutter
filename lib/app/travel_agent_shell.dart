@@ -14,6 +14,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   final _authService = AccountAuthService();
   final _notificationService = TripNotificationService();
   static const _localProfilePrefix = 'travel_agent.profile.';
+  static const _tripDeleteUndoWindow = Duration(seconds: 5);
   StreamSubscription<UserProfile?>? _userSubscription;
   StreamSubscription<List<Trip>>? _tripsSubscription;
   var _isLoading = true;
@@ -23,6 +24,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   var _tripDetailInitialTab = 0;
   var _user = const UserProfile(name: '', email: '', interests: []);
   final List<Trip> _trips = [];
+  final Map<String, Timer> _pendingTripDeleteTimers = {};
+  final Set<String> _pendingTripDeleteIds = {};
   Trip? _selectedTrip;
   Trip? _activeTrip;
   String? _pendingTripAiPrompt;
@@ -76,11 +79,12 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     try {
       final trips = await _repository.loadTrips(accountId);
       if (!mounted) return;
+      final visibleTrips = _withoutPendingDeletes(trips);
       setState(() {
         _trips
           ..clear()
           ..addAll(trips);
-        _activeTrip = _firstOngoingTrip(trips);
+        _activeTrip = _firstOngoingTrip(visibleTrips);
         _loadError = loadError.isEmpty ? null : loadError.join('\n');
       });
       unawaited(_syncTripReminders());
@@ -123,12 +127,13 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         .listen(
           (trips) {
             if (!mounted) return;
+            final visibleTrips = _withoutPendingDeletes(trips);
             setState(() {
               _trips
                 ..clear()
                 ..addAll(trips);
-              _activeTrip = _firstOngoingTrip(trips);
-              _selectedTrip = _matchingTrip(trips, _selectedTrip);
+              _activeTrip = _firstOngoingTrip(visibleTrips);
+              _selectedTrip = _matchingTrip(visibleTrips, _selectedTrip);
               if (_screen == _Screen.tripDetail && _selectedTrip == null) {
                 _screen = _Screen.dashboard;
                 _tab = _NavTab.home;
@@ -145,6 +150,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   void _openTrip(Trip trip) {
+    if (_pendingTripDeleteIds.contains(trip.id)) return;
     setState(() {
       _selectedTrip = trip;
       _screen = _Screen.tripDetail;
@@ -155,8 +161,11 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   void _openTripAssistant(String prompt) {
+    final visibleTrips = _visibleTrips;
     final trip =
-        _activeTrip ?? _selectedTrip ?? (_trips.isEmpty ? null : _trips.first);
+        _visibleActiveTrip ??
+        _selectedTrip ??
+        (visibleTrips.isEmpty ? null : visibleTrips.first);
     if (trip == null) {
       setState(() {
         _screen = _Screen.chatList;
@@ -278,24 +287,79 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     unawaited(_syncTripReminders());
   }
 
-  Future<void> _deleteTrip(Trip trip) async {
-    final confirmed = await _confirmDeleteTrip(trip);
-    if (!confirmed || !mounted) return;
+  void _deleteTrip(Trip trip) {
+    if (_pendingTripDeleteIds.contains(trip.id)) return;
+    setState(() {
+      _pendingTripDeleteIds.add(trip.id);
+      if (_selectedTrip?.id == trip.id) {
+        _selectedTrip = null;
+        if (_screen == _Screen.tripDetail) {
+          _screen = _Screen.trips;
+        }
+      }
+      if (_activeTrip?.id == trip.id) {
+        _activeTrip = _firstOngoingTrip(_visibleTrips);
+      }
+      _loadError = null;
+    });
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: _tripDeleteUndoWindow,
+          content: Text(
+            appText(
+              context,
+              '${trip.destination} will be deleted in 5 seconds.',
+            ),
+          ),
+          action: SnackBarAction(
+            label: appText(context, 'Undo'),
+            onPressed: () => _undoTripDelete(trip.id),
+          ),
+        ),
+      );
+
+    _pendingTripDeleteTimers[trip.id]?.cancel();
+    _pendingTripDeleteTimers[trip.id] = Timer(
+      _tripDeleteUndoWindow,
+      () => unawaited(_finishPendingTripDelete(trip)),
+    );
+  }
+
+  void _undoTripDelete(String tripId) {
+    final timer = _pendingTripDeleteTimers.remove(tripId);
+    timer?.cancel();
+    if (!_pendingTripDeleteIds.remove(tripId) || !mounted) return;
+    setState(() => _activeTrip = _firstOngoingTrip(_visibleTrips));
+  }
+
+  Future<void> _finishPendingTripDelete(Trip trip) async {
+    _pendingTripDeleteTimers.remove(trip.id);
+    if (!_pendingTripDeleteIds.contains(trip.id)) return;
 
     final accountId = _accountId ?? widget.account.uid;
     try {
       await _repository.deleteTrip(accountId, trip.id);
       if (!mounted) return;
       setState(() {
+        _pendingTripDeleteIds.remove(trip.id);
         _trips.removeWhere((item) => item.id == trip.id);
         if (_selectedTrip?.id == trip.id) _selectedTrip = null;
-        if (_activeTrip?.id == trip.id) _activeTrip = null;
+        if (_activeTrip?.id == trip.id) {
+          _activeTrip = _firstOngoingTrip(_visibleTrips);
+        }
         _loadError = null;
       });
       await _refreshTripsFromBackend();
     } catch (error) {
       if (!mounted) return;
-      setState(() => _loadError = 'Could not remove trip: $error');
+      setState(() {
+        _pendingTripDeleteIds.remove(trip.id);
+        _activeTrip = _firstOngoingTrip(_visibleTrips);
+        _loadError = 'Could not remove trip: $error';
+      });
     }
   }
 
@@ -315,36 +379,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       setState(() => _loadError = 'Could not save trip online: $error');
       return false;
     }
-  }
-
-  Future<bool> _confirmDeleteTrip(Trip trip) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(appText(context, 'Remove this trip?')),
-        content: Text(
-          appText(
-            context,
-            'This will permanently remove ${trip.destination}. This cannot be undone.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(appText(context, 'Cancel')),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFE5484D),
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(appText(context, 'Remove')),
-          ),
-        ],
-      ),
-    );
-    return result ?? false;
   }
 
   Future<bool> _confirmReplaceActiveTrip({
@@ -381,14 +415,15 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     try {
       final trips = await _repository.loadTrips(accountId);
       if (!mounted) return;
+      final visibleTrips = _withoutPendingDeletes(trips);
       setState(() {
         _trips
           ..clear()
           ..addAll(trips);
-        _activeTrip = _firstOngoingTrip(trips);
+        _activeTrip = _firstOngoingTrip(visibleTrips);
         _selectedTrip =
-            _tripById(trips, selectTripId) ??
-            _matchingTrip(trips, _selectedTrip);
+            _tripById(visibleTrips, selectTripId) ??
+            _matchingTrip(visibleTrips, _selectedTrip);
         _loadError = null;
       });
       unawaited(_syncTripReminders());
@@ -415,6 +450,9 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   void dispose() {
     _userSubscription?.cancel();
     _tripsSubscription?.cancel();
+    for (final timer in _pendingTripDeleteTimers.values) {
+      timer.cancel();
+    }
     super.dispose();
   }
 
@@ -493,6 +531,22 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     return RepaintBoundary(child: child);
   }
 
+  List<Trip> get _visibleTrips => _withoutPendingDeletes(_trips);
+
+  Trip? get _visibleActiveTrip {
+    final activeTrip = _activeTrip;
+    if (activeTrip == null || _pendingTripDeleteIds.contains(activeTrip.id)) {
+      return _firstOngoingTrip(_visibleTrips);
+    }
+    return activeTrip;
+  }
+
+  List<Trip> _withoutPendingDeletes(List<Trip> trips) {
+    return trips
+        .where((trip) => !_pendingTripDeleteIds.contains(trip.id))
+        .toList(growable: false);
+  }
+
   Widget _buildCachedTabStack(AppPerformanceSettings performance) {
     return KeyedSubtree(
       key: const ValueKey('cached-tabs'),
@@ -503,8 +557,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             DashboardScreen(
               key: const PageStorageKey('dashboard-tab'),
               user: _user,
-              trips: _trips,
-              activeTrip: _activeTrip,
+              trips: _visibleTrips,
+              activeTrip: _visibleActiveTrip,
               onCreate: () => setState(() {
                 _screen = _Screen.create;
                 _tab = _NavTab.add;
@@ -522,7 +576,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           _performanceBoundary(
             TripsScreen(
               key: const PageStorageKey('trips-tab'),
-              trips: _trips,
+              trips: _visibleTrips,
               onBack: () => setState(() => _screen = _Screen.dashboard),
               onCreate: () => setState(() {
                 _screen = _Screen.create;
@@ -567,8 +621,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         return DashboardScreen(
           key: const ValueKey('dashboard'),
           user: _user,
-          trips: _trips,
-          activeTrip: _activeTrip,
+          trips: _visibleTrips,
+          activeTrip: _visibleActiveTrip,
           onCreate: () => setState(() {
             _screen = _Screen.create;
             _tab = _NavTab.add;
@@ -628,7 +682,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       case _Screen.trips:
         return TripsScreen(
           key: const ValueKey('trips'),
-          trips: _trips,
+          trips: _visibleTrips,
           onBack: () => setState(() => _screen = _Screen.dashboard),
           onCreate: () => setState(() {
             _screen = _Screen.create;

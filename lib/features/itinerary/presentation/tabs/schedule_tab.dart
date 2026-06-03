@@ -360,9 +360,9 @@ class _ScheduleTabState extends State<ScheduleTab> {
         ),
         const SizedBox(height: 16),
         PrimaryButton(
-          label: 'Add Destination',
+          label: 'Add schedule stop',
           icon: Icons.add_rounded,
-          onPressed: () => _addScheduleStop(context),
+          onPressed: () => unawaited(_addScheduleStop(context)),
         ),
         const SizedBox(height: 16),
         if (trip.status == TripStatus.ongoing) ...[
