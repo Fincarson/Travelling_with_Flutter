@@ -116,10 +116,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ],
           const SizedBox(height: 28),
-          SectionHeader(
+          const SectionHeader(
             title: 'Ready for your next Adventure',
-            action: 'Create',
-            onTap: widget.onCreate,
           ),
           const SizedBox(height: 12),
           SizedBox(

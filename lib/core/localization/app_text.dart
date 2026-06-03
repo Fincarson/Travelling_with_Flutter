@@ -28,6 +28,7 @@ const _zhHantTwText = {
   'Overview': '總覽',
   'Schedule': '日程',
   'Checklist': '清單',
+  'DAY': '第',
   'Day': '第',
   'Add to': '新增到',
   'New activity': '新活動',
