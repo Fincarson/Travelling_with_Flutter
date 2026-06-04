@@ -68,8 +68,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   String? _lastAiError;
   AppDeviceContext? _deviceContext;
   TripStartLocation? _tripStartLocation;
+  int? _aiExpandedStep;
+  final Set<int> _aiCompletedSteps = {};
+  var _aiPreviewExpanded = false;
   int? _manualExpandedStep;
   final Set<int> _manualCompletedSteps = {};
+  var _manualPreviewExpanded = false;
   DateTime _startDate = _travelAgentNow();
   DateTime _endDate = _travelAgentNow().add(const Duration(days: 5));
   String? _selectedImage;
@@ -2099,6 +2103,52 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     });
   }
 
+  bool _isAiStepValid(int index) {
+    return switch (index) {
+      0 => true,
+      1 => _destination.text.trim().isNotEmpty,
+      2 => _parsedBudget() > 0,
+      3 => _group.trim().isNotEmpty && _preferences.isNotEmpty,
+      4 => true,
+      _ => false,
+    };
+  }
+
+  bool _isAiStepComplete(int index) {
+    if (!_aiCompletedSteps.contains(index)) return false;
+    return _isAiStepValid(index);
+  }
+
+  String _aiStepError(int index) {
+    return switch (index) {
+      1 => 'Pick or enter a destination before finishing this section.',
+      2 =>
+        'Pick or enter a budget greater than zero before finishing this section.',
+      3 => 'Choose at least one travel style before finishing this section.',
+      _ => '',
+    };
+  }
+
+  void _toggleAiStep(int index) {
+    setState(() {
+      _aiExpandedStep = _aiExpandedStep == index ? null : index;
+      _formError = null;
+    });
+  }
+
+  void _completeAiStep(int index) {
+    if (!_isAiStepValid(index)) {
+      setState(() => _formError = _aiStepError(index));
+      return;
+    }
+
+    setState(() {
+      _aiCompletedSteps.add(index);
+      _aiExpandedStep = index < 4 ? index + 1 : null;
+      _formError = null;
+    });
+  }
+
   Widget _buildAiTripBuilderPage(BuildContext context) {
     final tripLength = math.max(1, _endDate.difference(_startDate).inDays + 1);
     final budgetLabel = _hasBudgetText
@@ -2109,6 +2159,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final filterQuality = PerformanceScope.maybeSettingsOf(
       context,
     ).filterQuality;
+    final aiStepComplete = List.generate(5, _isAiStepComplete);
+    final nextAiStep = aiStepComplete.indexWhere((complete) => !complete);
+    final aiFocusStep = nextAiStep == -1 ? null : nextAiStep;
 
     return ScreenScaffold(
       child: Column(
@@ -2132,30 +2185,56 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                   tripLength: tripLength,
                   budgetLabel: _hasBudgetText ? budgetLabel : '',
                   selectedSuggestionCount: _planningGoalIds.length,
+                  expanded: _aiPreviewExpanded,
+                  onToggle: () =>
+                      setState(() => _aiPreviewExpanded = !_aiPreviewExpanded),
                 ),
+                const SizedBox(height: 12),
+                const _AiSetupFlowCard(),
                 const SizedBox(height: 14),
-                _AiPhotoPickerCard(
-                  selectedImage: _selectedImage,
-                  galleryOptions: _galleryOptions.take(3).toList(),
-                  filterQuality: filterQuality,
-                  onSelectImage: (image) => setState(() {
-                    _selectedImage = image;
-                    _formError = null;
-                  }),
-                  onTap: _showImagePicker,
+                _AiAccordionSection(
+                  icon: Icons.auto_awesome_rounded,
+                  title: 'AI setup',
+                  suggestion:
+                      'Pick a visual mood and the planning focuses AI should emphasize.',
+                  expanded: _aiExpandedStep == 0,
+                  complete: aiStepComplete[0],
+                  attention: aiFocusStep == 0,
+                  onToggle: () => _toggleAiStep(0),
+                  onDone: () => _completeAiStep(0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _AiPhotoPickerCard(
+                        selectedImage: _selectedImage,
+                        galleryOptions: _galleryOptions.take(3).toList(),
+                        filterQuality: filterQuality,
+                        onSelectImage: (image) => setState(() {
+                          _selectedImage = image;
+                          _formError = null;
+                        }),
+                        onTap: _showImagePicker,
+                      ),
+                      const SizedBox(height: 12),
+                      _AiSuggestionDeck(
+                        goals: _planningGoals,
+                        selectedGoalIds: _planningGoalIds,
+                        onToggle: _togglePlanningGoal,
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 16),
-                _AiSuggestionDeck(
-                  goals: _planningGoals,
-                  selectedGoalIds: _planningGoalIds,
-                  onToggle: _togglePlanningGoal,
-                ),
-                const SizedBox(height: 16),
-                _AiStepCard(
+                const SizedBox(height: 12),
+                _AiAccordionSection(
                   icon: Icons.route_rounded,
                   title: 'Route brief',
                   suggestion:
                       'AI will use the destination and starting point to cluster nearby stops and reduce backtracking.',
+                  expanded: _aiExpandedStep == 1,
+                  complete: aiStepComplete[1],
+                  attention: aiFocusStep == 1,
+                  onToggle: () => _toggleAiStep(1),
+                  onDone: () => _completeAiStep(1),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -2253,12 +2332,17 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                _AiStepCard(
+                const SizedBox(height: 12),
+                _AiAccordionSection(
                   icon: Icons.auto_graph_rounded,
                   title: 'Timing and budget',
                   suggestion:
                       'AI will balance the daily pace against your budget, dates, and travel party.',
+                  expanded: _aiExpandedStep == 2,
+                  complete: aiStepComplete[2],
+                  attention: aiFocusStep == 2,
+                  onToggle: () => _toggleAiStep(2),
+                  onDone: () => _completeAiStep(2),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -2334,12 +2418,17 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                _AiStepCard(
+                const SizedBox(height: 12),
+                _AiAccordionSection(
                   icon: Icons.psychology_rounded,
                   title: 'AI taste profile',
                   suggestion:
                       'AI will prioritize the selected tags when choosing neighborhoods, meals, and activity types.',
+                  expanded: _aiExpandedStep == 3,
+                  complete: aiStepComplete[3],
+                  attention: aiFocusStep == 3,
+                  onToggle: () => _toggleAiStep(3),
+                  onDone: () => _completeAiStep(3),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -2401,12 +2490,17 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                _AiStepCard(
+                const SizedBox(height: 12),
+                _AiAccordionSection(
                   icon: Icons.flight_takeoff_rounded,
                   title: 'Booking clues',
                   suggestion:
                       'Optional booking details help AI anchor arrival and departure timing more accurately.',
+                  expanded: _aiExpandedStep == 4,
+                  complete: aiStepComplete[4],
+                  attention: aiFocusStep == 4,
+                  onToggle: () => _toggleAiStep(4),
+                  onDone: () => _completeAiStep(4),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -2496,6 +2590,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final manualStepComplete = List.generate(4, _isManualStepComplete);
     final completedStepCount = manualStepComplete.where((step) => step).length;
+    final nextManualStep = manualStepComplete.indexWhere(
+      (complete) => !complete,
+    );
+    final manualFocusStep = nextManualStep == -1 ? null : nextManualStep;
 
     return ScreenScaffold(
       child: Column(
@@ -2543,6 +2641,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                   budget: _hasBudgetText ? budgetLabel : '',
                   group: _group,
                   preferences: _preferences.toList(),
+                  expanded: _manualPreviewExpanded,
+                  onToggle: () => setState(
+                    () => _manualPreviewExpanded = !_manualPreviewExpanded,
+                  ),
                 ),
                 const SizedBox(height: 14),
                 const _ManualInfoBanner(),
@@ -2574,6 +2676,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                     'Set where the trip goes and where the first travel leg starts.',
                                 expanded: _manualExpandedStep == 0,
                                 complete: manualStepComplete[0],
+                                attention: manualFocusStep == 0,
                                 onToggle: () => _toggleManualStep(0),
                                 onContinue: () => _completeManualStep(0),
                                 children: [
@@ -2664,6 +2767,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                     'One range picker controls the start date, end date, and duration.',
                                 expanded: _manualExpandedStep == 1,
                                 complete: manualStepComplete[1],
+                                attention: manualFocusStep == 1,
                                 onToggle: () => _toggleManualStep(1),
                                 onContinue: () => _completeManualStep(1),
                                 children: [
@@ -2711,6 +2815,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                     'Choose the travel party and the tags that should shape the starter trip.',
                                 expanded: _manualExpandedStep == 2,
                                 complete: manualStepComplete[2],
+                                attention: manualFocusStep == 2,
                                 onToggle: () => _toggleManualStep(2),
                                 onContinue: () => _completeManualStep(2),
                                 children: [
@@ -2748,6 +2853,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                     'Add flight details now, or leave them blank and fill bookings later.',
                                 expanded: _manualExpandedStep == 3,
                                 complete: manualStepComplete[3],
+                                attention: manualFocusStep == 3,
                                 onToggle: () => _toggleManualStep(3),
                                 onContinue: () => _completeManualStep(3),
                                 continueLabel: 'Done',
@@ -3658,6 +3764,63 @@ class _AiChoice {
   final VoidCallback onTap;
 }
 
+class _AiSetupFlowCard extends StatelessWidget {
+  const _AiSetupFlowCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8FA),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _AiSetupStep(icon: Icons.auto_awesome_rounded, label: 'Pick'),
+          _AiSetupStep(icon: Icons.tune_rounded, label: 'Review'),
+          _AiSetupStep(icon: Icons.route_rounded, label: 'Generate'),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiSetupStep extends StatelessWidget {
+  const _AiSetupStep({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: const Color(0xFF355872), size: 15),
+          const SizedBox(width: 6),
+          Text(
+            appText(context, label),
+            style: const TextStyle(
+              color: Color(0xFF355872),
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _AiChoiceGrid extends StatelessWidget {
   const _AiChoiceGrid({required this.choices});
 
@@ -3665,27 +3828,10 @@ class _AiChoiceGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 780
-            ? 3
-            : constraints.maxWidth >= 520
-            ? 2
-            : 1;
-        final tileWidth =
-            (constraints.maxWidth - (10 * (columns - 1))) / columns;
-        return Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            for (final choice in choices)
-              SizedBox(
-                width: tileWidth,
-                child: _AiChoiceCard(choice: choice),
-              ),
-          ],
-        );
-      },
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [for (final choice in choices) _AiChoiceCard(choice: choice)],
     );
   }
 }
@@ -3703,66 +3849,43 @@ class _AiChoiceCard extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
         onTap: choice.onTap,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 116),
-          padding: const EdgeInsets.all(13),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF4F8FA),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: const Color(0xFFACCBE0).withValues(alpha: .6),
+        child: Tooltip(
+          message: appText(context, choice.text),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 260),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF4F8FA),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: const Color(0xFFACCBE0).withValues(alpha: .6),
+              ),
             ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      choice.icon,
-                      color: const Color(0xFF355872),
-                      size: 18,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(choice.icon, color: const Color(0xFF355872), size: 17),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    appText(context, choice.title),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF355872),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const Spacer(),
-                  const Icon(
-                    Icons.auto_awesome_rounded,
-                    color: Color(0xFF355872),
-                    size: 17,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                appText(context, choice.title),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF355872),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
                 ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                appText(context, choice.text),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF42474C),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  height: 1.25,
+                const SizedBox(width: 6),
+                const Icon(
+                  Icons.add_rounded,
+                  color: Color(0xFF72787C),
+                  size: 16,
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -4300,15 +4423,23 @@ class _AiBuilderHero extends StatelessWidget {
     required this.tripLength,
     required this.budgetLabel,
     required this.selectedSuggestionCount,
+    required this.expanded,
+    required this.onToggle,
   });
 
   final String destination;
   final int tripLength;
   final String budgetLabel;
   final int selectedSuggestionCount;
+  final bool expanded;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
+    final performance = PerformanceScope.maybeSettingsOf(context);
+    final duration = performance.animationsEnabled
+        ? performance.transitionDuration
+        : Duration.zero;
     final hasDestination = destination.isNotEmpty;
     final dayLabel = tripLength == 1
         ? appText(context, 'day')
@@ -4316,108 +4447,203 @@ class _AiBuilderHero extends StatelessWidget {
     final suggestionLabel = selectedSuggestionCount == 1
         ? appText(context, 'AI focus')
         : appText(context, 'AI focuses');
+    final destinationLabel = hasDestination
+        ? destination
+        : appText(context, 'Waiting for destination');
+    final budgetText = budgetLabel.isEmpty
+        ? appText(context, 'Waiting for budget')
+        : budgetLabel;
 
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onToggle,
+        child: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: expanded
+                  ? const Color(0xFF355872).withValues(alpha: .28)
+                  : const Color(0xFFC2C7CC).withValues(alpha: .24),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(
+                  0xFF355872,
+                ).withValues(alpha: expanded ? .1 : .06),
+                blurRadius: expanded ? 32 : 28,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF355872),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: const Icon(
+                      Icons.auto_awesome_rounded,
+                      color: Colors.white,
+                      size: 23,
+                    ),
+                  ),
+                  const SizedBox(width: 13),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          appText(context, 'AI planning workspace'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF355872),
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          appText(
+                            context,
+                            '$destinationLabel / $tripLength $dayLabel / $selectedSuggestionCount $suggestionLabel',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF42474C),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            height: 1.25,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF4F8FA),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          appText(context, expanded ? 'Hide' : 'Details'),
+                          style: const TextStyle(
+                            color: Color(0xFF355872),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        AnimatedRotation(
+                          turns: expanded ? .5 : 0,
+                          duration: duration,
+                          child: const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: Color(0xFF355872),
+                            size: 18,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              AnimatedSize(
+                duration: duration,
+                curve: Curves.easeInOutCubic,
+                child: expanded
+                    ? Padding(
+                        padding: const EdgeInsets.only(top: 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF4F8FA),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(
+                                    Icons.tips_and_updates_rounded,
+                                    color: Color(0xFF355872),
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 9),
+                                  Expanded(
+                                    child: Text(
+                                      appText(
+                                        context,
+                                        'AI will use your picks as signals, then build a starter itinerary you can still edit.',
+                                      ),
+                                      style: const TextStyle(
+                                        color: Color(0xFF42474C),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        height: 1.3,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: [
+                                _AiHeroMetric(
+                                  icon: Icons.place_rounded,
+                                  label: 'Destination',
+                                  value: destinationLabel,
+                                ),
+                                _AiHeroMetric(
+                                  icon: Icons.calendar_month_rounded,
+                                  label: 'Duration',
+                                  value: '$tripLength $dayLabel',
+                                ),
+                                _AiHeroMetric(
+                                  icon: Icons.payments_rounded,
+                                  label: 'Budget',
+                                  value: budgetText,
+                                ),
+                                _AiHeroMetric(
+                                  icon: Icons.psychology_alt_rounded,
+                                  label: 'Suggestions',
+                                  value:
+                                      '$selectedSuggestionCount $suggestionLabel',
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ],
+          ),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF355872).withValues(alpha: .06),
-            blurRadius: 28,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF355872),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(
-                  Icons.auto_awesome_rounded,
-                  color: Colors.white,
-                  size: 23,
-                ),
-              ),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      appText(context, 'AI planning workspace'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF355872),
-                        fontSize: 17,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      appText(
-                        context,
-                        'Add a few signals and AI will build a starter itinerary.',
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF42474C),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        height: 1.25,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _AiHeroMetric(
-                icon: Icons.place_rounded,
-                label: 'Destination',
-                value: hasDestination
-                    ? destination
-                    : appText(context, 'Waiting for destination'),
-              ),
-              _AiHeroMetric(
-                icon: Icons.calendar_month_rounded,
-                label: 'Duration',
-                value: '$tripLength $dayLabel',
-              ),
-              _AiHeroMetric(
-                icon: Icons.payments_rounded,
-                label: 'Budget',
-                value: budgetLabel.isEmpty
-                    ? appText(context, 'Waiting for budget')
-                    : budgetLabel,
-              ),
-              _AiHeroMetric(
-                icon: Icons.psychology_alt_rounded,
-                label: 'Suggestions',
-                value: '$selectedSuggestionCount $suggestionLabel',
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }
@@ -4441,7 +4667,7 @@ class _AiHeroMetric extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFFF7F8F0),
+          color: Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: const Color(0xFFC2C7CC).withValues(alpha: .22),
@@ -4751,79 +4977,50 @@ class _AiSuggestionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(999),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(999),
         onTap: onTap,
         child: Container(
-          constraints: const BoxConstraints(minHeight: 118),
-          padding: const EdgeInsets.all(13),
+          constraints: const BoxConstraints(minHeight: 46),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             color: selected ? const Color(0xFF355872) : Colors.white,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(999),
             border: Border.all(
               color: selected
                   ? const Color(0xFF355872)
                   : const Color(0xFFC2C7CC).withValues(alpha: .28),
             ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Row(
-                children: [
-                  Icon(
-                    goal.icon,
-                    color: selected ? Colors.white : const Color(0xFF355872),
-                    size: 20,
+              Icon(
+                goal.icon,
+                color: selected ? Colors.white : const Color(0xFF355872),
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Tooltip(
+                  message: appText(context, goal.text),
+                  child: Text(
+                    appText(context, goal.title),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: selected ? Colors.white : const Color(0xFF355872),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
-                  const Spacer(),
-                  Icon(
-                    selected
-                        ? Icons.check_circle_rounded
-                        : Icons.add_circle_outline_rounded,
-                    color: selected ? Colors.white : const Color(0xFF72787C),
-                    size: 19,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                appText(context, goal.title),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected ? Colors.white : const Color(0xFF355872),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
                 ),
               ),
-              const SizedBox(height: 3),
-              Text(
-                appText(context, goal.text),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected
-                      ? Colors.white.withValues(alpha: .82)
-                      : const Color(0xFF42474C),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  height: 1.25,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                appText(context, goal.tag),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected
-                      ? Colors.white.withValues(alpha: .72)
-                      : const Color(0xFF72787C),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                ),
+              const SizedBox(width: 8),
+              Icon(
+                selected ? Icons.check_rounded : Icons.add_rounded,
+                color: selected ? Colors.white : const Color(0xFF72787C),
+                size: 17,
               ),
             ],
           ),
@@ -4833,99 +5030,216 @@ class _AiSuggestionCard extends StatelessWidget {
   }
 }
 
-class _AiStepCard extends StatelessWidget {
-  const _AiStepCard({
+class _AiAccordionSection extends StatelessWidget {
+  const _AiAccordionSection({
     required this.icon,
     required this.title,
     required this.suggestion,
+    required this.expanded,
+    required this.complete,
+    required this.attention,
+    required this.onToggle,
+    required this.onDone,
     required this.child,
   });
 
   final IconData icon;
   final String title;
   final String suggestion;
+  final bool expanded;
+  final bool complete;
+  final bool attention;
+  final VoidCallback onToggle;
+  final VoidCallback onDone;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
+    final performance = PerformanceScope.maybeSettingsOf(context);
+    final duration = performance.animationsEnabled
+        ? performance.transitionDuration
+        : Duration.zero;
+    final showAttention = attention && !complete;
+    final borderColor = complete
+        ? const Color(0xFF16A34A).withValues(alpha: .5)
+        : showAttention
+        ? const Color(0xFF355872).withValues(alpha: .65)
+        : const Color(0xFFC2C7CC).withValues(alpha: .24);
+    final headerColor = expanded
+        ? const Color(0xFFF7F8F0)
+        : showAttention
+        ? const Color(0xFFF4F8FA)
+        : Colors.white;
+
+    return AnimatedContainer(
+      duration: duration,
+      curve: Curves.easeInOutCubic,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
-        ),
+        borderRadius: BorderRadius.circular(expanded ? 18 : 999),
+        border: Border.all(color: borderColor),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF355872).withValues(alpha: .05),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
+            color: showAttention
+                ? const Color(0xFF355872).withValues(alpha: .16)
+                : const Color(0xFF355872).withValues(alpha: .05),
+            blurRadius: showAttention ? 30 : 24,
+            offset: Offset(0, showAttention ? 10 : 8),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFC8E7FC).withValues(alpha: .7),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: const Color(0xFF355872), size: 20),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  appText(context, title),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF355872),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(expanded ? 18 : 999),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Material(
+              color: headerColor,
+              child: InkWell(
+                onTap: onToggle,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: complete
+                              ? const Color(0xFF16A34A)
+                              : showAttention
+                              ? const Color(0xFF355872)
+                              : const Color(0xFFC8E7FC).withValues(alpha: .7),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(
+                          complete ? Icons.check_rounded : icon,
+                          color: complete
+                              ? Colors.white
+                              : showAttention
+                              ? Colors.white
+                              : const Color(0xFF355872),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              appText(context, title),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF355872),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            if (expanded) ...[
+                              const SizedBox(height: 3),
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.auto_awesome_rounded,
+                                    color: Color(0xFF72787C),
+                                    size: 13,
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Expanded(
+                                    child: Text(
+                                      appText(context, suggestion),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Color(0xFF72787C),
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (showAttention) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF355872),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            appText(context, 'Next'),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      AnimatedRotation(
+                        turns: expanded ? .5 : 0,
+                        duration: duration,
+                        child: const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: Color(0xFF72787C),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF4F8FA),
-              borderRadius: BorderRadius.circular(14),
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.auto_awesome_rounded,
-                  color: Color(0xFF355872),
-                  size: 18,
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    appText(context, suggestion),
-                    style: const TextStyle(
-                      color: Color(0xFF42474C),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      height: 1.35,
-                    ),
-                  ),
-                ),
-              ],
+            AnimatedSize(
+              duration: duration,
+              curve: Curves.easeInOutCubic,
+              child: expanded
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          child,
+                          const SizedBox(height: 14),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFF355872),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 11,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                              ),
+                              onPressed: onDone,
+                              icon: const Icon(Icons.check_rounded, size: 17),
+                              label: Text(appText(context, 'Done')),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink(),
             ),
-          ),
-          const SizedBox(height: 14),
-          child,
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -5184,6 +5498,7 @@ class _ManualAccordionSection extends StatelessWidget {
     required this.subtitle,
     required this.expanded,
     required this.complete,
+    required this.attention,
     required this.onToggle,
     required this.onContinue,
     required this.children,
@@ -5195,6 +5510,7 @@ class _ManualAccordionSection extends StatelessWidget {
   final String subtitle;
   final bool expanded;
   final bool complete;
+  final bool attention;
   final VoidCallback onToggle;
   final VoidCallback onContinue;
   final List<Widget> children;
@@ -5206,21 +5522,32 @@ class _ManualAccordionSection extends StatelessWidget {
     final duration = performance.animationsEnabled
         ? performance.transitionDuration
         : Duration.zero;
+    final showAttention = attention && !complete;
+    final borderColor = complete
+        ? const Color(0xFF16A34A).withValues(alpha: .45)
+        : showAttention
+        ? const Color(0xFF355872).withValues(alpha: .65)
+        : const Color(0xFFC2C7CC).withValues(alpha: .24);
+    final headerColor = expanded
+        ? const Color(0xFFF7F8F0)
+        : showAttention
+        ? const Color(0xFFF4F8FA)
+        : Colors.white;
 
-    return Container(
+    return AnimatedContainer(
+      duration: duration,
+      curve: Curves.easeInOutCubic,
       decoration: BoxDecoration(
         color: const Color(0xFFFFFFFF),
         borderRadius: BorderRadius.circular(expanded ? 18 : 999),
-        border: Border.all(
-          color: complete
-              ? const Color(0xFF16A34A).withValues(alpha: .45)
-              : const Color(0xFFC2C7CC).withValues(alpha: .24),
-        ),
+        border: Border.all(color: borderColor),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF355872).withValues(alpha: .05),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
+            color: showAttention
+                ? const Color(0xFF355872).withValues(alpha: .16)
+                : const Color(0xFF355872).withValues(alpha: .05),
+            blurRadius: showAttention ? 30 : 24,
+            offset: Offset(0, showAttention ? 10 : 8),
           ),
         ],
       ),
@@ -5230,7 +5557,7 @@ class _ManualAccordionSection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Material(
-              color: expanded ? const Color(0xFFF7F8F0) : Colors.white,
+              color: headerColor,
               child: InkWell(
                 onTap: onToggle,
                 child: Padding(
@@ -5246,12 +5573,16 @@ class _ManualAccordionSection extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: complete
                               ? const Color(0xFF16A34A)
+                              : showAttention
+                              ? const Color(0xFF355872)
                               : const Color(0xFFC8E7FC).withValues(alpha: .65),
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: Icon(
                           complete ? Icons.check_rounded : icon,
                           color: complete
+                              ? Colors.white
+                              : showAttention
                               ? Colors.white
                               : const Color(0xFF355872),
                           size: 20,
@@ -5290,6 +5621,27 @@ class _ManualAccordionSection extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
+                      if (showAttention) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF355872),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            appText(context, 'Next'),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       AnimatedRotation(
                         turns: expanded ? .5 : 0,
                         duration: duration,
@@ -5877,6 +6229,8 @@ class _ManualPreviewCard extends StatelessWidget {
     required this.budget,
     required this.group,
     required this.preferences,
+    required this.expanded,
+    required this.onToggle,
   });
 
   final int completedSections;
@@ -5888,6 +6242,8 @@ class _ManualPreviewCard extends StatelessWidget {
   final String budget;
   final String group;
   final List<String> preferences;
+  final bool expanded;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -5928,41 +6284,55 @@ class _ManualPreviewCard extends StatelessWidget {
           completedSections: completedSections,
           totalSections: totalSections,
           progress: progress.toDouble(),
+          expanded: expanded,
+          onToggle: onToggle,
         );
 
-        return Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white,
+        return Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: const Color(0xFFC2C7CC).withValues(alpha: .22),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF355872).withValues(alpha: .06),
-                blurRadius: 28,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: isWide
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(width: 250, height: 248, child: image),
-                    const SizedBox(width: 16),
-                    Expanded(child: details),
-                  ],
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    SizedBox(height: 178, child: image),
-                    const SizedBox(height: 14),
-                    details,
-                  ],
+            onTap: onToggle,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: const Color(0xFFC2C7CC).withValues(alpha: .22),
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF355872).withValues(alpha: .06),
+                    blurRadius: 28,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: isWide
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 250,
+                          height: expanded ? 248 : 172,
+                          child: image,
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(child: details),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(height: 178, child: image),
+                        const SizedBox(height: 14),
+                        details,
+                      ],
+                    ),
+            ),
+          ),
         );
       },
     );
@@ -6083,6 +6453,8 @@ class _ManualPreviewDetails extends StatelessWidget {
     required this.completedSections,
     required this.totalSections,
     required this.progress,
+    required this.expanded,
+    required this.onToggle,
   });
 
   final String destination;
@@ -6093,10 +6465,16 @@ class _ManualPreviewDetails extends StatelessWidget {
   final int completedSections;
   final int totalSections;
   final double progress;
+  final bool expanded;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
     final isComplete = completedSections == totalSections;
+    final performance = PerformanceScope.maybeSettingsOf(context);
+    final duration = performance.animationsEnabled
+        ? performance.transitionDuration
+        : Duration.zero;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
@@ -6153,6 +6531,22 @@ class _ManualPreviewDetails extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(width: 10),
+              IconButton(
+                tooltip: appText(
+                  context,
+                  expanded ? 'Hide details' : 'Show details',
+                ),
+                onPressed: onToggle,
+                icon: AnimatedRotation(
+                  turns: expanded ? .5 : 0,
+                  duration: duration,
+                  child: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: Color(0xFF72787C),
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 14),
@@ -6173,27 +6567,48 @@ class _ManualPreviewDetails extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 14),
-          _ManualPreviewInfoRow(
-            icon: Icons.place_rounded,
-            label: 'Destination',
-            value: destination,
+          const SizedBox(height: 10),
+          Text(
+            appText(context, expanded ? 'Hide details' : 'View all details'),
+            style: const TextStyle(
+              color: Color(0xFF355872),
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-          _ManualPreviewInfoRow(
-            icon: Icons.event_rounded,
-            label: 'Dates',
-            value: dateRange,
-            helper: duration,
-          ),
-          _ManualPreviewInfoRow(
-            icon: Icons.payments_rounded,
-            label: 'Budget',
-            value: budget,
-          ),
-          _ManualPreviewInfoRow(
-            icon: Icons.tune_rounded,
-            label: 'Style',
-            value: preferenceText,
+          AnimatedSize(
+            duration: duration,
+            curve: Curves.easeInOutCubic,
+            child: expanded
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 14),
+                    child: Column(
+                      children: [
+                        _ManualPreviewInfoRow(
+                          icon: Icons.place_rounded,
+                          label: 'Destination',
+                          value: destination,
+                        ),
+                        _ManualPreviewInfoRow(
+                          icon: Icons.event_rounded,
+                          label: 'Dates',
+                          value: dateRange,
+                          helper: this.duration,
+                        ),
+                        _ManualPreviewInfoRow(
+                          icon: Icons.payments_rounded,
+                          label: 'Budget',
+                          value: budget,
+                        ),
+                        _ManualPreviewInfoRow(
+                          icon: Icons.tune_rounded,
+                          label: 'Style',
+                          value: preferenceText,
+                        ),
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),
