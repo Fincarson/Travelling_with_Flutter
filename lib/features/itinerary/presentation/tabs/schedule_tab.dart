@@ -353,14 +353,8 @@ class _ScheduleTabState extends State<ScheduleTab> {
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
       children: [
-        _ScheduleDayTabs(
-          days: days,
-          selectedDay: _selectedDay,
-          onSelect: (day) => setState(() => _selectedDay = day),
-        ),
-        const SizedBox(height: 16),
         PrimaryButton(
-          label: 'Add Destination',
+          label: 'Add schedule stop',
           icon: Icons.add_rounded,
           onPressed: () => _addScheduleStop(context),
         ),
