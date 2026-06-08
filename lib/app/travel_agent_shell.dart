@@ -638,6 +638,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         return CreateTripScreen(
           key: const ValueKey('create'),
           profileLanguage: _user.language,
+          savedTrips: _trips,
           onBack: () => setState(() {
             _screen = _Screen.dashboard;
             _tab = _NavTab.home;

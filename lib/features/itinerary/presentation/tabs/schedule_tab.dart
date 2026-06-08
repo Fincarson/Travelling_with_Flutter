@@ -11,8 +11,34 @@ class ScheduleTab extends StatefulWidget {
 }
 
 class _ScheduleTabState extends State<ScheduleTab> {
+  late int _selectedDay;
+
   Trip get trip => widget.trip;
   ValueChanged<Trip> get onSave => widget.onSave;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedDay = _tripRuntimePlan(widget.trip).currentDay;
+  }
+
+  @override
+  void didUpdateWidget(covariant ScheduleTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final days = _scheduleDays(widget.trip.items);
+    if (!days.contains(_selectedDay)) {
+      _selectedDay = days.first;
+    }
+  }
+
+  List<int> _scheduleDays(List<ScheduleItem> items) {
+    final totalDays = _tripRuntimePlan(widget.trip).totalDays;
+    final days = <int>{for (var day = 1; day <= totalDays; day++) day};
+    for (final item in items) {
+      days.add(math.max(1, item.day));
+    }
+    return days.toList()..sort();
+  }
 
   Future<void> _addScheduleStop(BuildContext context) async {
     final mode = await showModalBottomSheet<_ScheduleStopMode>(
@@ -319,6 +345,10 @@ class _ScheduleTabState extends State<ScheduleTab> {
       final item = trip.items[index];
       grouped.putIfAbsent(item.day, () => []).add((index: index, item: item));
     }
+    final days = _scheduleDays(widget.trip.items);
+    final visibleDays = grouped.containsKey(_selectedDay)
+        ? [_selectedDay]
+        : const <int>[];
 
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
@@ -326,7 +356,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
         PrimaryButton(
           label: 'Add schedule stop',
           icon: Icons.add_rounded,
-          onPressed: () => unawaited(_addScheduleStop(context)),
+          onPressed: () => _addScheduleStop(context),
         ),
         const SizedBox(height: 16),
         if (trip.status == TripStatus.ongoing) ...[
@@ -390,7 +420,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
           ),
           const SizedBox(height: 12),
         ],
-        for (final day in grouped.keys.toList()..sort()) ...[
+        for (final day in visibleDays) ...[
           LabelText('${appText(context, 'Day')} $day'),
           const SizedBox(height: 10),
           for (final entry in grouped[day]!)
@@ -417,6 +447,105 @@ class _ScheduleTabState extends State<ScheduleTab> {
             ),
         ],
       ],
+    );
+  }
+}
+
+class _ScheduleDayTabs extends StatelessWidget {
+  const _ScheduleDayTabs({
+    required this.days,
+    required this.selectedDay,
+    required this.onSelect,
+  });
+
+  final List<int> days;
+  final int selectedDay;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 92,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: days.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final day = days[index];
+          return _ScheduleDayTab(
+            day: day,
+            selected: day == selectedDay,
+            onTap: () => onSelect(day),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ScheduleDayTab extends StatelessWidget {
+  const _ScheduleDayTab({
+    required this.day,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int day;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Day $day',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          width: 84,
+          height: 84,
+          decoration: BoxDecoration(
+            color: selected ? _primary : Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: selected ? _primary : const Color(0xFFEFF3F6),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: _primary.withValues(alpha: selected ? .16 : .06),
+                blurRadius: selected ? 18 : 12,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                appText(context, 'DAY'),
+                style: TextStyle(
+                  color: selected ? _accent : _secondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$day',
+                style: TextStyle(
+                  color: selected ? Colors.white : _primary,
+                  fontSize: 34,
+                  height: .95,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
