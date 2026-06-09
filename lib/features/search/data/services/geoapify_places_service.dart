@@ -28,17 +28,66 @@ class GeoapifyPlacesService {
     required double longitude,
   }) async {
     if (LocalApiKeys.hasGeoapifyApiKey) {
-      return _reverseLocationDirectly(latitude: latitude, longitude: longitude);
+      try {
+        final place = await _reverseLocationDirectly(
+          latitude: latitude,
+          longitude: longitude,
+        );
+        if (place != null) return place;
+      } catch (_) {}
+      return _reverseLocationWithNominatim(
+        latitude: latitude,
+        longitude: longitude,
+      );
     }
 
-    final callable = _functions.httpsCallable('reversePlace');
+    try {
+      final callable = _functions.httpsCallable('reversePlace');
+      final response = await callable.call<Map<String, dynamic>>({
+        'latitude': latitude,
+        'longitude': longitude,
+      });
+      final result = response.data['result'];
+      if (result is Map) {
+        return PlaceSuggestion.fromMap(Map<String, dynamic>.from(result));
+      }
+    } catch (_) {}
+
+    return _reverseLocationWithNominatim(
+      latitude: latitude,
+      longitude: longitude,
+    );
+  }
+
+  Future<List<PlaceSuggestion>> searchNearbyPlaces({
+    required double latitude,
+    required double longitude,
+    required List<String> categories,
+    int radiusMeters = 1200,
+    int limit = 8,
+  }) async {
+    if (categories.isEmpty) return const [];
+
+    if (LocalApiKeys.hasGeoapifyApiKey) {
+      return _searchNearbyPlacesDirectly(
+        latitude: latitude,
+        longitude: longitude,
+        categories: categories,
+        radiusMeters: radiusMeters,
+        limit: limit,
+      );
+    }
+
+    final callable = _functions.httpsCallable('searchNearbyPlaces');
     final response = await callable.call<Map<String, dynamic>>({
       'latitude': latitude,
       'longitude': longitude,
+      'categories': categories,
+      'radiusMeters': radiusMeters,
+      'limit': limit,
     });
-    final result = response.data['result'];
-    if (result is! Map) return null;
-    return PlaceSuggestion.fromMap(Map<String, dynamic>.from(result));
+    final results = (response.data['results'] as List<dynamic>?) ?? const [];
+    return _placeSuggestionsFromResults(results);
   }
 
   Future<List<PlaceSuggestion>> _searchDestinationsDirectly(
@@ -77,6 +126,48 @@ class GeoapifyPlacesService {
     return places.isEmpty ? null : places.first;
   }
 
+  Future<PlaceSuggestion?> _reverseLocationWithNominatim({
+    required double latitude,
+    required double longitude,
+  }) async {
+    final url = Uri.https('nominatim.openstreetmap.org', '/reverse', {
+      'lat': latitude.toString(),
+      'lon': longitude.toString(),
+      'format': 'jsonv2',
+      'addressdetails': '1',
+      'zoom': '18',
+    });
+
+    final response = await http.get(
+      url,
+      headers: const {
+        'User-Agent': 'TravellingWithFlutter/1.0 reverse-geocoding',
+        'Accept': 'application/json',
+      },
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) return null;
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final displayName = (body['display_name'] as String?)?.trim();
+    if (displayName == null || displayName.isEmpty) return null;
+
+    final address = body['address'] is Map
+        ? Map<String, dynamic>.from(body['address'] as Map)
+        : const <String, dynamic>{};
+    final name = _nominatimAddressName(address, displayName);
+
+    return PlaceSuggestion(
+      name: name,
+      formatted: displayName,
+      latitude: double.tryParse((body['lat'] as String?) ?? '') ?? latitude,
+      longitude: double.tryParse((body['lon'] as String?) ?? '') ?? longitude,
+      placeId:
+          'osm-${body['osm_type'] ?? 'place'}-${body['osm_id'] ?? displayName}',
+      country: address['country'] as String?,
+      resultType: body['type'] as String?,
+    );
+  }
+
   Future<List<PlaceSuggestion>> _fetchDestinationsByType(
     String query,
     String type,
@@ -97,6 +188,33 @@ class GeoapifyPlacesService {
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     final results = (body['results'] as List<dynamic>?) ?? const [];
     return _placeSuggestionsFromResults(results);
+  }
+
+  Future<List<PlaceSuggestion>> _searchNearbyPlacesDirectly({
+    required double latitude,
+    required double longitude,
+    required List<String> categories,
+    required int radiusMeters,
+    required int limit,
+  }) async {
+    final lon = longitude.toString();
+    final lat = latitude.toString();
+    final url = Uri.https('api.geoapify.com', '/v2/places', {
+      'categories': categories.join(','),
+      'filter': 'circle:$lon,$lat,$radiusMeters',
+      'bias': 'proximity:$lon,$lat',
+      'limit': limit.clamp(1, 20).toString(),
+      'apiKey': LocalApiKeys.geoapifyApiKey,
+    });
+
+    final response = await http.get(url);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Nearby places are unavailable.');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final features = (body['features'] as List<dynamic>?) ?? const [];
+    return _placeSuggestionsFromResults(features);
   }
 
   List<PlaceSuggestion> _placeSuggestionsFromResults(List<dynamic> results) {
@@ -146,4 +264,22 @@ class GeoapifyPlacesService {
     if (isCountry) return 3;
     return 4;
   }
+}
+
+String _nominatimAddressName(Map<String, dynamic> address, String displayName) {
+  for (final key in const [
+    'amenity',
+    'building',
+    'house_number',
+    'road',
+    'neighbourhood',
+    'suburb',
+    'city',
+    'town',
+    'village',
+  ]) {
+    final value = (address[key] as String?)?.trim();
+    if (value != null && value.isNotEmpty) return value;
+  }
+  return displayName.split(',').first.trim();
 }

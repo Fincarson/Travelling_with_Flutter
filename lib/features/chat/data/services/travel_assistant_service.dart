@@ -140,6 +140,7 @@ class TravelAssistantService {
         endDate: endDate,
         startLocation: tripStartLocation,
         currency: currency,
+        preferences: preferences,
       );
     }
 
@@ -156,8 +157,16 @@ class TravelAssistantService {
               'Generate a practical travel schedule as strict JSON only.',
               'Use current attraction names for the destination.',
               'Keep costs realistic but approximate.',
+              'Treat selected tags and custom preference tags as concrete itinerary requirements, not decorative labels.',
+              'For each distinctive tag, include at least one matching schedule item, venue area, event search, food stop, accessibility choice, or practical constraint.',
+              'For example, anime should trigger anime convention/event-calendar research when dates match, or anime districts, stores, themed cafes, arcades, museums, or pop-culture stops when no convention is current.',
+              'Halal food should trigger halal restaurants or Muslim-friendly food areas. Wheelchair access should trigger accessible transit and step-free venues.',
               'Use appContext.localDate and appContext.timeZoneOffset as today context.',
               'Use startLocation as the trip origin when provided. If startLocation is missing, use appContext.location when available.',
+              'If startLocation has an address, use that address as the origin reference; do not show raw coordinates in user-facing itinerary text.',
+              'Use web search to identify the nearest practical station, bus stop, airport, ferry terminal, HSR/rail station, or transit hub from the origin address before recommending transport to the destination.',
+              'Distribute activities across every date in the trip. Do not leave middle or later days empty.',
+              'For trips of 3 or more days, include at least 2 useful schedule items per day and 3 on full sightseeing days.',
               'Day 1 must start with realistic transportation from the trip origin to the destination before destination activities.',
               'The final trip day must include realistic return transportation home after the destination activities.',
               'For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.',
@@ -248,6 +257,7 @@ class TravelAssistantService {
       endDate: endDate,
       startLocation: tripStartLocation,
       currency: currency,
+      preferences: preferences,
     );
   }
 
@@ -486,7 +496,7 @@ Map<String, dynamic> _tripPlanTextFormat() => {
       'items': {
         'type': 'array',
         'minItems': 3,
-        'maxItems': 12,
+        'maxItems': 24,
         'items': {
           'type': 'object',
           'additionalProperties': false,
@@ -693,7 +703,7 @@ class GeneratedTripPlan {
             (data['cost'] as num?)?.toInt() ?? 0,
           );
         })
-        .take(12)
+        .take(24)
         .toList();
 
     final bookings = ((map['bookings'] as List<dynamic>?) ?? const [])

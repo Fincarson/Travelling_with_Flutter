@@ -17,6 +17,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   static const _tripDeleteUndoWindow = Duration(seconds: 5);
   StreamSubscription<UserProfile?>? _userSubscription;
   StreamSubscription<List<Trip>>? _tripsSubscription;
+  StreamSubscription<List<TripMemory>>? _memoriesSubscription;
   var _isLoading = true;
   var _tab = _NavTab.home;
   var _screen = _Screen.dashboard;
@@ -24,6 +25,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   var _tripDetailInitialTab = 0;
   var _user = const UserProfile(name: '', email: '', interests: []);
   final List<Trip> _trips = [];
+  final List<TripMemory> _tripMemories = [];
   final Map<String, Timer> _pendingTripDeleteTimers = {};
   final Set<String> _pendingTripDeleteIds = {};
   Trip? _selectedTrip;
@@ -76,14 +78,20 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       await _saveLocalProfile(accountId, user);
     }
 
+    await _archiveExpiredTripsQuietly(accountId);
+
     try {
       final trips = await _repository.loadTrips(accountId);
+      final memories = await _repository.loadTripMemories(accountId);
       if (!mounted) return;
       final visibleTrips = _withoutPendingDeletes(trips);
       setState(() {
         _trips
           ..clear()
           ..addAll(trips);
+        _tripMemories
+          ..clear()
+          ..addAll(memories);
         _activeTrip = _firstOngoingTrip(visibleTrips);
         _loadError = loadError.isEmpty ? null : loadError.join('\n');
       });
@@ -99,6 +107,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   void _watchAccountData(String accountId) {
     _userSubscription?.cancel();
     _tripsSubscription?.cancel();
+    _memoriesSubscription?.cancel();
 
     _userSubscription = _repository
         .watchUser(accountId)
@@ -145,6 +154,27 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onError: (Object error) {
             if (!mounted) return;
             setState(() => _loadError = 'Could not sync trip data: $error');
+          },
+        );
+
+    _memoriesSubscription = _repository
+        .watchTripMemories(accountId)
+        .listen(
+          (memories) {
+            if (!mounted) return;
+            setState(() {
+              _tripMemories
+                ..clear()
+                ..addAll(memories);
+            });
+          },
+          onError: (Object error) {
+            if (!mounted) return;
+            if (error is FirebaseException &&
+                error.code == 'permission-denied') {
+              return;
+            }
+            setState(() => _loadError = 'Could not sync trip memories: $error');
           },
         );
   }
@@ -413,13 +443,18 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   Future<void> _refreshTripsFromBackend({String? selectTripId}) async {
     final accountId = _accountId ?? widget.account.uid;
     try {
+      await _archiveExpiredTripsQuietly(accountId);
       final trips = await _repository.loadTrips(accountId);
+      final memories = await _repository.loadTripMemories(accountId);
       if (!mounted) return;
       final visibleTrips = _withoutPendingDeletes(trips);
       setState(() {
         _trips
           ..clear()
           ..addAll(trips);
+        _tripMemories
+          ..clear()
+          ..addAll(memories);
         _activeTrip = _firstOngoingTrip(visibleTrips);
         _selectedTrip =
             _tripById(visibleTrips, selectTripId) ??
@@ -430,6 +465,15 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = 'Could not refresh trip data: $error');
+    }
+  }
+
+  Future<void> _archiveExpiredTripsQuietly(String accountId) async {
+    try {
+      await _repository.archiveExpiredTrips(accountId);
+    } on FirebaseException catch (error) {
+      if (error.code == 'permission-denied') return;
+      rethrow;
     }
   }
 
@@ -450,6 +494,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   void dispose() {
     _userSubscription?.cancel();
     _tripsSubscription?.cancel();
+    _memoriesSubscription?.cancel();
     for (final timer in _pendingTripDeleteTimers.values) {
       timer.cancel();
     }
@@ -577,6 +622,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             TripsScreen(
               key: const PageStorageKey('trips-tab'),
               trips: _visibleTrips,
+              memories: _tripMemories,
               onBack: () => setState(() => _screen = _Screen.dashboard),
               onCreate: () => setState(() {
                 _screen = _Screen.create;
@@ -683,6 +729,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         return TripsScreen(
           key: const ValueKey('trips'),
           trips: _visibleTrips,
+          memories: _tripMemories,
           onBack: () => setState(() => _screen = _Screen.dashboard),
           onCreate: () => setState(() {
             _screen = _Screen.create;
@@ -803,6 +850,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   Future<void> _syncTripReminders() {
     return _notificationService.syncTripReminders(
       activeTrip: _activeTrip,
+      trips: _visibleTrips,
       enabled: _user.notificationsEnabled,
     );
   }

@@ -6,9 +6,9 @@ class TripNotificationService {
 
   static const _scheduledIdsKey = 'travel_agent.scheduled_activity_ids';
   static const _channelId = 'trip_activity_reminders';
-  static const _channelName = 'Trip activity reminders';
+  static const _channelName = 'Trip reminders';
   static const _channelDescription =
-      'Reminders one hour before scheduled trip activities.';
+      'Trip start reminders and activity reminders.';
   static const _maxScheduledActivities = 48;
 
   final FlutterLocalNotificationsPlugin _notifications;
@@ -17,13 +17,12 @@ class TripNotificationService {
 
   Future<void> syncTripReminders({
     required Trip? activeTrip,
+    required List<Trip> trips,
     required bool enabled,
   }) async {
     await _ensureInitialized();
 
-    if (!enabled ||
-        activeTrip == null ||
-        activeTrip.status != TripStatus.ongoing) {
+    if (!enabled) {
       await cancelTripReminders();
       return;
     }
@@ -38,24 +37,61 @@ class TripNotificationService {
 
     final scheduledIds = <int>[];
     final now = _travelAgentNow();
-    for (var index = 0; index < activeTrip.items.length; index++) {
-      if (scheduledIds.length >= _maxScheduledActivities) break;
 
-      final item = activeTrip.items[index];
-      final startAt = _scheduleItemStartAt(activeTrip, item);
-      if (startAt == null) continue;
+    for (final trip in trips) {
+      if (trip.status != TripStatus.upcoming) continue;
+      final startDate = _parseTripDate(trip.startDate);
+      if (startDate == null) continue;
 
-      final notifyAt = startAt.subtract(const Duration(hours: 1));
-      if (!notifyAt.isAfter(now)) continue;
+      final dayBefore = startDate
+          .subtract(const Duration(days: 1))
+          .add(const Duration(hours: 9));
+      if (dayBefore.isAfter(now)) {
+        final id = _notificationId(trip.id, 9001);
+        await _scheduleTripStartReminder(
+          id: id,
+          trip: trip,
+          notifyAt: dayBefore,
+          title: '${trip.destination} starts tomorrow',
+          body: 'Open your itinerary and start the trip when you are ready.',
+        );
+        scheduledIds.add(id);
+      }
 
-      final id = _notificationId(activeTrip.id, index);
-      await _scheduleActivityReminder(
-        id: id,
-        trip: activeTrip,
-        item: item,
-        notifyAt: notifyAt,
-      );
-      scheduledIds.add(id);
+      final departureDay = startDate.add(const Duration(hours: 8));
+      if (departureDay.isAfter(now)) {
+        final id = _notificationId(trip.id, 9002);
+        await _scheduleTripStartReminder(
+          id: id,
+          trip: trip,
+          notifyAt: departureDay,
+          title: '${trip.destination} starts today',
+          body: 'Your trip is waiting. Tap Start trip to activate the agent.',
+        );
+        scheduledIds.add(id);
+      }
+    }
+
+    if (activeTrip != null && activeTrip.status == TripStatus.ongoing) {
+      for (var index = 0; index < activeTrip.items.length; index++) {
+        if (scheduledIds.length >= _maxScheduledActivities) break;
+
+        final item = activeTrip.items[index];
+        final startAt = _scheduleItemStartAt(activeTrip, item);
+        if (startAt == null) continue;
+
+        final notifyAt = startAt.subtract(const Duration(hours: 1));
+        if (!notifyAt.isAfter(now)) continue;
+
+        final id = _notificationId(activeTrip.id, index);
+        await _scheduleActivityReminder(
+          id: id,
+          trip: activeTrip,
+          item: item,
+          notifyAt: notifyAt,
+        );
+        scheduledIds.add(id);
+      }
     }
 
     await _saveScheduledIds(scheduledIds);
@@ -143,6 +179,36 @@ class TripNotificationService {
     final scheduledAt = tz.TZDateTime.from(notifyAt, tz.local);
     final title = '${trip.destination} in 1 hour';
     final body = '${item.time} - ${item.activity}';
+
+    await _notifications.zonedSchedule(
+      id: id,
+      title: title,
+      body: body,
+      scheduledDate: scheduledAt,
+      notificationDetails: const NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelId,
+          _channelName,
+          channelDescription: _channelDescription,
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+        iOS: DarwinNotificationDetails(),
+        macOS: DarwinNotificationDetails(),
+      ),
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      payload: trip.id,
+    );
+  }
+
+  Future<void> _scheduleTripStartReminder({
+    required int id,
+    required Trip trip,
+    required DateTime notifyAt,
+    required String title,
+    required String body,
+  }) async {
+    final scheduledAt = tz.TZDateTime.from(notifyAt, tz.local);
 
     await _notifications.zonedSchedule(
       id: id,

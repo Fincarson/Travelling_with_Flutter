@@ -128,7 +128,7 @@ class _BudgetCategoryEditor extends StatelessWidget {
                 controller: actual,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  labelText: '${appText(context, 'Actual')} $currency',
+                  labelText: '${appText(context, 'Spent')} $currency',
                 ),
                 onSubmitted: (_) => onChanged(
                   category.copyWith(

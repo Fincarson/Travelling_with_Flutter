@@ -17,6 +17,9 @@ class TravelDataRepository {
   CollectionReference<Map<String, dynamic>> _membershipsRef(String accountId) =>
       _userDoc(accountId).collection('tripMemberships');
 
+  CollectionReference<Map<String, dynamic>> _memoriesRef(String accountId) =>
+      _userDoc(accountId).collection('tripMemories');
+
   CollectionReference<Map<String, dynamic>> get _sharedTripsRef =>
       _firestore.collection('trips');
 
@@ -52,6 +55,47 @@ class TravelDataRepository {
     await migrateLegacyTrips(accountId);
     final memberships = await _membershipsRef(accountId).get();
     return _tripsFromMemberships(memberships.docs);
+  }
+
+  Future<List<TripMemory>> loadTripMemories(String accountId) async {
+    try {
+      final snapshot = await _memoriesRef(accountId).get();
+      return _memoriesFromDocs(snapshot.docs);
+    } on FirebaseException catch (error) {
+      if (error.code == 'permission-denied') return const [];
+      rethrow;
+    }
+  }
+
+  Stream<List<TripMemory>> watchTripMemories(String accountId) {
+    return _memoriesRef(
+      accountId,
+    ).snapshots().map((snapshot) => _memoriesFromDocs(snapshot.docs));
+  }
+
+  Future<void> archiveExpiredTrips(String accountId, {DateTime? now}) async {
+    await migrateLegacyTrips(accountId);
+    final memberships = await _membershipsRef(accountId).get();
+    final trips = await _tripsFromMemberships(memberships.docs);
+    final current = now ?? _travelAgentNow();
+
+    for (final trip in trips) {
+      if (!_shouldArchiveExpiredTrip(trip, current)) continue;
+      try {
+        await _memoriesRef(
+          accountId,
+        ).doc(trip.id).set(TripMemory.fromTrip(trip, now: current).toMap());
+      } on FirebaseException catch (error) {
+        if (error.code != 'permission-denied') rethrow;
+      }
+
+      try {
+        await _removeAccountFromTrip(accountId, trip.id);
+      } on FirebaseException catch (error) {
+        if (error.code != 'permission-denied') rethrow;
+        await _membershipsRef(accountId).doc(trip.id).delete();
+      }
+    }
   }
 
   Stream<List<Trip>> watchTrips(String accountId) {
@@ -158,6 +202,14 @@ class TravelDataRepository {
       trips.add(await _tripFromSharedDoc(tripDoc));
     }
     return trips;
+  }
+
+  List<TripMemory> _memoriesFromDocs(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    final memories = docs.map(TripMemory.fromDoc).toList();
+    memories.sort((a, b) => b.archivedAtKey.compareTo(a.archivedAtKey));
+    return memories;
   }
 
   Future<Trip> _tripFromSharedDoc(
@@ -547,4 +599,11 @@ List<String> _stringList(Object? value) =>
 int _timestampMillis(Object? value) {
   if (value is Timestamp) return value.millisecondsSinceEpoch;
   return 0;
+}
+
+bool _shouldArchiveExpiredTrip(Trip trip, DateTime now) {
+  final endDate = _parseTripDate(trip.endDate);
+  if (endDate == null) return false;
+  final archiveDate = _dateOnly(endDate.add(const Duration(days: 1)));
+  return !_dateOnly(now).isBefore(archiveDate);
 }

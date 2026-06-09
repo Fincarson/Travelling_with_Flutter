@@ -3,6 +3,7 @@ part of travel_agent_app;
 class TripsScreen extends StatelessWidget {
   const TripsScreen({
     required this.trips,
+    required this.memories,
     required this.onBack,
     required this.onCreate,
     required this.onOpenTrip,
@@ -11,6 +12,7 @@ class TripsScreen extends StatelessWidget {
     super.key,
   });
   final List<Trip> trips;
+  final List<TripMemory> memories;
   final VoidCallback onBack;
   final VoidCallback onCreate;
   final ValueChanged<Trip> onOpenTrip;
@@ -75,6 +77,123 @@ class TripsScreen extends StatelessWidget {
                   onDelete: () => onDeleteTrip(trip),
                 ),
               ),
+          if (memories.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const LabelText('Trip memories'),
+            const SizedBox(height: 10),
+            for (final memory in memories)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _TripMemoryCard(memory: memory),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TripMemoryCard extends StatelessWidget {
+  const _TripMemoryCard({required this.memory});
+
+  final TripMemory memory;
+
+  @override
+  Widget build(BuildContext context) {
+    final image = memory.imageUrls.isEmpty
+        ? destinations.first.image
+        : memory.imageUrls.first;
+    final dateLabel = memory.startDate == memory.endDate
+        ? memory.startDate
+        : '${memory.startDate} to ${memory.endDate}';
+    final missedLabel = memory.missedStops.isEmpty
+        ? 'No missed stops logged'
+        : memory.missedStops.join(' / ');
+
+    return GlassPanel(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: Image.network(
+              image,
+              width: 88,
+              height: 88,
+              fit: BoxFit.cover,
+              filterQuality: PerformanceScope.maybeSettingsOf(
+                context,
+              ).filterQuality,
+              errorBuilder: (_, __, ___) => const ColoredBox(color: _primary),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.auto_stories_rounded,
+                      color: _secondary,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        memory.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _primary,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  dateLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  memory.summary,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _primary,
+                    fontWeight: FontWeight.w700,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    SmallPill(
+                      label:
+                          '${memory.currency} ${memory.actualSpend} remembered',
+                    ),
+                    SmallPill(label: missedLabel),
+                    for (final place in memory.favoritePlaces.take(2))
+                      SmallPill(label: place),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
