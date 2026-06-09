@@ -47,20 +47,29 @@ class AppDeviceContext {
 class TripStartLocation {
   const TripStartLocation({
     required this.label,
+    this.address,
     this.latitude,
     this.longitude,
     this.isCurrentLocation = false,
   });
 
   final String label;
+  final String? address;
   final double? latitude;
   final double? longitude;
   final bool isCurrentLocation;
 
   bool get hasCoordinates => latitude != null && longitude != null;
+  String get displayLabel {
+    final value = (address == null || address!.trim().isEmpty)
+        ? label
+        : address!;
+    return value.trim();
+  }
 
   Map<String, dynamic> toAiMap() => {
     'label': label,
+    'address': address,
     'latitude': latitude,
     'longitude': longitude,
     'isCurrentLocation': isCurrentLocation,
@@ -79,6 +88,7 @@ class TripStartLocation {
   static TripStartLocation fromPlace(PlaceSuggestion place) =>
       TripStartLocation(
         label: place.name,
+        address: place.formatted,
         latitude: place.latitude == 0 ? null : place.latitude,
         longitude: place.longitude == 0 ? null : place.longitude,
       );

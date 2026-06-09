@@ -140,7 +140,7 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
       _TripDetailSection(
         label: 'Overview',
         icon: Icons.dashboard_rounded,
-        child: TripOverviewTab(trip: _trip),
+        child: TripOverviewTab(trip: _trip, onSave: _save),
       ),
       _TripDetailSection(
         label: 'Schedule',

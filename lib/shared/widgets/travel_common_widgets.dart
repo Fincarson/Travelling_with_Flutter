@@ -149,16 +149,17 @@ class StatCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
-                Text(
-                  appText(context, detail),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _secondary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
+                if (detail.trim().isNotEmpty)
+                  Text(
+                    appText(context, detail),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _secondary,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
               ],
             ),
           ),

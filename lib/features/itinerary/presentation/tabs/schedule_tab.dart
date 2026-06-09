@@ -12,6 +12,8 @@ class ScheduleTab extends StatefulWidget {
 
 class _ScheduleTabState extends State<ScheduleTab> {
   late int _selectedDay;
+  final Set<int> _autofillAttemptedDays = {};
+  var _isAutofillingDay = false;
 
   Trip get trip => widget.trip;
   ValueChanged<Trip> get onSave => widget.onSave;
@@ -20,6 +22,9 @@ class _ScheduleTabState extends State<ScheduleTab> {
   void initState() {
     super.initState();
     _selectedDay = _tripRuntimePlan(widget.trip).currentDay;
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _maybeAutofillSelectedDay(),
+    );
   }
 
   @override
@@ -29,6 +34,9 @@ class _ScheduleTabState extends State<ScheduleTab> {
     if (!days.contains(_selectedDay)) {
       _selectedDay = days.first;
     }
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _maybeAutofillSelectedDay(),
+    );
   }
 
   List<int> _scheduleDays(List<ScheduleItem> items) {
@@ -85,6 +93,57 @@ class _ScheduleTabState extends State<ScheduleTab> {
     };
     if (item == null) return;
     onSave(trip.copyWith(items: [...trip.items, item]));
+  }
+
+  Future<void> _maybeAutofillSelectedDay() async {
+    if (!mounted || _isAutofillingDay) return;
+    final runtime = _tripRuntimePlan(trip);
+    final day = _selectedDay.clamp(1, runtime.totalDays);
+    if (_autofillAttemptedDays.contains(day)) return;
+    if (trip.items.any((item) => item.day == day)) return;
+
+    _autofillAttemptedDays.add(day);
+    setState(() => _isAutofillingDay = true);
+
+    final generated = <ScheduleItem>[];
+    var workingTrip = trip;
+    for (final request in _dailyAutofillRequests(day, runtime.totalDays)) {
+      try {
+        final item = await TravelAssistantService()
+            .generateScheduleStop(
+              trip: workingTrip,
+              day: day,
+              description: request,
+            )
+            .timeout(const Duration(seconds: 12));
+        generated.add(item);
+        workingTrip = workingTrip.copyWith(items: [...workingTrip.items, item]);
+      } catch (_) {
+        final item = _fallbackAiScheduleStop(workingTrip, day, request);
+        generated.add(item);
+        workingTrip = workingTrip.copyWith(items: [...workingTrip.items, item]);
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _isAutofillingDay = false);
+    if (generated.isEmpty) return;
+    onSave(trip.copyWith(items: [...trip.items, ...generated]));
+  }
+
+  List<String> _dailyAutofillRequests(int day, int totalDays) {
+    final destination = trip.destination.split(',').first.trim();
+    if (day == totalDays) {
+      return [
+        'Create a relaxed final-morning stop in $destination before departure.',
+        'Create a lunch or last-neighborhood stop that leaves time to return home.',
+      ];
+    }
+    return [
+      'Create a morning anchor activity for day $day in $destination.',
+      'Create a lunch or rest stop for day $day in $destination.',
+      'Create an afternoon or evening activity for day $day in $destination.',
+    ];
   }
 
   Future<ScheduleItem?> _manualScheduleStopDialog(BuildContext context) async {
@@ -346,9 +405,8 @@ class _ScheduleTabState extends State<ScheduleTab> {
       grouped.putIfAbsent(item.day, () => []).add((index: index, item: item));
     }
     final days = _scheduleDays(widget.trip.items);
-    final visibleDays = grouped.containsKey(_selectedDay)
-        ? [_selectedDay]
-        : const <int>[];
+    final selectedEntries =
+        grouped[_selectedDay] ?? const <({int index, ScheduleItem item})>[];
 
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
@@ -357,6 +415,17 @@ class _ScheduleTabState extends State<ScheduleTab> {
           label: 'Add schedule stop',
           icon: Icons.add_rounded,
           onPressed: () => _addScheduleStop(context),
+        ),
+        const SizedBox(height: 16),
+        _ScheduleDayTabs(
+          days: days,
+          selectedDay: _selectedDay,
+          onSelect: (day) {
+            setState(() => _selectedDay = day);
+            WidgetsBinding.instance.addPostFrameCallback(
+              (_) => _maybeAutofillSelectedDay(),
+            );
+          },
         ),
         const SizedBox(height: 16),
         if (trip.status == TripStatus.ongoing) ...[
@@ -420,10 +489,16 @@ class _ScheduleTabState extends State<ScheduleTab> {
           ),
           const SizedBox(height: 12),
         ],
-        for (final day in visibleDays) ...[
-          LabelText('${appText(context, 'Day')} $day'),
-          const SizedBox(height: 10),
-          for (final entry in grouped[day]!)
+        LabelText('${appText(context, 'Day')} $_selectedDay'),
+        const SizedBox(height: 10),
+        if (selectedEntries.isEmpty)
+          _ScheduleAutofillPanel(
+            day: _selectedDay,
+            isLoading: _isAutofillingDay,
+            onFill: _isAutofillingDay ? null : _maybeAutofillSelectedDay,
+          )
+        else
+          for (final entry in selectedEntries)
             Dismissible(
               key: ValueKey(
                 '${entry.index}-${entry.item.day}-${entry.item.time}-${entry.item.activity}',
@@ -445,8 +520,64 @@ class _ScheduleTabState extends State<ScheduleTab> {
                 onDelete: () => _removeScheduleStop(entry.index),
               ),
             ),
-        ],
       ],
+    );
+  }
+}
+
+class _ScheduleAutofillPanel extends StatelessWidget {
+  const _ScheduleAutofillPanel({
+    required this.day,
+    required this.isLoading,
+    required this.onFill,
+  });
+
+  final int day;
+  final bool isLoading;
+  final VoidCallback? onFill;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      child: Row(
+        children: [
+          IconBadge(
+            icon: isLoading ? Icons.auto_awesome_rounded : Icons.route_rounded,
+            size: 46,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LabelText(isLoading ? 'Schedule agent working' : 'Empty day'),
+                const SizedBox(height: 4),
+                Text(
+                  isLoading
+                      ? 'Building a balanced Day $day plan now.'
+                      : 'Day $day has no stops yet. Let the schedule agent fill it.',
+                  style: const TextStyle(
+                    color: _primary,
+                    fontWeight: FontWeight.w900,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isLoading)
+            const SizedBox.square(
+              dimension: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.4),
+            )
+          else
+            IconButton.filled(
+              tooltip: appText(context, 'Fill day with AI'),
+              onPressed: onFill,
+              icon: const Icon(Icons.auto_fix_high_rounded),
+            ),
+        ],
+      ),
     );
   }
 }

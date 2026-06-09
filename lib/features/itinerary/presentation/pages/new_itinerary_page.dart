@@ -31,6 +31,8 @@ class _TripTemplate {
   final String badge;
 }
 
+enum _TimingPresetProfile { nearby, farDomestic, international }
+
 class _CreateTripScreenState extends State<CreateTripScreen> {
   static const _createTripChatTurnTimeout = Duration(seconds: 15);
   static const _tripGenerationTurnTimeout = Duration(seconds: 60);
@@ -416,7 +418,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _tripStartLocation ??= TripStartLocation.fromContext(context);
       if (_tripStartLocation?.isCurrentLocation == true &&
           _startLocation.text.trim().isEmpty) {
-        _startLocation.text = _tripStartLocation!.label;
+        _startLocation.text = 'Finding nearby address...';
       }
       if (_startDate.difference(oldToday).inDays == 0 &&
           _endDate.difference(oldToday).inDays == 5) {
@@ -424,6 +426,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         _endDate = newToday.add(const Duration(days: 5));
       }
     });
+    final start = _tripStartLocation;
+    if (start?.isCurrentLocation == true &&
+        start!.hasCoordinates &&
+        start.address == null &&
+        _startLocation.text.trim() == 'Finding nearby address...') {
+      unawaited(_resolveCurrentStartLocationAddress(start));
+    }
   }
 
   DateTime _today() {
@@ -479,7 +488,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     setState(() {
       _selectedOriginPlace = place;
       _tripStartLocation = TripStartLocation.fromPlace(place);
-      _startLocation.text = place.name;
+      _startLocation.text = _tripStartLocation!.displayLabel;
       _originSuggestions = const [];
       _formError = null;
     });
@@ -526,20 +535,24 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         _formError =
             'Location access is on, but the phone has not returned coordinates yet. Try again or type a starting place.';
       } else {
-        final coordinateLabel = _coordinateLocationLabel(
-          start.latitude!,
-          start.longitude!,
-        );
         _tripStartLocation = TripStartLocation(
-          label: coordinateLabel,
+          label: 'Current location',
           latitude: start.latitude,
           longitude: start.longitude,
           isCurrentLocation: true,
         );
-        _startLocation.text = coordinateLabel;
+        _startLocation.text = 'Finding nearby address...';
       }
     });
     if (start == null) return;
+
+    await _resolveCurrentStartLocationAddress(_tripStartLocation!);
+  }
+
+  Future<void> _resolveCurrentStartLocationAddress(
+    TripStartLocation start,
+  ) async {
+    if (!start.hasCoordinates) return;
 
     PlaceSuggestion? resolvedPlace;
     try {
@@ -551,22 +564,30 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           .timeout(const Duration(seconds: 5));
     } catch (_) {}
     if (!mounted) return;
+
     setState(() {
       _isOriginSearching = false;
-      if (resolvedPlace == null) return;
+      if (resolvedPlace == null ||
+          resolvedPlace.formatted.trim().isEmpty ||
+          resolvedPlace.formatted == 'Unknown place') {
+        _tripStartLocation = start;
+        _startLocation.text = '';
+        _formError =
+            'Could not resolve an address for your location. Try again or type the starting address.';
+        return;
+      }
+
       _selectedOriginPlace = resolvedPlace;
       _tripStartLocation = TripStartLocation(
-        label: resolvedPlace.name,
+        label: resolvedPlace.formatted,
+        address: resolvedPlace.formatted,
         latitude: start.latitude,
         longitude: start.longitude,
         isCurrentLocation: true,
       );
-      _startLocation.text = resolvedPlace.name;
+      _startLocation.text = resolvedPlace.formatted;
+      _formError = null;
     });
-  }
-
-  String _coordinateLocationLabel(double latitude, double longitude) {
-    return '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}';
   }
 
   TripStartLocation? _startLocationForGeneration(
@@ -581,6 +602,43 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final typed = _startLocation.text.trim();
     if (typed.isNotEmpty) return TripStartLocation(label: typed);
     return TripStartLocation.fromContext(generationContext);
+  }
+
+  Future<TripStartLocation?> _startLocationWithResolvedAddress(
+    TripStartLocation? startLocation,
+  ) async {
+    final start = startLocation;
+    if (start == null || !start.hasCoordinates) return start;
+    if (start.address != null && start.address!.trim().isNotEmpty) {
+      return start;
+    }
+
+    try {
+      final resolvedPlace = await _places
+          .reverseLocation(
+            latitude: start.latitude!,
+            longitude: start.longitude!,
+          )
+          .timeout(const Duration(seconds: 5));
+      if (resolvedPlace == null) return start;
+      return TripStartLocation(
+        label: resolvedPlace.name,
+        address: resolvedPlace.formatted,
+        latitude: start.latitude,
+        longitude: start.longitude,
+        isCurrentLocation: start.isCurrentLocation,
+      );
+    } catch (_) {
+      return start;
+    }
+  }
+
+  bool _canReplaceStartLocationText() {
+    final text = _startLocation.text.trim();
+    return text.isEmpty ||
+        text == 'Current location' ||
+        text == 'Finding nearby address...' ||
+        text == 'Finding your location...';
   }
 
   void _schedulePlaceSearch(String value) {
@@ -882,18 +940,88 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Widget _roundedDateRangePickerBuilder(BuildContext context, Widget? child) {
-    final theme = Theme.of(context);
+    final base = TravelAgentTheme.light();
+    const primary = Color(0xFF355872);
+    const onSurface = Color(0xFF243B4D);
+    const surface = Color(0xFFF8FAFC);
+    final scheme = base.colorScheme.copyWith(
+      brightness: Brightness.light,
+      primary: primary,
+      onPrimary: Colors.white,
+      surface: surface,
+      onSurface: onSurface,
+      surfaceContainerHigh: Colors.white,
+      surfaceContainerHighest: const Color(0xFFEAF3FA),
+      outline: const Color(0xFF9CB6C9),
+      outlineVariant: const Color(0xFFD4E2EC),
+    );
     return Theme(
-      data: theme.copyWith(
-        datePickerTheme: theme.datePickerTheme.copyWith(
+      data: base.copyWith(
+        brightness: Brightness.light,
+        colorScheme: scheme,
+        scaffoldBackgroundColor: surface,
+        dialogTheme: base.dialogTheme.copyWith(
+          backgroundColor: surface,
+          surfaceTintColor: Colors.transparent,
+        ),
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(foregroundColor: primary),
+        ),
+        iconButtonTheme: IconButtonThemeData(
+          style: IconButton.styleFrom(foregroundColor: primary),
+        ),
+        datePickerTheme: base.datePickerTheme.copyWith(
+          backgroundColor: surface,
+          surfaceTintColor: Colors.transparent,
+          headerBackgroundColor: surface,
+          headerForegroundColor: primary,
+          rangePickerBackgroundColor: surface,
+          rangePickerHeaderBackgroundColor: surface,
+          rangePickerHeaderForegroundColor: primary,
           rangePickerShape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(28),
           ),
+          weekdayStyle: const TextStyle(
+            color: Color(0xFF607D92),
+            fontWeight: FontWeight.w800,
+          ),
+          dayStyle: const TextStyle(
+            color: onSurface,
+            fontWeight: FontWeight.w700,
+          ),
+          yearStyle: const TextStyle(
+            color: onSurface,
+            fontWeight: FontWeight.w700,
+          ),
           rangeSelectionBackgroundColor: const Color(
-            0xFFACCBE0,
-          ).withValues(alpha: .32),
+            0xFF9FC3DA,
+          ).withValues(alpha: .52),
           rangeSelectionOverlayColor: WidgetStatePropertyAll(
-            const Color(0xFF355872).withValues(alpha: .08),
+            primary.withValues(alpha: .12),
+          ),
+          dayForegroundColor: WidgetStateProperty.resolveWith<Color?>((states) {
+            if (states.contains(WidgetState.selected)) return Colors.white;
+            if (states.contains(WidgetState.disabled)) {
+              return const Color(0xFF9AA8B2);
+            }
+            return onSurface;
+          }),
+          dayBackgroundColor: WidgetStateProperty.resolveWith<Color?>((states) {
+            if (states.contains(WidgetState.selected)) return primary;
+            return null;
+          }),
+          todayForegroundColor: WidgetStateProperty.resolveWith<Color?>(
+            (states) =>
+                states.contains(WidgetState.selected) ? Colors.white : primary,
+          ),
+          todayBorder: const BorderSide(color: primary, width: 1.4),
+          yearForegroundColor: WidgetStateProperty.resolveWith<Color?>(
+            (states) => states.contains(WidgetState.selected)
+                ? Colors.white
+                : onSurface,
+          ),
+          yearBackgroundColor: WidgetStateProperty.resolveWith<Color?>(
+            (states) => states.contains(WidgetState.selected) ? primary : null,
           ),
           dayShape: WidgetStateProperty.resolveWith<OutlinedBorder?>((states) {
             if (states.contains(WidgetState.selected)) {
@@ -1275,6 +1403,132 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
   }
 
+  int _budgetPresetAmount(int index) {
+    final options = _budgetOptionsForCurrency(_currency);
+    final safeIndex = index.clamp(0, options.length - 1);
+    return options[safeIndex].amount;
+  }
+
+  String _timingIdeaText(String prefix, int budgetIndex) {
+    final amount = _formatWholeNumber(_budgetPresetAmount(budgetIndex));
+    return '$prefix, $_currency $amount';
+  }
+
+  String _timingIdeaBudget(int budgetIndex) =>
+      _budgetPresetAmount(budgetIndex).toString();
+
+  List<
+    ({
+      IconData icon,
+      String title,
+      String text,
+      DateTime startDate,
+      int days,
+      String budget,
+    })
+  >
+  _timingPresets() {
+    final today = _today();
+    final destination = _selectedPlace;
+    final start = _tripStartLocation;
+    final distanceKm = _distanceKm(
+      start?.latitude,
+      start?.longitude,
+      destination?.latitude,
+      destination?.longitude,
+    );
+    final international = _isInternationalTiming(destination);
+    final profile = international
+        ? _TimingPresetProfile.international
+        : distanceKm != null && distanceKm <= 150
+        ? _TimingPresetProfile.nearby
+        : _TimingPresetProfile.farDomestic;
+
+    final leanBudget = _timingIdeaBudget(0);
+    final midBudget = _timingIdeaBudget(1);
+
+    return switch (profile) {
+      _TimingPresetProfile.nearby => [
+        (
+          icon: Icons.flash_on_rounded,
+          title: 'Nearest weekend',
+          text: _timingIdeaText('2 days, nearby city break', 0),
+          startDate: _nextWeekday(today, DateTime.saturday),
+          days: 2,
+          budget: leanBudget,
+        ),
+        (
+          icon: Icons.route_rounded,
+          title: 'Easy 3-day loop',
+          text: _timingIdeaText('3 days, relaxed nearby route', 1),
+          startDate: _nextWeekday(today, DateTime.friday),
+          days: 3,
+          budget: midBudget,
+        ),
+        (
+          icon: Icons.savings_rounded,
+          title: 'Budget weekend',
+          text: _timingIdeaText('2 days, low-cost local picks', 0),
+          startDate: _nextWeekday(today, DateTime.saturday),
+          days: 2,
+          budget: leanBudget,
+        ),
+      ],
+      _TimingPresetProfile.farDomestic => [
+        (
+          icon: Icons.flash_on_rounded,
+          title: 'Next long weekend',
+          text: _timingIdeaText('4 days, compact domestic route', 0),
+          startDate: _nextLongWeekendStart(today),
+          days: 4,
+          budget: leanBudget,
+        ),
+        (
+          icon: Icons.route_rounded,
+          title: 'Balanced week',
+          text: _timingIdeaText('6 days with buffer time', 1),
+          startDate: _nextLongWeekendStart(today.add(const Duration(days: 7))),
+          days: 6,
+          budget: midBudget,
+        ),
+        (
+          icon: Icons.savings_rounded,
+          title: 'Budget aware',
+          text: _timingIdeaText('4 days, efficient transport', 0),
+          startDate: _nextLongWeekendStart(today),
+          days: 4,
+          budget: leanBudget,
+        ),
+      ],
+      _TimingPresetProfile.international => [
+        (
+          icon: Icons.flight_takeoff_rounded,
+          title: 'Seasonal holiday',
+          text: _timingIdeaText('8 days, flight-friendly window', 1),
+          startDate: _nextSeasonalHolidayStart(today),
+          days: 8,
+          budget: midBudget,
+        ),
+        (
+          icon: Icons.route_rounded,
+          title: 'Long vacation',
+          text: _timingIdeaText('10 days with recovery time', 2),
+          startDate: _nextSeasonalHolidayStart(today),
+          days: 10,
+          budget: _timingIdeaBudget(2),
+        ),
+        (
+          icon: Icons.savings_rounded,
+          title: 'Budget holiday',
+          text: _timingIdeaText('7 days, slower low-cost picks', 0),
+          startDate: _nextSeasonalHolidayStart(today),
+          days: 7,
+          budget: leanBudget,
+        ),
+      ],
+    };
+  }
+
   String _formatWholeNumber(int value) {
     final text = value.toString();
     final buffer = StringBuffer();
@@ -1316,6 +1570,96 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       'EUR' => 'euros',
       _ => 'US dollars',
     };
+  }
+
+  bool _isInternationalTiming(PlaceSuggestion? destination) {
+    final destinationCountry = destination?.country?.trim().toLowerCase();
+    final originCountry = _selectedOriginPlace?.country?.trim().toLowerCase();
+    if (destinationCountry != null &&
+        destinationCountry.isNotEmpty &&
+        originCountry != null &&
+        originCountry.isNotEmpty) {
+      return destinationCountry != originCountry;
+    }
+
+    final destinationText = _destination.text.toLowerCase();
+    final originText = _startLocation.text.toLowerCase();
+    for (final country in const [
+      'taiwan',
+      'japan',
+      'indonesia',
+      'united states',
+      'usa',
+      'france',
+      'germany',
+      'italy',
+      'spain',
+    ]) {
+      if (destinationText.contains(country) &&
+          originText.isNotEmpty &&
+          !originText.contains(country)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  DateTime _nextWeekday(DateTime from, int weekday) {
+    final today = DateTime(from.year, from.month, from.day);
+    var offset = (weekday - today.weekday) % DateTime.daysPerWeek;
+    if (offset == 0) offset = DateTime.daysPerWeek;
+    return today.add(Duration(days: offset));
+  }
+
+  DateTime _nextLongWeekendStart(DateTime from) {
+    final candidate = _nextWeekday(from, DateTime.friday);
+    final minimum = DateTime(
+      from.year,
+      from.month,
+      from.day,
+    ).add(const Duration(days: 10));
+    return candidate.isBefore(minimum)
+        ? _nextWeekday(minimum, DateTime.friday)
+        : candidate;
+  }
+
+  DateTime _nextSeasonalHolidayStart(DateTime from) {
+    final today = DateTime(from.year, from.month, from.day);
+    final summer = DateTime(today.year, 7);
+    final winter = DateTime(today.year, 12, 20);
+    if (today.isBefore(summer)) return summer;
+    if (today.isBefore(winter)) return winter;
+    return DateTime(today.year + 1, 7);
+  }
+
+  double? _distanceKm(
+    double? originLat,
+    double? originLng,
+    double? destinationLat,
+    double? destinationLng,
+  ) {
+    if (originLat == null ||
+        originLng == null ||
+        destinationLat == null ||
+        destinationLng == null ||
+        destinationLat == 0 ||
+        destinationLng == 0) {
+      return null;
+    }
+
+    const earthRadiusKm = 6371.0;
+    final originPhi = originLat * math.pi / 180;
+    final destinationPhi = destinationLat * math.pi / 180;
+    final deltaPhi = (destinationLat - originLat) * math.pi / 180;
+    final deltaLambda = (destinationLng - originLng) * math.pi / 180;
+    final a =
+        math.sin(deltaPhi / 2) * math.sin(deltaPhi / 2) +
+        math.cos(originPhi) *
+            math.cos(destinationPhi) *
+            math.sin(deltaLambda / 2) *
+            math.sin(deltaLambda / 2);
+    return earthRadiusKm * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
   }
 
   void _applyDraftToForm(CreateTripDraft draft) {
@@ -1385,7 +1729,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       requestLocation: _startLocation.text.trim().isEmpty,
     );
     if (!mounted) return;
-    final startLocation = _startLocationForGeneration(generationContext);
+    final startLocation = await _startLocationWithResolvedAddress(
+      _startLocationForGeneration(generationContext),
+    );
+    if (!mounted) return;
     final plan = _manualStarterPlan(
       place: place,
       startLocation: startLocation,
@@ -1395,6 +1742,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     setState(() {
       _deviceContext = generationContext;
       _tripStartLocation = startLocation;
+      if (startLocation != null && _canReplaceStartLocationText()) {
+        _startLocation.text = startLocation.displayLabel;
+      }
       _usedFallbackPlan = false;
       _formError = null;
     });
@@ -1744,10 +2094,16 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       requestLocation: true,
     );
     if (!mounted) return;
-    final startLocation = _startLocationForGeneration(generationContext);
+    final startLocation = await _startLocationWithResolvedAddress(
+      _startLocationForGeneration(generationContext),
+    );
+    if (!mounted) return;
     setState(() {
       _deviceContext = generationContext;
       _tripStartLocation = startLocation;
+      if (startLocation != null && _canReplaceStartLocationText()) {
+        _startLocation.text = startLocation.displayLabel;
+      }
     });
 
     GeneratedTripPlan plan;
@@ -1808,7 +2164,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         formattedAddress: place.formatted,
         latitude: place.latitude,
         longitude: place.longitude,
-        originLabel: startLocation?.label,
+        originLabel: startLocation?.displayLabel,
         originLatitude: startLocation?.latitude,
         originLongitude: startLocation?.longitude,
         startDate: _dateKey(_startDate),
@@ -1864,6 +2220,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       endDate: _endDate,
       startLocation: startLocation,
       currency: currency,
+      preferences: _savedTripPreferences,
     );
   }
 
@@ -2065,17 +2422,14 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   void _applyAiTimingIdea({
-    required int startOffsetDays,
+    required DateTime startDate,
     required int days,
     required String budget,
-    required String currency,
   }) {
-    final start = _today().add(Duration(days: startOffsetDays));
     setState(() {
-      _startDate = start;
-      _endDate = start.add(Duration(days: math.max(1, days) - 1));
-      _budget.text = budget;
-      _currency = currency;
+      _startDate = startDate;
+      _endDate = startDate.add(Duration(days: math.max(1, days) - 1));
+      _setBudgetText(budget);
       _hasBudgetText = budget.trim().isNotEmpty;
       _formError = null;
     });
@@ -2162,6 +2516,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final aiStepComplete = List.generate(5, _isAiStepComplete);
     final nextAiStep = aiStepComplete.indexWhere((complete) => !complete);
     final aiFocusStep = nextAiStep == -1 ? null : nextAiStep;
+    final timingPresets = _timingPresets();
 
     return ScreenScaffold(
       child: Column(
@@ -2326,7 +2681,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                           icon: Icons.my_location_rounded,
                           title: 'Current location',
                           text:
-                              'Used for Day 1 transport and the return-home leg.',
+                              'AI uses this address to find nearby stations, bus stops, airports, and return routes.',
                         ),
                       ],
                     ],
@@ -2347,41 +2702,20 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _AiChoiceGrid(
-                        choices: [
-                          _AiChoice(
-                            icon: Icons.flash_on_rounded,
-                            title: 'Long weekend',
-                            text: '4 days, compact route, USD 1800',
-                            onTap: () => _applyAiTimingIdea(
-                              startOffsetDays: 21,
-                              days: 4,
-                              budget: '1800',
-                              currency: 'USD',
-                            ),
-                          ),
-                          _AiChoice(
-                            icon: Icons.route_rounded,
-                            title: 'Balanced week',
-                            text: '6 days with buffer time, USD 3500',
-                            onTap: () => _applyAiTimingIdea(
-                              startOffsetDays: 30,
-                              days: 6,
-                              budget: '3500',
-                              currency: 'USD',
-                            ),
-                          ),
-                          _AiChoice(
-                            icon: Icons.savings_rounded,
-                            title: 'Budget aware',
-                            text: '5 days, low-cost picks, TWD 28000',
-                            onTap: () => _applyAiTimingIdea(
-                              startOffsetDays: 14,
-                              days: 5,
-                              budget: '28000',
-                              currency: 'TWD',
-                            ),
-                          ),
-                        ],
+                        choices: timingPresets
+                            .map(
+                              (preset) => _AiChoice(
+                                icon: preset.icon,
+                                title: preset.title,
+                                text: preset.text,
+                                onTap: () => _applyAiTimingIdea(
+                                  startDate: preset.startDate,
+                                  days: preset.days,
+                                  budget: preset.budget,
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
                       ),
                       const SizedBox(height: 12),
                       _AiDateRangeCard(
@@ -2754,7 +3088,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                       icon: Icons.my_location_rounded,
                                       title: 'Current location',
                                       text:
-                                          'Used for Day 1 transport and the return-home leg.',
+                                          'AI uses this address to find nearby stations, bus stops, airports, and return routes.',
                                     ),
                                   ],
                                 ],
@@ -5169,27 +5503,6 @@ class _AiAccordionSection extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      if (showAttention) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 9,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF355872),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            appText(context, 'Next'),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
                       AnimatedRotation(
                         turns: expanded ? .5 : 0,
                         duration: duration,
@@ -5621,27 +5934,6 @@ class _ManualAccordionSection extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      if (showAttention) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 9,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF355872),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            appText(context, 'Next'),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
                       AnimatedRotation(
                         turns: expanded ? .5 : 0,
                         duration: duration,

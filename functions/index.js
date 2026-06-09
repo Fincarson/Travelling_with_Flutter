@@ -29,9 +29,17 @@ const travelAssistantInstructions = [
 const tripPlanInstructions = [
   "Generate a practical travel itinerary for a mobile travel app.",
   "Use realistic attraction names, reasonable pacing, and approximate costs.",
+  "Treat selected tags and custom preference tags as concrete itinerary requirements, not decorative labels.",
+  "For each distinctive tag, include at least one matching schedule item, venue area, event search, food stop, accessibility choice, or practical constraint.",
+  "For example, anime should trigger anime convention/event-calendar research when dates match, or anime districts, stores, themed cafes, arcades, museums, or pop-culture stops when no convention is current.",
+  "Halal food should trigger halal restaurants or Muslim-friendly food areas. Wheelchair access should trigger accessible transit and step-free venues.",
   "Keep activities suitable for the destination, dates, budget, group, and tags.",
   "Use appContext.localDate and appContext.timeZoneOffset as today's context.",
   "Use startLocation as the trip origin when provided. If startLocation is missing, use appContext.location when available.",
+  "If startLocation has an address, use that address as the origin reference; do not show raw coordinates in user-facing itinerary text.",
+  "Use web search to identify the nearest practical station, bus stop, airport, ferry terminal, HSR/rail station, or transit hub from the origin address before recommending transport to the destination.",
+  "Distribute activities across every date in the trip. Do not leave middle or later days empty.",
+  "For trips of 3 or more days, include at least 2 useful schedule items per day and 3 on full sightseeing days.",
   "Day 1 must start with realistic transportation from the trip origin to the destination before destination activities.",
   "The final trip day must include realistic return transportation home after destination activities.",
   "For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.",
@@ -110,7 +118,7 @@ const tripPlanFormat = {
       items: {
         type: "array",
         minItems: 3,
-        maxItems: 12,
+        maxItems: 24,
         items: {
           type: "object",
           additionalProperties: false,
@@ -363,6 +371,67 @@ exports.reversePlace = onCall(
   },
 );
 
+exports.searchNearbyPlaces = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const latitude = Number(request.data?.latitude);
+    const longitude = Number(request.data?.longitude);
+    const categories = Array.isArray(request.data?.categories) ?
+      request.data.categories.map((item) => String(item).trim()).filter(Boolean) :
+      [];
+    const radiusMeters = Math.min(
+      5000,
+      Math.max(100, Number.parseInt(request.data?.radiusMeters ?? 1200, 10)),
+    );
+    const limit = Math.min(
+      20,
+      Math.max(1, Number.parseInt(request.data?.limit ?? 8, 10)),
+    );
+
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      !categories.length
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Location and categories are required.",
+      );
+    }
+
+    const apiKey = geoapifyApiKey();
+    if (!apiKey) {
+      logger.error("Geoapify nearby lookup is not configured");
+      throw new HttpsError(
+        "failed-precondition",
+        "Nearby place lookup is not configured.",
+      );
+    }
+
+    try {
+      const results = await fetchGeoapifyPlaces({
+        latitude,
+        longitude,
+        categories,
+        radiusMeters,
+        limit,
+        apiKey,
+      });
+      return {results: results.map(normalizeGeoapifyResult)};
+    } catch (error) {
+      logger.error("Geoapify nearby lookup failed", {
+        latitude,
+        longitude,
+        categories,
+        message: error?.message,
+      });
+      throw new HttpsError("unavailable", "Nearby places are unavailable.");
+    }
+  },
+);
+
 async function fetchGeoapifyAutocomplete({query, type, apiKey}) {
   const url = new URL("https://api.geoapify.com/v1/geocode/autocomplete");
   url.searchParams.set("text", query);
@@ -406,22 +475,65 @@ async function fetchGeoapifyReverse({latitude, longitude, apiKey}) {
     : null;
 }
 
+async function fetchGeoapifyPlaces({
+  latitude,
+  longitude,
+  categories,
+  radiusMeters,
+  limit,
+  apiKey,
+}) {
+  const url = new URL("https://api.geoapify.com/v2/places");
+  url.searchParams.set("categories", categories.join(","));
+  url.searchParams.set(
+    "filter",
+    `circle:${longitude},${latitude},${radiusMeters}`,
+  );
+  url.searchParams.set("bias", `proximity:${longitude},${latitude}`);
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("apiKey", apiKey);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Geoapify nearby lookup failed with ${response.status}: ` +
+      detail.slice(0, 300),
+    );
+  }
+
+  const body = await response.json();
+  return Array.isArray(body.features) ? body.features : [];
+}
+
 function normalizeGeoapifyResult(item) {
-  const resultType = item.result_type ?? item.type ?? null;
-  const country = item.country ?? null;
-  const locality = item.name ?? item.city ?? item.county ?? item.state ??
+  const properties = item.properties ?? item;
+  const geometry = item.geometry ?? {};
+  const coordinates = Array.isArray(geometry.coordinates) ?
+    geometry.coordinates :
+    [];
+  const resultType = properties.result_type ?? properties.type ?? null;
+  const country = properties.country ?? null;
+  const locality = properties.name ??
+    properties.city ??
+    properties.county ??
+    properties.state ??
     (resultType === "country" ? country : null);
-  const formatted = item.formatted ?? locality ?? "Unknown place";
+  const formatted = properties.formatted ?? locality ?? "Unknown place";
   const name = placeNameWithCountry(locality || formatted, country);
 
   return {
     name,
     formatted,
-    latitude: item.lat ?? 0,
-    longitude: item.lon ?? 0,
-    placeId: item.place_id ?? formatted,
+    latitude: properties.lat ?? coordinates[1] ?? 0,
+    longitude: properties.lon ?? coordinates[0] ?? 0,
+    placeId: properties.place_id ?? formatted,
     country,
     resultType,
+    distanceMeters: properties.distance ?? null,
+    categories: Array.isArray(properties.categories) ?
+      properties.categories :
+      [],
   };
 }
 

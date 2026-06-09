@@ -9,6 +9,8 @@ class PlaceSuggestion {
     required this.placeId,
     this.country,
     this.resultType,
+    this.distanceMeters,
+    this.categories = const [],
   });
 
   final String name;
@@ -18,39 +20,58 @@ class PlaceSuggestion {
   final String placeId;
   final String? country;
   final String? resultType;
+  final int? distanceMeters;
+  final List<String> categories;
 
   static PlaceSuggestion fromMap(Map<String, dynamic> map) {
+    final properties = map['properties'] is Map
+        ? Map<String, dynamic>.from(map['properties'] as Map)
+        : map;
+    final geometry = map['geometry'] is Map
+        ? Map<String, dynamic>.from(map['geometry'] as Map)
+        : const <String, dynamic>{};
+    final coordinates = (geometry['coordinates'] as List<dynamic>?) ?? const [];
     final resultType =
-        map['resultType'] as String? ??
-        map['result_type'] as String? ??
-        map['type'] as String?;
-    final country = map['country'] as String?;
+        properties['resultType'] as String? ??
+        properties['result_type'] as String? ??
+        properties['type'] as String?;
+    final country = properties['country'] as String?;
     final locality =
-        map['name'] as String? ??
-        map['city'] as String? ??
-        map['county'] as String? ??
-        map['state'] as String? ??
+        properties['name'] as String? ??
+        properties['city'] as String? ??
+        properties['county'] as String? ??
+        properties['state'] as String? ??
         (resultType == 'country' ? country : null);
     final formatted =
-        (map['formatted'] as String?) ?? locality ?? 'Unknown place';
+        (properties['formatted'] as String?) ?? locality ?? 'Unknown place';
     final name = _placeNameWithCountry(locality ?? formatted, country);
     return PlaceSuggestion(
       name: name,
       formatted: formatted,
       latitude:
-          (map['latitude'] as num?)?.toDouble() ??
-          (map['lat'] as num?)?.toDouble() ??
+          (properties['latitude'] as num?)?.toDouble() ??
+          (properties['lat'] as num?)?.toDouble() ??
+          (coordinates.length > 1
+              ? (coordinates[1] as num?)?.toDouble()
+              : null) ??
           0,
       longitude:
-          (map['longitude'] as num?)?.toDouble() ??
-          (map['lon'] as num?)?.toDouble() ??
+          (properties['longitude'] as num?)?.toDouble() ??
+          (properties['lon'] as num?)?.toDouble() ??
+          (coordinates.isNotEmpty
+              ? (coordinates[0] as num?)?.toDouble()
+              : null) ??
           0,
       placeId:
-          (map['placeId'] as String?) ??
-          (map['place_id'] as String?) ??
+          (properties['placeId'] as String?) ??
+          (properties['place_id'] as String?) ??
           formatted,
       country: country,
       resultType: resultType,
+      distanceMeters: (properties['distance'] as num?)?.round(),
+      categories: ((properties['categories'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .toList(),
     );
   }
 }

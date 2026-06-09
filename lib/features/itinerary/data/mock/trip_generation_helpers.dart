@@ -145,6 +145,7 @@ GeneratedTripPlan _fallbackTripPlan({
     endDate: endDate,
     startLocation: startLocation,
     currency: currency,
+    preferences: preferences,
   );
 }
 
@@ -155,6 +156,7 @@ GeneratedTripPlan _planWithTripTransport(
   required DateTime endDate,
   required TripStartLocation? startLocation,
   required String currency,
+  required List<String> preferences,
 }) {
   final dateDayCount = _tripDayCount(startDate, endDate);
   final finalDay = math.max(
@@ -180,12 +182,416 @@ GeneratedTripPlan _planWithTripTransport(
     if (returnItem != null && !_hasReturnTransport(plan.items, finalDay))
       returnItem,
   ];
+  final preferenceItems = _planWithPreferenceStops(
+    items,
+    preferences: preferences,
+    destination: place.name.split(',').first.trim().isEmpty
+        ? place.name
+        : place.name.split(',').first.trim(),
+    dayCount: dateDayCount,
+    currency: currency,
+  );
+  final balancedItems = _ensureDailyScheduleCoverage(
+    preferenceItems,
+    place: place,
+    dayCount: dateDayCount,
+    currency: currency,
+  );
 
   return GeneratedTripPlan(
-    items: items,
+    items: balancedItems,
     bookings: _bookingsForTripLength(plan.bookings, dayCount: dateDayCount),
     checklist: _checklistWithDeparturePrep(plan.checklist),
   );
+}
+
+List<ScheduleItem> _planWithPreferenceStops(
+  List<ScheduleItem> items, {
+  required List<String> preferences,
+  required String destination,
+  required int dayCount,
+  required String currency,
+}) {
+  final next = [...items];
+  final uniquePreferences = preferences
+      .map((preference) => preference.trim())
+      .where((preference) => preference.isNotEmpty)
+      .toSet()
+      .toList();
+  var added = 0;
+
+  for (final preference in uniquePreferences) {
+    if (added >= 5) break;
+    if (_preferenceAlreadyCovered(next, preference)) continue;
+    final day = math.min(math.max(1, added + 1), math.max(1, dayCount));
+    final stop = _preferenceStop(
+      preference: preference,
+      destination: destination,
+      day: day,
+      time: _openPreferenceStopTime(next, day, added),
+      currency: currency,
+    );
+    if (stop == null) continue;
+    next.add(stop);
+    added++;
+  }
+
+  return next..sort(_compareRuntimeScheduleItems);
+}
+
+bool _preferenceAlreadyCovered(List<ScheduleItem> items, String preference) {
+  final normalized = _normalizedPreference(preference);
+  if (normalized.isEmpty) return true;
+  final related = _preferenceKeywords(normalized);
+  return items.any((item) {
+    final activity = item.activity.toLowerCase();
+    return related.any(activity.contains);
+  });
+}
+
+ScheduleItem? _preferenceStop({
+  required String preference,
+  required String destination,
+  required int day,
+  required String time,
+  required String currency,
+}) {
+  final normalized = _normalizedPreference(preference);
+  final activityCost = _localActivityCost(currency);
+  final mealCost = _localMealCost(currency);
+
+  if (_containsAny(normalized, const [
+    'anime',
+    'manga',
+    'cosplay',
+    'otaku',
+    'popculture',
+  ])) {
+    return ScheduleItem(
+      day,
+      time,
+      'Anime convention or pop-culture event calendar check, then anime shops, arcades, or themed cafes in $destination',
+      Icons.movie_rounded,
+      activityCost,
+    );
+  }
+  if (_containsAny(normalized, const ['game', 'gaming', 'arcade', 'esport'])) {
+    return ScheduleItem(
+      day,
+      time,
+      'Gaming arcade, character goods, or esports cafe stop in $destination',
+      Icons.sports_esports_rounded,
+      activityCost,
+    );
+  }
+  if (_containsAny(normalized, const ['halal', 'muslim'])) {
+    return ScheduleItem(
+      day,
+      time,
+      'Halal restaurant or Muslim-friendly food area in $destination',
+      Icons.restaurant_rounded,
+      mealCost,
+    );
+  }
+  if (_containsAny(normalized, const [
+    'wheelchair',
+    'accessible',
+    'accessibility',
+    'stepfree',
+    'mobility',
+  ])) {
+    return ScheduleItem(
+      day,
+      time,
+      'Step-free transit route and wheelchair-accessible landmark in $destination',
+      Icons.accessible_rounded,
+      _transportCost(currency, local: true),
+    );
+  }
+  if (_containsAny(normalized, const ['vegan', 'vegetarian', 'plantbased'])) {
+    return ScheduleItem(
+      day,
+      time,
+      'Vegetarian or plant-based local meal stop in $destination',
+      Icons.restaurant_rounded,
+      mealCost,
+    );
+  }
+  if (_containsAny(normalized, const ['coffee', 'cafe', 'tea'])) {
+    return ScheduleItem(
+      day,
+      time,
+      'Specialty cafe or tea stop shaped around $preference',
+      Icons.local_cafe_rounded,
+      mealCost,
+    );
+  }
+  if (_containsAny(normalized, const ['shopping', 'fashion', 'thrift'])) {
+    return ScheduleItem(
+      day,
+      time,
+      'Shopping district matched to $preference in $destination',
+      Icons.shopping_bag_rounded,
+      activityCost,
+    );
+  }
+  if (_isGenericPreference(normalized)) return null;
+
+  return ScheduleItem(
+    day,
+    time,
+    '$preference-focused stop: find the best local scene, venue, or event in $destination',
+    Icons.place_rounded,
+    activityCost,
+  );
+}
+
+String _openPreferenceStopTime(List<ScheduleItem> items, int day, int offset) {
+  const times = ['11:00 AM', '02:30 PM', '05:00 PM', '07:30 PM'];
+  final used = items
+      .where((item) => item.day == day)
+      .map((item) => item.time)
+      .toSet();
+  for (final time in [...times.skip(offset % times.length), ...times]) {
+    if (!used.contains(time)) return time;
+  }
+  return times[offset % times.length];
+}
+
+List<String> _preferenceKeywords(String normalized) {
+  if (_containsAny(normalized, const [
+    'anime',
+    'manga',
+    'cosplay',
+    'otaku',
+    'popculture',
+  ])) {
+    return const ['anime', 'manga', 'cosplay', 'arcade', 'themed cafe'];
+  }
+  if (_containsAny(normalized, const ['halal', 'muslim'])) {
+    return const ['halal', 'muslim-friendly'];
+  }
+  if (_containsAny(normalized, const [
+    'wheelchair',
+    'accessible',
+    'accessibility',
+    'stepfree',
+    'mobility',
+  ])) {
+    return const ['wheelchair', 'accessible', 'step-free'];
+  }
+  return [normalized.replaceAll(' ', '')];
+}
+
+bool _containsAny(String value, List<String> keywords) {
+  return keywords.any(value.contains);
+}
+
+bool _isGenericPreference(String normalized) {
+  return const {
+    'culture',
+    'food',
+    'nature',
+    'relax',
+    'walking',
+    'luxury',
+    'adventure',
+    'museums',
+    'nightlife',
+    'budgetfriendly',
+  }.contains(normalized);
+}
+
+String _normalizedPreference(String value) =>
+    value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+
+List<ScheduleItem> _ensureDailyScheduleCoverage(
+  List<ScheduleItem> items, {
+  required PlaceSuggestion place,
+  required int dayCount,
+  required String currency,
+}) {
+  if (dayCount <= 1) return items..sort(_compareRuntimeScheduleItems);
+
+  final destination = place.name.split(',').first.trim();
+  final next = [...items];
+  for (var day = 1; day <= dayCount; day++) {
+    final dayItems = next.where((item) => item.day == day).toList();
+    if (dayItems.length >= _minimumStopsForDay(day, dayCount)) continue;
+    final needed = _minimumStopsForDay(day, dayCount) - dayItems.length;
+    next.addAll(
+      _dailyCoverageStops(
+        day: day,
+        dayCount: dayCount,
+        destination: destination.isEmpty ? place.name : destination,
+        currency: currency,
+        count: needed,
+        existingItems: dayItems,
+      ),
+    );
+  }
+  return next..sort(_compareRuntimeScheduleItems);
+}
+
+int _minimumStopsForDay(int day, int dayCount) {
+  if (day == 1 || day == dayCount) return 2;
+  return 3;
+}
+
+List<ScheduleItem> _dailyCoverageStops({
+  required int day,
+  required int dayCount,
+  required String destination,
+  required String currency,
+  required int count,
+  required List<ScheduleItem> existingItems,
+}) {
+  final usedMinutes = existingItems
+      .map((item) => _parseActivityTimeMinutes(item.time))
+      .whereType<int>()
+      .toSet();
+  final candidates =
+      _dailyCoverageTemplates(
+            day: day,
+            dayCount: dayCount,
+            destination: destination,
+            currency: currency,
+          )
+          .where((item) {
+            final minutes = _parseActivityTimeMinutes(item.time);
+            return minutes == null || !usedMinutes.contains(minutes);
+          })
+          .take(count);
+  return candidates.toList(growable: false);
+}
+
+List<ScheduleItem> _dailyCoverageTemplates({
+  required int day,
+  required int dayCount,
+  required String destination,
+  required String currency,
+}) {
+  final localMealCost = _localMealCost(currency);
+  final activityCost = _localActivityCost(currency);
+  if (day == dayCount) {
+    return [
+      ScheduleItem(
+        day,
+        '10:00 AM',
+        'Slow final morning in $destination with a nearby cafe or market stop',
+        Icons.local_cafe_rounded,
+        localMealCost,
+      ),
+      ScheduleItem(
+        day,
+        '01:30 PM',
+        'Last easy neighborhood walk and souvenir window before departure',
+        Icons.shopping_bag_rounded,
+        activityCost,
+      ),
+      ScheduleItem(
+        day,
+        '04:00 PM',
+        'Pack up and leave buffer time for the return route',
+        Icons.hotel_rounded,
+        0,
+      ),
+    ];
+  }
+  final theme = day % 3;
+  if (theme == 1) {
+    return [
+      ScheduleItem(
+        day,
+        '09:30 AM',
+        '$destination landmark and photo route',
+        Icons.place_rounded,
+        activityCost,
+      ),
+      ScheduleItem(
+        day,
+        '01:00 PM',
+        'Local lunch area with a short rest break',
+        Icons.restaurant_rounded,
+        localMealCost,
+      ),
+      ScheduleItem(
+        day,
+        '04:00 PM',
+        'Museum, temple, or indoor culture backup',
+        Icons.museum_rounded,
+        activityCost,
+      ),
+    ];
+  }
+  if (theme == 2) {
+    return [
+      ScheduleItem(
+        day,
+        '10:00 AM',
+        'Transit-friendly district route in $destination',
+        Icons.train_rounded,
+        _transportCost(currency, local: true),
+      ),
+      ScheduleItem(
+        day,
+        '02:00 PM',
+        'Scenic walk, riverside, or viewpoint stop',
+        Icons.directions_walk_rounded,
+        0,
+      ),
+      ScheduleItem(
+        day,
+        '06:30 PM',
+        'Dinner near the evening area',
+        Icons.restaurant_rounded,
+        localMealCost,
+      ),
+    ];
+  }
+  return [
+    ScheduleItem(
+      day,
+      '09:30 AM',
+      'Easy morning cafe and planning buffer',
+      Icons.local_cafe_rounded,
+      localMealCost,
+    ),
+    ScheduleItem(
+      day,
+      '12:30 PM',
+      'Food market or local specialty lunch',
+      Icons.restaurant_rounded,
+      localMealCost,
+    ),
+    ScheduleItem(
+      day,
+      '03:30 PM',
+      'Shopping street or neighborhood browse',
+      Icons.shopping_bag_rounded,
+      activityCost,
+    ),
+  ];
+}
+
+int _localMealCost(String currency) {
+  return switch (currency) {
+    'TWD' => 250,
+    'JPY' => 1600,
+    'EUR' => 18,
+    'IDR' => 90000,
+    _ => 20,
+  };
+}
+
+int _localActivityCost(String currency) {
+  return switch (currency) {
+    'TWD' => 200,
+    'JPY' => 1200,
+    'EUR' => 16,
+    'IDR' => 80000,
+    _ => 18,
+  };
 }
 
 ScheduleItem? _originTransportItem({
