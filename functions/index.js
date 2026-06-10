@@ -39,7 +39,7 @@ const tripPlanInstructions = [
   "If startLocation has an address, use that address as the origin reference; do not show raw coordinates in user-facing itinerary text.",
   "Use web search to identify the nearest practical station, bus stop, airport, ferry terminal, HSR/rail station, or transit hub from the origin address before recommending transport to the destination.",
   "Distribute activities across every date in the trip. Do not leave middle or later days empty.",
-  "For trips of 3 or more days, include at least 2 useful schedule items per day and 3 on full sightseeing days.",
+  "For trips of 3 or more days, include at least 4 useful schedule items on every full sightseeing day; do not make later days thinner or more generic than earlier days.",
   "Day 1 must start with realistic transportation from the trip origin to the destination before destination activities.",
   "The final trip day must include realistic return transportation home after destination activities.",
   "For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.",
@@ -56,10 +56,16 @@ const createTripInstructions = [
   "Ask for exactly one missing important field at a time.",
   "When useful, create a tappable widget with 2 to 4 options.",
   "Widget option values must be short user messages the app can send back.",
-  "When asking for dates, include a 'Pick exact dates' option with value '__pick_dates__'.",
+  "When dates are missing and the user has given a destination or trip length, choose smart date range options instead of fixed offsets.",
+  "For smart date range options, consider appContext location/timezone, likely origin country public holidays or long weekends, destination seasonality, distance/travel friction, weekends, and how soon booking is practical.",
+  "Use web search when needed to check current public holidays, school breaks, destination events, weather seasons, or closures.",
+  "When asking for dates, include 2 or 3 smart date range options with values as exact ISO ranges like '2026-07-02 to 2026-07-06', plus a 'Pick exact dates' option with value '__pick_dates__'.",
   "Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset as the source of truth for today, tomorrow, next weekend, and relative dates.",
-  "Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.",
+  "Use appContext.location as current-origin context for timing suggestions when available, especially for holidays in the user location country.",
   "Required final fields: destination, startDate, endDate, budget, groupType.",
+  "Budget must be a plain number string in the selected currency, not a tier label such as mid-range or luxury.",
+  "Preserve currentDraft.currency unless the latest user message explicitly names another currency.",
+  "If the user gives an amount without a currency, interpret it in currentDraft.currency. Treat shorthand like '50K' as 50000.",
   "Dates must be ISO yyyy-MM-dd. groupType must be Solo, Friends, Family, or Tour.",
   "If the user names a currency, set currency to USD, TWD, IDR, JPY, or EUR.",
 ].join(" ");
@@ -118,7 +124,7 @@ const tripPlanFormat = {
       items: {
         type: "array",
         minItems: 3,
-        maxItems: 24,
+        maxItems: 60,
         items: {
           type: "object",
           additionalProperties: false,
@@ -233,7 +239,7 @@ const createTripReplyFormat = {
           title: {type: "string"},
           options: {
             type: "array",
-            minItems: 2,
+            minItems: 1,
             maxItems: 4,
             items: {
               type: "object",
@@ -286,6 +292,99 @@ const scheduleStopFormat = {
       cost: {type: "integer"},
     },
     required: ["day", "time", "activity", "type", "cost"],
+  },
+};
+
+const dayPlanEditFormat = {
+  type: "json_schema",
+  name: "day_plan_edit",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      feasible: {type: "boolean"},
+      warning: {type: "string"},
+      items: {
+        type: "array",
+        maxItems: 8,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            day: {type: "integer"},
+            time: {type: "string"},
+            activity: {type: "string"},
+            type: {
+              type: "string",
+              enum: [
+                "place",
+                "food",
+                "restaurant",
+                "walk",
+                "museum",
+                "beach",
+                "shopping",
+                "train",
+                "flight",
+                "hotel",
+                "cafe",
+                "hiking",
+                "temple",
+              ],
+            },
+            cost: {type: "integer"},
+          },
+          required: ["day", "time", "activity", "type", "cost"],
+        },
+      },
+    },
+    required: ["feasible", "warning", "items"],
+  },
+};
+
+const transportRecommendationsFormat = {
+  type: "json_schema",
+  name: "transport_recommendations",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      summary: {type: "string"},
+      options: {
+        type: "array",
+        minItems: 1,
+        maxItems: 8,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            mode: {type: "string"},
+            provider: {type: "string"},
+            route: {type: "string"},
+            duration: {type: "string"},
+            price: {type: "integer"},
+            currency: {type: "string"},
+            bookingHint: {type: "string"},
+            sourceName: {type: "string"},
+            sourceUrl: {type: "string"},
+          },
+          required: [
+            "mode",
+            "provider",
+            "route",
+            "duration",
+            "price",
+            "currency",
+            "bookingHint",
+            "sourceName",
+            "sourceUrl",
+          ],
+        },
+      },
+    },
+    required: ["summary", "options"],
   },
 };
 
@@ -758,6 +857,131 @@ exports.generateScheduleStop = onCall(
   },
 );
 
+exports.generateDayPlanEdit = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const data = request.data ?? {};
+    const destination = String(data.destination ?? "").trim();
+    const targetDay = Number.parseInt(data.targetDay, 10);
+    const placeRequest = String(data.placeRequest ?? "").trim();
+
+    if (!destination || !Number.isFinite(targetDay)) {
+      throw new HttpsError("invalid-argument", "Trip day is required.");
+    }
+    if (!placeRequest) {
+      throw new HttpsError("invalid-argument", "Place is required.");
+    }
+    if (placeRequest.length > 500) {
+      throw new HttpsError("invalid-argument", "Place request is too long.");
+    }
+
+    const result = await createStructuredResponse({
+      instructions: [
+        "You are editing one day of a travel itinerary inside a mobile app.",
+        "First judge whether the requested place can realistically fit into the target day.",
+        "Consider existing stop density, time gaps, route geography, city/region distance, opening hours when searchable, and whether adding the place would make the day rushed or impossible.",
+        "Treat broad but valid requests such as 'anime convention', 'food market', 'PC store', or 'festival' as category searches in or near the destination and target date; do not reject them just because they are not exact venue names.",
+        "For event requests, search event calendars where possible. If no exact event is confirmed for the target date, add a practical event-calendar check or relevant district/venue alternative and include a warning to verify dates/tickets.",
+        "If the request is too far, impossible, or the day is already too packed, set feasible=false, keep items as the existing target day schedule, and write a concise warning explaining why.",
+        "If feasible=true, return the complete revised target-day schedule with realistic times, preserving useful existing stops and adding the requested place in an efficient route order.",
+        "Do not move the requested place to another day unless warning says it should be planned on a different day.",
+        "Return only JSON matching the schema.",
+      ].join(" "),
+      input: {
+        destination,
+        startDate: String(data.startDate ?? ""),
+        endDate: String(data.endDate ?? ""),
+        currency: String(data.currency ?? "USD"),
+        budget: Number.parseInt(data.budget, 10) || 0,
+        groupType: String(data.groupType ?? "Solo"),
+        preferences: Array.isArray(data.preferences) ? data.preferences : [],
+        targetDay,
+        placeRequest,
+        targetDaySchedule: Array.isArray(data.targetDaySchedule)
+          ? data.targetDaySchedule
+          : [],
+        fullSchedule: Array.isArray(data.fullSchedule) ? data.fullSchedule : [],
+        appContext: data.appContext ?? null,
+      },
+      format: dayPlanEditFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "low",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "required",
+      logContext: "OpenAI day plan edit failed",
+      publicMessage: "AI day edit failed.",
+    });
+
+    return {result};
+  },
+);
+
+exports.generateTransportRecommendations = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const data = request.data ?? {};
+    const origin = String(data.origin ?? "").trim();
+    const destination = String(data.destination ?? "").trim();
+    if (!origin || !destination) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Start location and destination are required.",
+      );
+    }
+
+    const result = await createStructuredResponse({
+      instructions: [
+        "Find practical transportation options for a travel app booking workspace.",
+        "Use web search data from multiple booking or travel information sources when available, such as airline sites, rail operators, bus operators, Traveloka, Klook, Skyscanner, Google Flights snippets, Rome2Rio-style route data, or local transit providers.",
+        "Return options sorted from cheapest to most expensive.",
+        "Use the requested currency when prices can be estimated; if a source gives another currency, convert approximately.",
+        "If exact live booking prices are unavailable, use realistic current public fare ranges and clearly say approximate in bookingHint.",
+        "Include only useful bookable route options for the origin and destination.",
+        "Return only JSON matching the schema.",
+      ].join(" "),
+      input: {
+        origin,
+        destination,
+        startDate: String(data.startDate ?? ""),
+        endDate: String(data.endDate ?? ""),
+        currency: String(data.currency ?? "USD"),
+        groupType: String(data.groupType ?? "Solo"),
+        travelers: String(data.travelers ?? ""),
+        appContext: data.appContext ?? null,
+      },
+      format: transportRecommendationsFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "medium",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "required",
+      logContext: "OpenAI transport recommendations failed",
+      publicMessage: "AI transport recommendations failed.",
+    });
+
+    const options = Array.isArray(result.options)
+      ? result.options
+          .map((option) => ({
+            ...option,
+            price: Number.parseInt(option.price, 10) || 0,
+          }))
+          .sort((a, b) => a.price - b.price)
+      : [];
+    return {result: {...result, options}};
+  },
+);
+
 exports.createTripReply = onCall(
   {
     region: "us-central1",
@@ -793,6 +1017,14 @@ exports.createTripReply = onCall(
         appContext: request.data?.appContext ?? null,
       },
       format: createTripReplyFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "low",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "auto",
       logContext: "OpenAI create trip chat failed",
       publicMessage: "AI create trip chat failed.",
     });

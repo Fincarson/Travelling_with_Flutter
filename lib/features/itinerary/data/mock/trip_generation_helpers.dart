@@ -434,8 +434,9 @@ List<ScheduleItem> _ensureDailyScheduleCoverage(
 }
 
 int _minimumStopsForDay(int day, int dayCount) {
-  if (day == 1 || day == dayCount) return 2;
-  return 3;
+  if (day == 1) return dayCount <= 2 ? 2 : 4;
+  if (day == dayCount) return 3;
+  return 5;
 }
 
 List<ScheduleItem> _dailyCoverageStops({
@@ -504,7 +505,7 @@ List<ScheduleItem> _dailyCoverageTemplates({
       ScheduleItem(
         day,
         '09:30 AM',
-        '$destination landmark and photo route',
+        'Signature $destination landmark visit with time for photos',
         Icons.place_rounded,
         activityCost,
       ),
@@ -518,9 +519,23 @@ List<ScheduleItem> _dailyCoverageTemplates({
       ScheduleItem(
         day,
         '04:00 PM',
-        'Museum, temple, or indoor culture backup',
+        'Museum, gallery, or indoor culture stop matched to the area',
         Icons.museum_rounded,
         activityCost,
+      ),
+      ScheduleItem(
+        day,
+        '06:30 PM',
+        'Dinner in a nearby local dining street or bistro area',
+        Icons.restaurant_rounded,
+        localMealCost,
+      ),
+      ScheduleItem(
+        day,
+        '08:00 PM',
+        'Easy evening viewpoint, riverside walk, or lit-up neighborhood route',
+        Icons.directions_walk_rounded,
+        0,
       ),
     ];
   }
@@ -547,6 +562,20 @@ List<ScheduleItem> _dailyCoverageTemplates({
         Icons.restaurant_rounded,
         localMealCost,
       ),
+      ScheduleItem(
+        day,
+        '08:00 PM',
+        'Dessert, night market, or relaxed evening cafe stop',
+        Icons.local_cafe_rounded,
+        localMealCost,
+      ),
+      ScheduleItem(
+        day,
+        '04:00 PM',
+        'Small museum, design store, or covered arcade between neighborhoods',
+        Icons.museum_rounded,
+        activityCost,
+      ),
     ];
   }
   return [
@@ -570,6 +599,20 @@ List<ScheduleItem> _dailyCoverageTemplates({
       'Shopping street or neighborhood browse',
       Icons.shopping_bag_rounded,
       activityCost,
+    ),
+    ScheduleItem(
+      day,
+      '05:30 PM',
+      'Golden-hour park, bridge, or plaza stop near the dinner area',
+      Icons.place_rounded,
+      0,
+    ),
+    ScheduleItem(
+      day,
+      '07:00 PM',
+      'Dinner focused on a local specialty for $destination',
+      Icons.restaurant_rounded,
+      localMealCost,
     ),
   ];
 }
@@ -891,6 +934,7 @@ List<BudgetCategory> _defaultBudgetCategories({
   required int actual,
   required List<ScheduleItem> items,
   required List<Booking> bookings,
+  int transportActual = 0,
 }) {
   final activityCost = items.fold<int>(0, (total, item) => total + item.cost);
   final transportCost = bookings
@@ -914,7 +958,7 @@ List<BudgetCategory> _defaultBudgetCategories({
       id: 'transport',
       category: 'Transport',
       planned: math.max(transportCost, (budget * .25).round()),
-      actual: 0,
+      actual: math.max(0, transportActual),
     ),
     BudgetCategory(
       id: 'stay',

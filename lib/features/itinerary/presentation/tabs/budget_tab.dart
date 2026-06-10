@@ -19,6 +19,10 @@ class BudgetTab extends StatelessWidget {
       0,
       (total, item) => total + item.actual,
     );
+    final budgetLimit = _budgetLimitForCategories(
+      budget: trip.budget,
+      categories: categories,
+    );
 
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
@@ -30,7 +34,7 @@ class BudgetTab extends StatelessWidget {
               const LabelText('Budget'),
               const SizedBox(height: 8),
               Text(
-                '${trip.currency} $actual of ${trip.currency} ${trip.budget}',
+                '${trip.currency} $actual of ${trip.currency} $budgetLimit',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w900,
                 ),
@@ -39,9 +43,9 @@ class BudgetTab extends StatelessWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(99),
                 child: LinearProgressIndicator(
-                  value: trip.budget == 0
+                  value: budgetLimit == 0
                       ? 0
-                      : (actual / trip.budget).clamp(0.0, 1.0),
+                      : (actual / budgetLimit).clamp(0.0, 1.0),
                   minHeight: 10,
                   backgroundColor: _secondary.withValues(alpha: .16),
                   color: _secondary,
@@ -64,6 +68,10 @@ class BudgetTab extends StatelessWidget {
                 onSave(
                   trip.copyWith(
                     budgetCategories: next,
+                    budget: _budgetLimitForCategories(
+                      budget: trip.budget,
+                      categories: next,
+                    ),
                     spent: next.fold<int>(
                       0,
                       (total, item) => total + item.actual,
@@ -76,6 +84,17 @@ class BudgetTab extends StatelessWidget {
       ],
     );
   }
+}
+
+int _budgetLimitForCategories({
+  required int budget,
+  required List<BudgetCategory> categories,
+}) {
+  final plannedTotal = categories.fold<int>(
+    0,
+    (total, item) => total + item.planned,
+  );
+  return math.max(math.max(0, budget), plannedTotal);
 }
 
 class _BudgetCategoryEditor extends StatelessWidget {

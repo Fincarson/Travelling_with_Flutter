@@ -414,24 +414,18 @@ class _ScheduleTabState extends State<ScheduleTab> {
         _ScheduleDayTabs(
           days: days,
           selectedDay: _selectedDay,
-          onSelect: (day) => setState(() => _selectedDay = day),
-        ),
-        const SizedBox(height: 16),
-        PrimaryButton(
-          label: 'Add schedule stop',
-          icon: Icons.add_rounded,
-          onPressed: () => unawaited(_addScheduleStop(context)),
-        ),
-        const SizedBox(height: 16),
-        _ScheduleDayTabs(
-          days: days,
-          selectedDay: _selectedDay,
           onSelect: (day) {
             setState(() => _selectedDay = day);
             WidgetsBinding.instance.addPostFrameCallback(
               (_) => _maybeAutofillSelectedDay(),
             );
           },
+        ),
+        const SizedBox(height: 16),
+        PrimaryButton(
+          label: 'Add schedule stop',
+          icon: Icons.add_rounded,
+          onPressed: () => unawaited(_addScheduleStop(context)),
         ),
         const SizedBox(height: 16),
         if (trip.status == TripStatus.ongoing) ...[

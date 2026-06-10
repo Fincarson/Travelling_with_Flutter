@@ -116,9 +116,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ],
           const SizedBox(height: 28),
-          const SectionHeader(
-            title: 'Ready for your next Adventure',
-          ),
+          const SectionHeader(title: 'Ready for your next Adventure'),
           const SizedBox(height: 12),
           SizedBox(
             height: 190,
@@ -167,7 +165,7 @@ class _EmptyTripCard extends StatelessWidget {
           const IconBadge(icon: Icons.add_location_alt_rounded, size: 48),
           const SizedBox(height: 14),
           Text(
-            appText(context, 'Start your first trip'),
+            appText(context, 'Start your trip'),
             style: Theme.of(
               context,
             ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),

@@ -31,6 +31,34 @@ class _TripTemplate {
   final String badge;
 }
 
+class _PendingAiTripPreview {
+  const _PendingAiTripPreview({
+    required this.place,
+    required this.startDate,
+    required this.endDate,
+    required this.budget,
+    required this.currency,
+    required this.groupType,
+    required this.preferences,
+    required this.plan,
+    required this.startLocation,
+    required this.images,
+    required this.usedFallbackPlan,
+  });
+
+  final PlaceSuggestion place;
+  final DateTime startDate;
+  final DateTime endDate;
+  final int budget;
+  final String currency;
+  final String groupType;
+  final List<String> preferences;
+  final GeneratedTripPlan plan;
+  final TripStartLocation? startLocation;
+  final List<String> images;
+  final bool usedFallbackPlan;
+}
+
 enum _TimingPresetProfile { nearby, farDomestic, international }
 
 class _CreateTripScreenState extends State<CreateTripScreen> {
@@ -46,6 +74,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   final _customPreference = TextEditingController();
   final _startLocation = TextEditingController();
   final _airline = TextEditingController();
+  final _flightCode = TextEditingController();
+  final _ticketPassengerName = TextEditingController();
+  final _ticketPaidAmount = TextEditingController();
   final _flightConfirmation = TextEditingController();
   Timer? _searchTimer;
   Timer? _originSearchTimer;
@@ -53,6 +84,20 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   PlaceSuggestion? _selectedOriginPlace;
   List<PlaceSuggestion> _placeSuggestions = const [];
   List<PlaceSuggestion> _originSuggestions = const [];
+  List<TransportRecommendation> _transportRecommendations = const [];
+  List<TransportRecommendation> get _visibleTransportRecommendations {
+    final combined = [
+      ..._purchasedTransportRecommendations,
+      ..._transportRecommendations,
+    ];
+    combined.sort((a, b) {
+      final aPrice = a.price <= 0 ? 1 << 30 : a.price;
+      final bPrice = b.price <= 0 ? 1 << 30 : b.price;
+      return aPrice.compareTo(bPrice);
+    });
+    return combined;
+  }
+
   final List<CreateTripChatMessage> _chatMessages = [];
   CreateTripDraft? _pendingDraft;
   var _group = 'Friends';
@@ -62,12 +107,17 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _isSearching = false;
   var _isOriginSearching = false;
   var _isGenerating = false;
+  var _isLoadingTransport = false;
+  var _isPreparingPreview = false;
   var _isThinking = false;
   var _usedFallbackPlan = false;
   var _pendingDraftConfirmed = false;
   var _appliedDeviceCurrency = false;
   var _hasBudgetText = false;
   String? _lastAiError;
+  String? _transportRecommendationSummary;
+  String? _transportRecommendationError;
+  _PendingAiTripPreview? _pendingAiTripPreview;
   AppDeviceContext? _deviceContext;
   TripStartLocation? _tripStartLocation;
   int? _aiExpandedStep;
@@ -399,6 +449,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     _customPreference.dispose();
     _startLocation.dispose();
     _airline.dispose();
+    _flightCode.dispose();
+    _ticketPassengerName.dispose();
+    _ticketPaidAmount.dispose();
     _flightConfirmation.dispose();
     super.dispose();
   }
@@ -866,6 +919,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     setState(() {
       _isThinking = true;
       _pendingDraftConfirmed = false;
+      _pendingAiTripPreview = null;
       _chatMessages.add(CreateTripChatMessage(fromUser: true, text: text));
     });
 
@@ -874,11 +928,23 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       aiResponse = await _assistant
           .createTripReply(
             message: text,
-            currentDraft: _pendingDraft ?? CreateTripDraft(currency: _currency),
+            currentDraft: _currentChatDraftForAi(),
             history: _chatMessages,
             profileLanguage: widget.profileLanguage,
           )
           .timeout(_createTripChatTurnTimeout);
+      final rawDraft = aiResponse.draft;
+      final protectedDraft = _protectDraftCurrency(rawDraft, text);
+      aiResponse = CreateTripAiResponse(
+        message: _protectBudgetReplyMessage(
+          aiResponse.message,
+          rawDraft: rawDraft,
+          protectedDraft: protectedDraft,
+          userText: text,
+        ),
+        draft: protectedDraft,
+        widget: aiResponse.widget,
+      );
       _lastAiError = null;
     } catch (error) {
       final fallbackDraft = _parseTripDraft(text, _pendingDraft);
@@ -902,6 +968,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     setState(() {
       _isThinking = false;
       _pendingDraft = aiResponse.draft;
+      _pendingAiTripPreview = null;
       final currency = aiResponse.draft.currency;
       if (currency != null) _currency = currency;
       _chatMessages.add(
@@ -913,6 +980,48 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           widget: aiResponse.widget,
         ),
       );
+    });
+  }
+
+  CreateTripDraft _currentChatDraftForAi() {
+    return (_pendingDraft ?? const CreateTripDraft()).copyWith(
+      currency: _currency,
+    );
+  }
+
+  CreateTripDraft _protectDraftCurrency(CreateTripDraft draft, String text) {
+    final explicitCurrency = _currencyFromText(text);
+    final selectedCurrency = explicitCurrency ?? _currency;
+    return draft.copyWith(currency: selectedCurrency);
+  }
+
+  String _protectBudgetReplyMessage(
+    String message, {
+    required CreateTripDraft rawDraft,
+    required CreateTripDraft protectedDraft,
+    required String userText,
+  }) {
+    if (_currencyFromText(userText) != null) return message;
+    final rawCurrency = rawDraft.currency;
+    final protectedCurrency = protectedDraft.currency;
+    if (rawCurrency == null ||
+        protectedCurrency == null ||
+        rawCurrency == protectedCurrency) {
+      return message;
+    }
+    return message.replaceAll(
+      RegExp('\\b${RegExp.escape(rawCurrency)}\\b'),
+      protectedCurrency,
+    );
+  }
+
+  void _setCreateChatCurrency(String currency) {
+    setState(() {
+      _currency = currency;
+      _pendingDraft = (_pendingDraft ?? const CreateTripDraft()).copyWith(
+        currency: currency,
+      );
+      _pendingAiTripPreview = null;
     });
   }
 
@@ -1089,7 +1198,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     if (lower.contains('family')) groupType = 'Family';
     if (lower.contains('tour')) groupType = 'Tour';
 
-    final currency = _currencyFromText(text) ?? draft.currency ?? _currency;
+    final currency = _currencyFromText(text) ?? _currency;
     String? budget = draft.budget;
     final currencyAmount = _currencyAmountFromText(text);
     if (currencyAmount != null) {
@@ -1101,13 +1210,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
 
     final budgetMatch = RegExp(
-      r'\$\s?(\d{2,7})|(?:budget|under|around|about|usd|dollars?)\D{0,12}(\d{2,7})|(\d{2,7})\s?(?:usd|dollars?)',
+      r'\$\s?(\d{1,7}(?:[,.]\d{3})*|\d{1,7})\s*([kK])?|(?:budget|under|around|about|maybe|roughly)\D{0,12}(\d{1,7}(?:[,.]\d{3})*|\d{1,7})\s*([kK])?|(\d{1,7}(?:[,.]\d{3})*|\d{1,7})\s*([kK])?\s?(?:usd|dollars?)',
       caseSensitive: false,
     ).firstMatch(text);
     budget =
-        budgetMatch?.group(1) ??
-        budgetMatch?.group(2) ??
-        budgetMatch?.group(3) ??
+        _amountMatchToBudget(budgetMatch, const [(1, 2), (3, 4), (5, 6)]) ??
         budget;
     _currency = currency;
 
@@ -1145,12 +1252,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       r'\b(\d{1,2})\s*(?:days?|nights?)\b',
       caseSensitive: false,
     ).firstMatch(text);
-    if (durationMatch != null && (startDate == null || endDate == null)) {
+    if (durationMatch != null &&
+        lower.contains('tomorrow') &&
+        (startDate == null || endDate == null)) {
       final duration = math.max(1, int.parse(durationMatch.group(1)!));
       final today = _today();
-      startDate = lower.contains('tomorrow')
-          ? today.add(const Duration(days: 1))
-          : today;
+      startDate = today.add(const Duration(days: 1));
       endDate = startDate.add(Duration(days: duration - 1));
     }
 
@@ -1175,18 +1282,41 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
   ({int amount, String currency})? _currencyAmountFromText(String text) {
     final match = RegExp(
-      r'(?:\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b\s*([0-9][0-9,._]*))|(?:([0-9][0-9,._]*)\s*\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b)',
+      r'(?:\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b\s*([0-9][0-9,._]*)\s*([kK])?)|(?:([0-9][0-9,._]*)\s*([kK])?\s*\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b)',
       caseSensitive: false,
     ).firstMatch(text);
     if (match == null) return null;
 
-    final currency = _normalCurrencyCode(match.group(1) ?? match.group(4));
-    final amountText = match.group(2) ?? match.group(3);
-    final amount = int.tryParse(
-      (amountText ?? '').replaceAll(RegExp(r'[^0-9]'), ''),
+    final currency = _normalCurrencyCode(match.group(1) ?? match.group(6));
+    final amount = _parseCompactAmount(
+      match.group(2) ?? match.group(4),
+      match.group(3) ?? match.group(5),
     );
     if (currency == null || amount == null) return null;
     return (amount: amount, currency: currency);
+  }
+
+  String? _amountMatchToBudget(
+    RegExpMatch? match,
+    List<(int amountGroup, int suffixGroup)> groups,
+  ) {
+    if (match == null) return null;
+    for (final group in groups) {
+      final amount = _parseCompactAmount(
+        match.group(group.$1),
+        match.group(group.$2),
+      );
+      if (amount != null && amount > 0) return amount.toString();
+    }
+    return null;
+  }
+
+  int? _parseCompactAmount(String? value, String? suffix) {
+    final digits = (value ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) return null;
+    final amount = int.tryParse(digits);
+    if (amount == null) return null;
+    return suffix?.toLowerCase() == 'k' ? amount * 1000 : amount;
   }
 
   String? _currencyFromText(String text) {
@@ -1247,7 +1377,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       case 'destination':
         return 'Where would you like to go? Pick one or type your own.';
       case 'dates':
-        return 'Choose a date range, like 15/06/2026 to 20/06/2026, or say 5 days.';
+        return 'Choose a suggested date range or pick exact dates.';
       case 'total budget':
         return 'What total budget should I plan around in $_currency?';
       case 'who is coming':
@@ -1281,49 +1411,14 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ],
         );
       case 'dates':
-        final base = _today().add(const Duration(days: 21));
-        final threeDayEnd = base.add(const Duration(days: 2));
-        final fiveDayEnd = base.add(const Duration(days: 4));
-        final sevenDayEnd = base.add(const Duration(days: 6));
         return CreateTripChoiceWidget(
-          title: 'Trip length',
-          options: [
-            CreateTripChoiceOption(
-              label: '3 days',
-              value: '${_dateKey(base)} to ${_dateKey(threeDayEnd)}',
-              description: 'Fast weekend plan',
-            ),
-            CreateTripChoiceOption(
-              label: '5 days',
-              value: '${_dateKey(base)} to ${_dateKey(fiveDayEnd)}',
-              description: 'Balanced pace',
-            ),
-            CreateTripChoiceOption(
-              label: '7 days',
-              value: '${_dateKey(base)} to ${_dateKey(sevenDayEnd)}',
-              description: 'More room for day trips',
-            ),
-            const CreateTripChoiceOption(
-              label: 'Pick exact dates',
-              value: _customDateRangeValue,
-              description: 'Open the calendar',
-            ),
-          ],
+          title: 'Suggested dates',
+          options: _fallbackDateChoiceOptions(),
         );
       case 'total budget':
-        final options = _budgetOptionsForCurrency(_currency);
         return CreateTripChoiceWidget(
           title: 'Total budget',
-          options: options
-              .map(
-                (option) => CreateTripChoiceOption(
-                  label:
-                      '${option.currency} ${_formatWholeNumber(option.amount)}',
-                  value: 'budget ${option.amount} ${option.currency}',
-                  description: option.description,
-                ),
-              )
-              .toList(),
+          options: _budgetChoiceOptionsForCurrentDraft(),
         );
       case 'who is coming':
         return const CreateTripChoiceWidget(
@@ -1351,56 +1446,228 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
   }
 
+  List<CreateTripChoiceOption> _fallbackDateChoiceOptions() {
+    final today = _today();
+    final destination = (_pendingDraft?.destination ?? _destination.text)
+        .toLowerCase();
+    final international =
+        destination.isNotEmpty &&
+        !_containsAnyText(destination, const [
+          'taiwan',
+          'taipei',
+          'hsinchu',
+          'taichung',
+          'tainan',
+          'kaohsiung',
+        ]);
+    final suggestions = international
+        ? [
+            (
+              label: 'Flight-friendly week',
+              start: _nextSeasonalHolidayStart(today),
+              days: 6,
+              description: 'More buffer for flights and arrival timing',
+            ),
+            (
+              label: 'Longer holiday',
+              start: _nextSeasonalHolidayStart(
+                today.add(const Duration(days: 14)),
+              ),
+              days: 8,
+              description: 'Slower pace with recovery time',
+            ),
+            (
+              label: 'Compact escape',
+              start: _nextWeekday(
+                today.add(const Duration(days: 14)),
+                DateTime.friday,
+              ),
+              days: 4,
+              description: 'Shorter trip with efficient routing',
+            ),
+          ]
+        : [
+            (
+              label: 'Nearest weekend',
+              start: _nextWeekday(today, DateTime.saturday),
+              days: 2,
+              description: 'Quick nearby trip',
+            ),
+            (
+              label: 'Easy 3-day loop',
+              start: _nextWeekday(today, DateTime.friday),
+              days: 3,
+              description: 'Relaxed timing with one extra day',
+            ),
+            (
+              label: 'Balanced local trip',
+              start: _nextLongWeekendStart(today),
+              days: 4,
+              description: 'More room for food and sightseeing',
+            ),
+          ];
+    return [
+      for (final suggestion in suggestions)
+        CreateTripChoiceOption(
+          label: suggestion.label,
+          value:
+              '${_dateKey(suggestion.start)} to ${_dateKey(suggestion.start.add(Duration(days: suggestion.days - 1)))}',
+          description: suggestion.description,
+        ),
+      const CreateTripChoiceOption(
+        label: 'Pick exact dates',
+        value: _customDateRangeValue,
+        description: 'Open the calendar',
+      ),
+    ];
+  }
+
   List<({String currency, int amount, String description})>
   _budgetOptionsForCurrency(String currency) {
-    switch (currency) {
-      case 'IDR':
-        return const [
-          (currency: 'IDR', amount: 8000000, description: 'Lean and efficient'),
-          (
-            currency: 'IDR',
-            amount: 16860000,
-            description: 'Comfortable mid-range',
-          ),
-          (
-            currency: 'IDR',
-            amount: 25000000,
-            description: 'More flexible picks',
-          ),
-        ];
-      case 'TWD':
-        return const [
-          (currency: 'TWD', amount: 15000, description: 'Lean and efficient'),
-          (
-            currency: 'TWD',
-            amount: 30000,
-            description: 'Comfortable mid-range',
-          ),
-          (currency: 'TWD', amount: 50000, description: 'More flexible picks'),
-        ];
-      case 'JPY':
-        return const [
-          (currency: 'JPY', amount: 75000, description: 'Lean and efficient'),
-          (
-            currency: 'JPY',
-            amount: 175000,
-            description: 'Comfortable mid-range',
-          ),
-          (currency: 'JPY', amount: 250000, description: 'More flexible picks'),
-        ];
-      case 'EUR':
-        return const [
-          (currency: 'EUR', amount: 1400, description: 'Lean and efficient'),
-          (currency: 'EUR', amount: 3200, description: 'Comfortable mid-range'),
-          (currency: 'EUR', amount: 4600, description: 'More flexible picks'),
-        ];
-      default:
-        return const [
-          (currency: 'USD', amount: 1500, description: 'Lean and efficient'),
-          (currency: 'USD', amount: 3500, description: 'Comfortable mid-range'),
-          (currency: 'USD', amount: 5000, description: 'More flexible picks'),
-        ];
+    final destination = _pendingDraft?.destination ?? _destination.text;
+    final days = _budgetEstimateDays();
+    final tiers = _usdBudgetTiersForDestination(destination, days);
+    return [
+      (
+        currency: currency,
+        amount: _usdBudgetTierToCurrency(tiers.lean, currency),
+        description: '${days}d lean stays, local food, public transit',
+      ),
+      (
+        currency: currency,
+        amount: _usdBudgetTierToCurrency(tiers.mid, currency),
+        description: '${days}d comfortable hotels and dining',
+      ),
+      (
+        currency: currency,
+        amount: _usdBudgetTierToCurrency(tiers.premium, currency),
+        description: '${days}d flexible stays and experiences',
+      ),
+    ];
+  }
+
+  List<CreateTripChoiceOption> _budgetChoiceOptionsForCurrentDraft() {
+    final options = _budgetOptionsForCurrency(_currency);
+    return [
+      CreateTripChoiceOption(
+        label: 'Budget',
+        value: 'budget ${options[0].amount} ${options[0].currency}',
+        description:
+            '${_formatWholeNumber(options[0].amount)} ${options[0].currency} - ${options[0].description}',
+      ),
+      CreateTripChoiceOption(
+        label: 'Mid-range',
+        value: 'budget ${options[1].amount} ${options[1].currency}',
+        description:
+            '${_formatWholeNumber(options[1].amount)} ${options[1].currency} - ${options[1].description}',
+      ),
+      CreateTripChoiceOption(
+        label: 'Premium',
+        value: 'budget ${options[2].amount} ${options[2].currency}',
+        description:
+            '${_formatWholeNumber(options[2].amount)} ${options[2].currency} - ${options[2].description}',
+      ),
+      const CreateTripChoiceOption(
+        label: 'Custom',
+        value: _customBudgetValue,
+        description: 'Choose your own total budget',
+      ),
+    ];
+  }
+
+  int _budgetEstimateDays() {
+    final draft = _pendingDraft;
+    final start = draft?.startDate ?? _startDate;
+    final end = draft?.endDate ?? _endDate;
+    return math.max(1, end.difference(start).inDays + 1);
+  }
+
+  ({int lean, int mid, int premium}) _usdBudgetTiersForDestination(
+    String? destination,
+    int days,
+  ) {
+    final text = (destination ?? '').toLowerCase();
+    final daily = _destinationDailyUsdTiers(text);
+    final transport = _destinationTransportUsdBuffer(text, days);
+    return (
+      lean: _roundUsdBudget(daily.lean * days + transport.lean),
+      mid: _roundUsdBudget(daily.mid * days + transport.mid),
+      premium: _roundUsdBudget(daily.premium * days + transport.premium),
+    );
+  }
+
+  ({int lean, int mid, int premium}) _destinationDailyUsdTiers(String text) {
+    if (_containsAnyText(text, const ['bali', 'indonesia'])) {
+      return (lean: 65, mid: 135, premium: 260);
     }
+    if (_containsAnyText(text, const ['tokyo', 'kyoto', 'osaka', 'japan'])) {
+      return (lean: 115, mid: 230, premium: 430);
+    }
+    if (_containsAnyText(text, const ['paris', 'france'])) {
+      return (lean: 135, mid: 275, premium: 520);
+    }
+    if (_containsAnyText(text, const ['taipei', 'taiwan'])) {
+      return (lean: 80, mid: 170, premium: 320);
+    }
+    if (_containsAnyText(text, const ['singapore'])) {
+      return (lean: 130, mid: 260, premium: 500);
+    }
+    if (_containsAnyText(text, const ['seoul', 'korea'])) {
+      return (lean: 95, mid: 200, premium: 380);
+    }
+    if (_containsAnyText(text, const [
+      'london',
+      'new york',
+      'usa',
+      'united states',
+    ])) {
+      return (lean: 160, mid: 320, premium: 620);
+    }
+    return (lean: 100, mid: 210, premium: 390);
+  }
+
+  ({int lean, int mid, int premium}) _destinationTransportUsdBuffer(
+    String text,
+    int days,
+  ) {
+    if (days <= 2) return (lean: 40, mid: 80, premium: 160);
+    if (_containsAnyText(text, const [
+      'bali',
+      'japan',
+      'paris',
+      'france',
+      'singapore',
+      'korea',
+      'london',
+      'new york',
+    ])) {
+      return (lean: 250, mid: 500, premium: 900);
+    }
+    return (lean: 100, mid: 220, premium: 420);
+  }
+
+  int _roundUsdBudget(int amount) {
+    final roundTo = amount < 1000 ? 50 : 100;
+    return (amount / roundTo).round() * roundTo;
+  }
+
+  int _usdBudgetTierToCurrency(int usdAmount, String currency) {
+    final rate = switch (currency) {
+      'TWD' => 32.0,
+      'IDR' => 16250.0,
+      'JPY' => 155.0,
+      'EUR' => .92,
+      _ => 1.0,
+    };
+    final raw = usdAmount * rate;
+    final roundTo = switch (currency) {
+      'IDR' => 100000,
+      'JPY' => 1000,
+      'TWD' => 1000,
+      'EUR' => 50,
+      _ => 100,
+    };
+    return (raw / roundTo).round() * roundTo;
   }
 
   int _budgetPresetAmount(int index) {
@@ -1672,11 +1939,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final endDate = draft.endDate;
     if (startDate != null) _startDate = startDate;
     if (endDate != null) _endDate = endDate;
-    final budget = draft.budget?.trim();
-    if (budget != null && budget.isNotEmpty) _setBudgetText(budget);
     final currency = draft.currency;
     if (currency != null && _currencyOptions.contains(currency)) {
       _currency = currency;
+    }
+    final budget = draft.budget?.trim();
+    if (budget != null && budget.isNotEmpty) {
+      _setBudgetText(_normalizedBudgetInput(budget, _currency));
     }
     final groupType = draft.groupType;
     if (groupType != null && _groupOptions.contains(groupType)) {
@@ -1707,9 +1976,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
     setState(() {
       _applyDraftToForm(draft);
-      _mode = 1;
     });
-    await _generateTrip();
+    await _prepareAiTripPreviewFromDraft();
   }
 
   Future<void> _createManualTrip() async {
@@ -2007,6 +2275,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       setState(() {
         _pendingDraft = edited;
         _pendingDraftConfirmed = false;
+        _pendingAiTripPreview = null;
         _chatMessages.add(
           const CreateTripChatMessage(
             fromUser: false,
@@ -2042,8 +2311,46 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     );
   }
 
-  int _parsedBudget() =>
-      int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+  int _parsedBudget() {
+    final numeric = int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), ''));
+    if (numeric != null && numeric > 0) return numeric;
+    return _budgetTierAmount(_budget.text, _currency) ?? 0;
+  }
+
+  String _normalizedBudgetInput(String value, String currency) {
+    final numeric = int.tryParse(value.replaceAll(RegExp(r'\D'), ''));
+    if (numeric != null && numeric > 0) return numeric.toString();
+    final tierAmount = _budgetTierAmount(value, currency);
+    return tierAmount == null || tierAmount <= 0
+        ? value
+        : tierAmount.toString();
+  }
+
+  int? _budgetTierAmount(String value, String currency) {
+    final lower = value.toLowerCase();
+    if (lower.trim().isEmpty) return null;
+    final options = _budgetOptionsForCurrency(currency);
+    if (lower.contains('lean') ||
+        lower.contains('cheap') ||
+        lower.contains('budget') ||
+        lower.contains('low')) {
+      return options.first.amount;
+    }
+    if (lower.contains('mid') ||
+        lower.contains('medium') ||
+        lower.contains('moderate') ||
+        lower.contains('standard') ||
+        lower.contains('comfortable')) {
+      return options[1].amount;
+    }
+    if (lower.contains('flex') ||
+        lower.contains('premium') ||
+        lower.contains('lux') ||
+        lower.contains('high')) {
+      return options.last.amount;
+    }
+    return null;
+  }
 
   PlaceSuggestion? _manualPlaceFromInput(String typed) {
     if (_selectedPlace != null) return _selectedPlace;
@@ -2054,6 +2361,259 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       latitude: 0,
       longitude: 0,
       placeId: typed.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-'),
+    );
+  }
+
+  Future<void> _prepareAiTripPreviewFromDraft() async {
+    final preview = _pendingAiTripPreview;
+    if (preview != null) {
+      await _showAiTripPreview(preview);
+      return;
+    }
+
+    final budget = _parsedBudget();
+    if (budget <= 0) {
+      setState(() => _formError = 'Enter a budget greater than zero.');
+      return;
+    }
+
+    final typedDestination = _destination.text.trim();
+    PlaceSuggestion? place;
+    try {
+      place = await _resolvePlaceForGeneration(typedDestination);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _formError = 'Could not verify that destination right now: $error';
+      });
+      return;
+    }
+    if (place == null) {
+      setState(() => _formError = 'Enter a destination.');
+      return;
+    }
+
+    setState(() {
+      _isPreparingPreview = true;
+      _isGenerating = true;
+      _usedFallbackPlan = false;
+      _formError = null;
+    });
+
+    final generationContext = await _deviceContextService.load(
+      requestLocation: true,
+    );
+    if (!mounted) return;
+    final startLocation = await _startLocationWithResolvedAddress(
+      _startLocationForGeneration(generationContext),
+    );
+    if (!mounted) return;
+    setState(() {
+      _deviceContext = generationContext;
+      _tripStartLocation = startLocation;
+      if (startLocation != null && _canReplaceStartLocationText()) {
+        _startLocation.text = startLocation.displayLabel;
+      }
+    });
+
+    GeneratedTripPlan plan;
+    var usedFallbackPlan = false;
+    try {
+      plan = await _assistant
+          .generateTripPlan(
+            place: place,
+            startDate: _startDate,
+            endDate: _endDate,
+            budget: budget,
+            groupType: _group,
+            preferences: _aiGenerationPreferences,
+            currency: _currency,
+            airline: _airline.text.trim(),
+            flightConfirmation: _flightConfirmation.text.trim(),
+            profileLanguage: widget.profileLanguage,
+            startLocation: startLocation,
+          )
+          .timeout(_tripGenerationTurnTimeout);
+      if (plan.items.isEmpty) {
+        throw Exception('AI returned no schedule items.');
+      }
+    } catch (_) {
+      plan = _fallbackTripPlan(
+        place: place,
+        startDate: _startDate,
+        endDate: _endDate,
+        budget: budget,
+        preferences: _aiGenerationPreferences,
+        currency: _currency,
+        startLocation: startLocation,
+      );
+      usedFallbackPlan = true;
+    }
+
+    final images = await _searchedImagesForTripPreview(
+      place: place,
+      plan: plan,
+    );
+    if (!mounted) return;
+
+    final nextPreview = _PendingAiTripPreview(
+      place: place,
+      startDate: _startDate,
+      endDate: _endDate,
+      budget: budget,
+      currency: _currency,
+      groupType: _group,
+      preferences: _savedTripPreferences,
+      plan: plan,
+      startLocation: startLocation,
+      images: images,
+      usedFallbackPlan: usedFallbackPlan,
+    );
+    setState(() {
+      _isPreparingPreview = false;
+      _isGenerating = false;
+      _usedFallbackPlan = usedFallbackPlan;
+      _pendingAiTripPreview = nextPreview;
+    });
+    await _showAiTripPreview(nextPreview);
+  }
+
+  Future<List<String>> _searchedImagesForTripPreview({
+    required PlaceSuggestion place,
+    required GeneratedTripPlan plan,
+  }) async {
+    final fallbackImages = _mergedPreviewImages(
+      destination: place.name,
+      searchedImages: const [],
+    );
+    try {
+      final searchParts = [
+        place.name,
+        ...plan.items
+            .where(
+              (item) =>
+                  item.type != Icons.flight_takeoff_rounded &&
+                  item.type != Icons.train_rounded &&
+                  item.type != Icons.hotel_rounded,
+            )
+            .map((item) => item.activity)
+            .take(2),
+      ];
+      final query = '${searchParts.join(' ')} travel landmark';
+      final url = Uri.https('commons.wikimedia.org', '/w/api.php', {
+        'action': 'query',
+        'generator': 'search',
+        'gsrsearch': query,
+        'gsrnamespace': '6',
+        'gsrlimit': '8',
+        'prop': 'imageinfo',
+        'iiprop': 'url',
+        'iiurlwidth': '900',
+        'format': 'json',
+        'origin': '*',
+      });
+      final response = await http
+          .get(
+            url,
+            headers: const {
+              'Accept': 'application/json',
+              'User-Agent': 'TravellingWithFlutter/1.0 trip-preview-images',
+            },
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return fallbackImages;
+      }
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final pages = body['query'] is Map
+          ? (body['query'] as Map)['pages']
+          : null;
+      final searchedImages = <String>[];
+      if (pages is Map) {
+        for (final page in pages.values.whereType<Map>()) {
+          final imageInfoList = (page['imageinfo'] as List<dynamic>?)
+              ?.whereType<Map>()
+              .toList();
+          final imageInfo = imageInfoList == null || imageInfoList.isEmpty
+              ? null
+              : imageInfoList.first;
+          final imageUrl =
+              (imageInfo?['thumburl'] as String?) ??
+              (imageInfo?['url'] as String?);
+          if (_isPreviewImageUrl(imageUrl)) searchedImages.add(imageUrl!);
+        }
+      }
+      return _mergedPreviewImages(
+        destination: place.name,
+        searchedImages: searchedImages,
+      );
+    } catch (_) {
+      return fallbackImages;
+    }
+  }
+
+  bool _isPreviewImageUrl(String? value) {
+    if (value == null || value.trim().isEmpty) return false;
+    final lower = value.toLowerCase();
+    return lower.startsWith('https://') &&
+        (lower.contains('.jpg') ||
+            lower.contains('.jpeg') ||
+            lower.contains('.png') ||
+            lower.contains('.webp'));
+  }
+
+  List<String> _mergedPreviewImages({
+    required String destination,
+    required List<String> searchedImages,
+  }) {
+    final seen = <String>{};
+    return [
+      if (_selectedImage != null) _selectedImage!,
+      ...searchedImages,
+      ..._imagesForDestination(destination),
+      ..._galleryOptions,
+    ].where((image) => seen.add(image)).take(8).toList();
+  }
+
+  Future<void> _showAiTripPreview(_PendingAiTripPreview preview) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _AiTripPreviewSheet(
+        preview: preview,
+        selectedImage: _selectedImage,
+        onConfirm: (image, plan) => _confirmAiTripPreview(
+          sheetContext: context,
+          preview: preview,
+          selectedImage: image,
+          plan: plan,
+        ),
+      ),
+    );
+  }
+
+  void _confirmAiTripPreview({
+    required BuildContext sheetContext,
+    required _PendingAiTripPreview preview,
+    required String? selectedImage,
+    required GeneratedTripPlan plan,
+  }) {
+    Navigator.of(sheetContext).pop();
+    if (selectedImage != null) _selectedImage = selectedImage;
+    final images = selectedImage == null
+        ? preview.images
+        : [
+            selectedImage,
+            ...preview.images.where((image) => image != selectedImage),
+          ];
+    _createTripFromPlan(
+      place: preview.place,
+      budget: preview.budget,
+      plan: plan,
+      startLocation: preview.startLocation,
+      images: images,
     );
   }
 
@@ -2154,8 +2714,26 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     required int budget,
     required GeneratedTripPlan plan,
     required TripStartLocation? startLocation,
+    List<String>? images,
   }) {
     final bookings = _bookingsWithManualDetails(plan.bookings);
+    final budgetCategories = _defaultBudgetCategories(
+      budget: budget,
+      actual: 0,
+      items: plan.items,
+      bookings: bookings,
+      transportActual: _purchasedTransportCost,
+    );
+    final budgetLimit = _budgetLimitForCategories(
+      budget: budget,
+      categories: budgetCategories,
+    );
+    final tripImages =
+        images ??
+        [
+          if (_selectedImage != null) _selectedImage!,
+          ..._imagesForDestination(place.name),
+        ];
     widget.onGenerate(
       Trip(
         id: 't-${DateTime.now().millisecondsSinceEpoch}',
@@ -2169,25 +2747,17 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         originLongitude: startLocation?.longitude,
         startDate: _dateKey(_startDate),
         endDate: _dateKey(_endDate),
-        budget: budget,
-        spent: 0,
+        budget: budgetLimit,
+        spent: _purchasedTransportCost,
         groupType: _group,
         currency: _currency,
         status: TripStatus.upcoming,
-        images: [
-          if (_selectedImage != null) _selectedImage!,
-          ..._imagesForDestination(place.name),
-        ],
+        images: tripImages,
         items: plan.items,
         bookings: bookings,
         checklist: plan.checklist,
         preferences: _savedTripPreferences,
-        budgetCategories: _defaultBudgetCategories(
-          budget: budget,
-          actual: 0,
-          items: plan.items,
-          bookings: bookings,
-        ),
+        budgetCategories: budgetCategories,
       ),
     );
   }
@@ -2226,14 +2796,29 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
   List<Booking> _bookingsWithManualDetails(List<Booking> generated) {
     final airline = _airline.text.trim();
+    final flightCode = _flightCode.text.trim();
+    final passengerName = _ticketPassengerName.text.trim();
     final confirmation = _flightConfirmation.text.trim();
-    if (airline.isEmpty && confirmation.isEmpty) return generated;
+    final paidAmount = _purchasedTransportCost;
+    if (airline.isEmpty &&
+        flightCode.isEmpty &&
+        passengerName.isEmpty &&
+        confirmation.isEmpty &&
+        paidAmount <= 0) {
+      return generated;
+    }
     final manualFlight = Booking(
-      airline.isEmpty ? 'Flight booking' : airline,
+      [
+        if (airline.isNotEmpty) airline else 'Flight booking',
+        if (flightCode.isNotEmpty) flightCode,
+      ].join(' / '),
       _dateKey(_startDate),
       'TBD',
-      confirmation.isEmpty ? 'CONFIRMATION-TBD' : confirmation,
-      0,
+      [
+        if (confirmation.isNotEmpty) confirmation else 'CONFIRMATION-TBD',
+        if (passengerName.isNotEmpty) 'Passenger: $passengerName',
+      ].join(' | '),
+      paidAmount,
       Icons.flight_takeoff_rounded,
     );
     return [manualFlight, ...generated];
@@ -2281,6 +2866,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         : template.budgetCategories
               .map((category) => category.copyWith(actual: 0))
               .toList();
+    final budgetLimit = _budgetLimitForCategories(
+      budget: template.budget,
+      categories: budgetCategories,
+    );
 
     return Trip(
       id: 't-${DateTime.now().millisecondsSinceEpoch}',
@@ -2297,7 +2886,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       originLongitude: template.originLongitude,
       startDate: _dateKey(start),
       endDate: _dateKey(end),
-      budget: template.budget,
+      budget: budgetLimit,
       spent: 0,
       groupType: template.groupType,
       currency: template.currency,
@@ -2446,15 +3035,93 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     });
   }
 
-  void _applyAiBookingIdea({
-    required String airline,
-    required String confirmation,
-  }) {
+  bool get _hasTransportRecommendationRoute {
+    final hasDestination =
+        _selectedPlace != null || _destination.text.trim().isNotEmpty;
+    final hasOrigin =
+        _selectedOriginPlace != null ||
+        _tripStartLocation != null ||
+        _startLocation.text.trim().isNotEmpty;
+    return hasDestination && hasOrigin;
+  }
+
+  String get _transportOriginLabel {
+    return _selectedOriginPlace?.formatted ??
+        _tripStartLocation?.displayLabel ??
+        _startLocation.text.trim();
+  }
+
+  String get _transportDestinationLabel {
+    return _selectedPlace?.formatted ?? _destination.text.trim();
+  }
+
+  int get _purchasedTransportCost =>
+      int.tryParse(_ticketPaidAmount.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+
+  List<TransportRecommendation> get _purchasedTransportRecommendations {
+    final airline = _airline.text.trim();
+    final code = _flightCode.text.trim();
+    final passenger = _ticketPassengerName.text.trim();
+    final confirmation = _flightConfirmation.text.trim();
+    final paid = _purchasedTransportCost;
+    if (airline.isEmpty && code.isEmpty && confirmation.isEmpty && paid <= 0) {
+      return const [];
+    }
+    final detailParts = [
+      if (code.isNotEmpty) code,
+      if (passenger.isNotEmpty) 'Passenger: $passenger',
+      if (confirmation.isNotEmpty) 'Confirmation: $confirmation',
+    ];
+    return [
+      TransportRecommendation(
+        mode: 'Flight',
+        provider: airline.isEmpty ? 'Booked flight' : airline,
+        route: _hasTransportRecommendationRoute
+            ? 'Booked route from $_transportOriginLabel to $_transportDestinationLabel'
+            : 'Booked flight details',
+        duration: '',
+        price: paid,
+        currency: _currency,
+        bookingHint: detailParts.isEmpty
+            ? 'Already bought. This will be saved as spent transport budget.'
+            : '${detailParts.join(' | ')}. Already bought and saved as spent transport budget.',
+        sourceName: 'Your ticket',
+        sourceUrl: '',
+      ),
+    ];
+  }
+
+  Future<void> _loadTransportRecommendations() async {
+    if (!_hasTransportRecommendationRoute || _isLoadingTransport) return;
     setState(() {
-      _airline.text = airline;
-      _flightConfirmation.text = confirmation;
-      _formError = null;
+      _isLoadingTransport = true;
+      _transportRecommendationError = null;
     });
+    try {
+      final result = await _assistant
+          .generateTransportRecommendations(
+            origin: _transportOriginLabel,
+            destination: _transportDestinationLabel,
+            startDate: _startDate,
+            endDate: _endDate,
+            currency: _currency,
+            groupType: _group,
+          )
+          .timeout(const Duration(seconds: 40));
+      if (!mounted) return;
+      setState(() {
+        _transportRecommendations = result.options;
+        _transportRecommendationSummary = result.summary;
+        _isLoadingTransport = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _transportRecommendationError =
+            'Transport search is unavailable right now. Try again after confirming the route, or add bought ticket details below.';
+        _isLoadingTransport = false;
+      });
+    }
   }
 
   bool _isAiStepValid(int index) {
@@ -2838,53 +3505,24 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _AiChoiceGrid(
-                        choices: [
-                          _AiChoice(
-                            icon: Icons.flight_land_rounded,
-                            title: 'No booking yet',
-                            text: 'Let AI keep arrival and return flexible',
-                            onTap: () => _applyAiBookingIdea(
-                              airline: '',
-                              confirmation: '',
-                            ),
-                          ),
-                          _AiChoice(
-                            icon: Icons.flight_takeoff_rounded,
-                            title: 'Flight booked',
-                            text: 'Save space for airline and confirmation',
-                            onTap: () => _applyAiBookingIdea(
-                              airline: 'Flight booked',
-                              confirmation: 'Add confirmation',
-                            ),
-                          ),
-                          _AiChoice(
-                            icon: Icons.schedule_rounded,
-                            title: 'Timing matters',
-                            text: 'AI should leave arrival-day buffer time',
-                            onTap: () => _applyAiBookingIdea(
-                              airline: 'Arrival timing important',
-                              confirmation: '',
-                            ),
-                          ),
-                        ],
+                      _TransportRecommendationCard(
+                        available: _hasTransportRecommendationRoute,
+                        loading: _isLoadingTransport,
+                        summary: _transportRecommendationSummary,
+                        error: _transportRecommendationError,
+                        options: _visibleTransportRecommendations,
+                        currency: _currency,
+                        onRefresh: _loadTransportRecommendations,
                       ),
                       const SizedBox(height: 12),
-                      _AiInputGrid(
-                        children: [
-                          _AiInputCard(
-                            label: 'Airline optional',
-                            icon: Icons.flight_takeoff_rounded,
-                            controller: _airline,
-                            hint: 'Flight booking',
-                          ),
-                          _AiInputCard(
-                            label: 'Confirmation',
-                            icon: Icons.confirmation_number_rounded,
-                            controller: _flightConfirmation,
-                            hint: 'Confirmation number',
-                          ),
-                        ],
+                      _PurchasedFlightCard(
+                        airline: _airline,
+                        flightCode: _flightCode,
+                        passengerName: _ticketPassengerName,
+                        confirmation: _flightConfirmation,
+                        paidAmount: _ticketPaidAmount,
+                        currency: _currency,
+                        onChanged: () => setState(() => _formError = null),
                       ),
                     ],
                   ),
@@ -3204,11 +3842,39 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                         ),
                                       ),
                                       _ManualFieldCard(
+                                        label: 'Plane code',
+                                        icon: Icons.confirmation_number_rounded,
+                                        child: _ManualTextField(
+                                          controller: _flightCode,
+                                          hint: 'BR123 / CI751',
+                                        ),
+                                      ),
+                                      _ManualFieldCard(
+                                        label: 'Passenger name',
+                                        icon: Icons.badge_rounded,
+                                        child: _ManualTextField(
+                                          controller: _ticketPassengerName,
+                                          hint: 'Name under ticket',
+                                        ),
+                                      ),
+                                      _ManualFieldCard(
                                         label: 'Confirmation',
                                         icon: Icons.confirmation_number_rounded,
                                         child: _ManualTextField(
                                           controller: _flightConfirmation,
                                           hint: 'Confirmation number',
+                                        ),
+                                      ),
+                                      _ManualFieldCard(
+                                        label: 'Already paid',
+                                        icon: Icons.payments_rounded,
+                                        child: _ManualTextField(
+                                          controller: _ticketPaidAmount,
+                                          hint: 'Amount in $_currency',
+                                          keyboardType: TextInputType.number,
+                                          inputFormatters: const [
+                                            _GroupedNumberInputFormatter(),
+                                          ],
                                         ),
                                       ),
                                     ],
@@ -3390,8 +4056,16 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                     CreateTripChatTurn(
                       message: message,
                       onSelect: _sendCreateTripChat,
+                      selectedCurrency: _currency,
+                      currencyOptions: _currencyOptions,
+                      onCurrencyChanged: _setCreateChatCurrency,
+                      budgetOptions: _budgetChoiceOptionsForCurrentDraft(),
                     ),
                   if (_isThinking) const CreateTripThinkingBubble(),
+                  if (_isPreparingPreview) ...[
+                    const SizedBox(height: 12),
+                    const GeneratingTripPanel(),
+                  ],
                   if (pendingDraft != null && canUsePlan) ...[
                     const SizedBox(height: 12),
                     CreateTripDraftCard(
@@ -3399,7 +4073,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                       confirmed: _pendingDraftConfirmed,
                       onConfirm: () => _sendCreateTripChat('confirm'),
                       onEdit: _editPendingDraft,
-                      onUse: _pendingDraftConfirmed ? _usePendingDraft : null,
+                      onUse: _isPreparingPreview ? null : _usePendingDraft,
                       onChange: _sendCreateTripChat,
                     ),
                   ],
@@ -3486,6 +4160,974 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
 
     return _buildAiTripBuilderPage(context);
+  }
+}
+
+class _AiTripPreviewSheet extends StatefulWidget {
+  const _AiTripPreviewSheet({
+    required this.preview,
+    required this.selectedImage,
+    required this.onConfirm,
+  });
+
+  final _PendingAiTripPreview preview;
+  final String? selectedImage;
+  final void Function(String? selectedImage, GeneratedTripPlan plan) onConfirm;
+
+  @override
+  State<_AiTripPreviewSheet> createState() => _AiTripPreviewSheetState();
+}
+
+class _AiTripPreviewSheetState extends State<_AiTripPreviewSheet> {
+  late String? _selectedImage =
+      widget.selectedImage ??
+      (widget.preview.images.isEmpty ? null : widget.preview.images.first);
+  late List<ScheduleItem> _items = [...widget.preview.plan.items];
+
+  GeneratedTripPlan get _editedPlan => GeneratedTripPlan(
+    items: [..._items]..sort(_compareRuntimeScheduleItems),
+    bookings: widget.preview.plan.bookings,
+    checklist: widget.preview.plan.checklist,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final preview = widget.preview;
+    final dayGroups = _groupPreviewItemsByDay(_items);
+    final tripLength = math.max(
+      1,
+      preview.endDate.difference(preview.startDate).inDays + 1,
+    );
+    final maxPreviewDay = dayGroups.keys.fold<int>(
+      tripLength,
+      (maxDay, day) => math.max(maxDay, day),
+    );
+    final filterQuality = PerformanceScope.maybeSettingsOf(
+      context,
+    ).filterQuality;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.9,
+      minChildSize: 0.55,
+      maxChildSize: 0.96,
+      builder: (context, controller) {
+        return DecoratedBox(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: ListView(
+            controller: controller,
+            padding: EdgeInsets.fromLTRB(
+              _responsiveHorizontalPadding(context),
+              12,
+              _responsiveHorizontalPadding(context),
+              20 + MediaQuery.paddingOf(context).bottom,
+            ),
+            children: [
+              Center(
+                child: Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD8DEE4),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const IconBadge(icon: Icons.travel_explore_rounded, size: 48),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const LabelText('Trip preview'),
+                        Text(
+                          appText(context, preview.place.name),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _primary,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                            height: 1.05,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          appText(
+                            context,
+                            'Review searched images and daily stops before creating the trip.',
+                          ),
+                          style: const TextStyle(
+                            color: _secondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: appText(context, 'Close'),
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              if (preview.usedFallbackPlan) ...[
+                const SizedBox(height: 12),
+                const _AiPreviewNotice(),
+              ],
+              const SizedBox(height: 16),
+              _AiPreviewImageGrid(
+                images: preview.images,
+                selectedImage: _selectedImage,
+                filterQuality: filterQuality,
+                onSelect: (image) => setState(() => _selectedImage = image),
+              ),
+              const SizedBox(height: 16),
+              ResponsiveSplit(
+                children: [
+                  DraftStat(
+                    label: 'Dates',
+                    value:
+                        '${_dateKey(preview.startDate)} / ${_dateKey(preview.endDate)}',
+                  ),
+                  DraftStat(
+                    label: 'Length',
+                    value: tripLength == 1 ? '1 day' : '$tripLength days',
+                  ),
+                  DraftStat(
+                    label: 'Budget',
+                    value:
+                        '${preview.currency} ${_formatAmountText(preview.budget.toString())}',
+                  ),
+                  DraftStat(label: 'Party', value: preview.groupType),
+                ],
+              ),
+              if (preview.preferences.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: preview.preferences
+                      .map((item) => SmallPill(label: item))
+                      .toList(),
+                ),
+              ],
+              const SizedBox(height: 18),
+              const SectionHeader(title: 'Daily plan'),
+              const SizedBox(height: 10),
+              for (var day = 1; day <= maxPreviewDay; day++)
+                _AiPreviewDayCard(
+                  day: day,
+                  date: preview.startDate.add(Duration(days: day - 1)),
+                  items: dayGroups[day] ?? const [],
+                  onEdit: () => _openDayEditor(
+                    day: day,
+                    date: preview.startDate.add(Duration(days: day - 1)),
+                  ),
+                ),
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                onPressed: () => widget.onConfirm(_selectedImage, _editedPlan),
+                style: FilledButton.styleFrom(
+                  backgroundColor: _primary,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size.fromHeight(52),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                ),
+                icon: const Icon(Icons.check_rounded),
+                label: Text(
+                  appText(context, 'CREATE THIS TRIP'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openDayEditor({
+    required int day,
+    required DateTime date,
+  }) async {
+    final place = TextEditingController();
+    var isWorking = false;
+    String? warning;
+
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setSheetState) {
+              final dayItems = _items.where((item) => item.day == day).toList()
+                ..sort(_compareRuntimeScheduleItems);
+
+              Future<void> addPlaceWithAi() async {
+                final request = place.text.trim();
+                if (request.isEmpty || isWorking) return;
+                setSheetState(() {
+                  isWorking = true;
+                  warning = null;
+                });
+
+                try {
+                  final result = await TravelAssistantService()
+                      .generateDayPlanEdit(
+                        trip: _previewTrip(),
+                        day: day,
+                        placeRequest: request,
+                      )
+                      .timeout(const Duration(seconds: 32));
+                  if (!mounted || !context.mounted) return;
+
+                  if (!result.feasible) {
+                    setSheetState(() {
+                      warning = result.warning.isEmpty
+                          ? 'This day looks too tight for that place. Try a closer stop or move it to another day.'
+                          : result.warning;
+                      isWorking = false;
+                    });
+                    return;
+                  }
+
+                  final nextDayItems = result.items.isEmpty
+                      ? dayItems
+                      : result.items;
+                  setState(() {
+                    _items = [
+                      ..._items.where((item) => item.day != day),
+                      ...nextDayItems,
+                    ]..sort(_compareRuntimeScheduleItems);
+                  });
+                  place.clear();
+                  setSheetState(() {
+                    warning = result.warning.isEmpty ? null : result.warning;
+                    isWorking = false;
+                  });
+                } catch (_) {
+                  if (!context.mounted) return;
+                  final fallback = _localDayEditFallback(
+                    day: day,
+                    request: request,
+                    currentDayItems: dayItems,
+                  );
+                  if (fallback.feasible) {
+                    setState(() {
+                      _items = [
+                        ..._items.where((item) => item.day != day),
+                        ...fallback.items,
+                      ]..sort(_compareRuntimeScheduleItems);
+                    });
+                    place.clear();
+                  }
+                  setSheetState(() {
+                    warning = fallback.warning;
+                    isWorking = false;
+                  });
+                }
+              }
+
+              return SafeArea(
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: _responsiveHorizontalPadding(context),
+                    right: _responsiveHorizontalPadding(context),
+                    bottom: 16 + MediaQuery.viewInsetsOf(context).bottom,
+                    top: 8,
+                  ),
+                  child: Material(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const IconBadge(
+                                icon: Icons.edit_calendar_rounded,
+                                size: 44,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    LabelText('Day $day'),
+                                    Text(
+                                      _dateKey(date),
+                                      style: const TextStyle(
+                                        color: _primary,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: appText(context, 'Close'),
+                                onPressed: isWorking
+                                    ? null
+                                    : () => Navigator.of(context).pop(),
+                                icon: const Icon(Icons.close_rounded),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          if (dayItems.isEmpty)
+                            Text(
+                              appText(
+                                context,
+                                'No stops yet. Add a place and AI will build this day.',
+                              ),
+                              style: const TextStyle(
+                                color: _secondary,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            )
+                          else
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 260),
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: dayItems.length,
+                                itemBuilder: (context, index) {
+                                  final item = dayItems[index];
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Icon(
+                                          item.type,
+                                          color: _primary,
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        SizedBox(
+                                          width: 72,
+                                          child: Text(
+                                            item.time,
+                                            style: const TextStyle(
+                                              color: _secondary,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            item.activity,
+                                            style: const TextStyle(
+                                              color: _primary,
+                                              fontWeight: FontWeight.w800,
+                                              height: 1.25,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          const SizedBox(height: 14),
+                          TextField(
+                            controller: place,
+                            enabled: !isWorking,
+                            decoration: InputDecoration(
+                              labelText: appText(context, 'Place to add'),
+                              hintText: appText(
+                                context,
+                                'Example: Senso-ji Temple or Hokkaido day trip',
+                              ),
+                            ),
+                            onSubmitted: (_) => unawaited(addPlaceWithAi()),
+                          ),
+                          if (warning != null) ...[
+                            const SizedBox(height: 12),
+                            FormNotice(message: warning!),
+                          ],
+                          const SizedBox(height: 14),
+                          FilledButton.icon(
+                            onPressed: isWorking
+                                ? null
+                                : () => unawaited(addPlaceWithAi()),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: _primary,
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size.fromHeight(50),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                            ),
+                            icon: isWorking
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.auto_awesome_rounded),
+                            label: Text(
+                              appText(
+                                context,
+                                isWorking
+                                    ? 'Checking route...'
+                                    : 'ADD PLACE WITH AI',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      place.dispose();
+    }
+  }
+
+  DayPlanEditResult _localDayEditFallback({
+    required int day,
+    required String request,
+    required List<ScheduleItem> currentDayItems,
+  }) {
+    final unavailableWarning = _localFallbackUnavailableWarning(request);
+    if (unavailableWarning != null) {
+      return DayPlanEditResult(
+        feasible: false,
+        warning: unavailableWarning,
+        items: [],
+      );
+    }
+
+    final nextItems = [...currentDayItems];
+    final replacementIndex = nextItems.indexWhere(_isFlexiblePlaceholderStop);
+    final time = replacementIndex >= 0
+        ? nextItems[replacementIndex].time
+        : _localFallbackTime(nextItems);
+    final item = ScheduleItem(
+      day,
+      time,
+      _localFallbackActivity(request, widget.preview.place.name),
+      _localFallbackIcon(request),
+      0,
+    );
+
+    if (replacementIndex >= 0) {
+      nextItems[replacementIndex] = item;
+    } else {
+      nextItems.add(item);
+    }
+
+    nextItems.sort(_compareRuntimeScheduleItems);
+    return DayPlanEditResult(
+      feasible: true,
+      warning:
+          'AI search is unavailable right now, so I added a provisional stop. Please confirm the exact venue, date, tickets, and opening time before relying on it.',
+      items: nextItems,
+    );
+  }
+
+  String? _localFallbackUnavailableWarning(String request) {
+    final lower = request.toLowerCase();
+    if (_requiresVerifiedEventSearch(lower)) {
+      return 'I need AI search to verify event dates and venues before adding that. Try an exact event or venue name, or try again when AI is available.';
+    }
+    if (_containsAnyText(lower, const [
+      'hokkaido',
+      'sapporo',
+      'okinawa',
+      'osaka',
+      'kyoto',
+      'fukuoka',
+      'seoul',
+      'taipei',
+      'bangkok',
+      'singapore',
+    ])) {
+      final destination = widget.preview.place.name.toLowerCase();
+      if (!_containsAnyText(destination, lower.split(RegExp(r'\s+')))) {
+        return 'That looks too far from this destination for a local fallback. Try again with AI search or add it to another day.';
+      }
+    }
+    if (!_containsAnyText(lower, const [
+      'market',
+      'store',
+      'shop',
+      'mall',
+      'museum',
+      'gallery',
+      'cafe',
+      'restaurant',
+      'park',
+      'temple',
+      'landmark',
+      'beach',
+      'viewpoint',
+    ])) {
+      return 'AI search is unavailable right now. Try an exact nearby place name, or add this after creating the trip.';
+    }
+    return null;
+  }
+
+  bool _requiresVerifiedEventSearch(String lower) {
+    return _containsAnyText(lower, const [
+      'convention',
+      'expo',
+      'festival',
+      'event',
+      'concert',
+      'show',
+    ]);
+  }
+
+  bool _isFlexiblePlaceholderStop(ScheduleItem item) {
+    final text = item.activity.toLowerCase();
+    return _containsAnyText(text, const [
+      'signature ',
+      'landmark visit',
+      'museum, gallery, or indoor culture',
+      'local lunch area',
+      'easy evening viewpoint',
+      'shopping street or neighborhood browse',
+      'scenic walk, riverside, or viewpoint',
+      'transit-friendly district route',
+    ]);
+  }
+
+  String _localFallbackTime(List<ScheduleItem> items) {
+    final used = items
+        .map((item) => _parseActivityTimeMinutes(item.time))
+        .whereType<int>()
+        .toSet();
+    for (final minutes in const [15 * 60, 14 * 60, 16 * 60, 10 * 60 + 30]) {
+      if (!used.contains(minutes)) {
+        return _clockLabel(
+          DateTime(2026, 1, 1).add(Duration(minutes: minutes)),
+        );
+      }
+    }
+    return '03:00 PM';
+  }
+
+  String _localFallbackActivity(String request, String destination) {
+    final clean = request.trim();
+    final lower = clean.toLowerCase();
+    if (_containsAnyText(lower, const [
+      'anime',
+      'manga',
+      'cosplay',
+      'convention',
+      'expo',
+    ])) {
+      return 'Visit $clean in $destination; confirm venue, ticket time, and entry rules.';
+    }
+    if (_containsAnyText(lower, const ['store', 'shop'])) {
+      return 'Visit $clean in $destination; confirm the nearest branch and opening hours.';
+    }
+    if (_containsAnyText(lower, const ['festival', 'event', 'market'])) {
+      return 'Look for $clean in $destination; confirm dates, venue, and tickets before going.';
+    }
+    return 'Add $clean to this day; confirm travel time and opening hours before going.';
+  }
+
+  IconData _localFallbackIcon(String request) {
+    final lower = request.toLowerCase();
+    if (_containsAnyText(lower, const ['anime', 'manga', 'movie', 'cosplay'])) {
+      return Icons.movie_rounded;
+    }
+    if (_containsAnyText(lower, const ['food', 'restaurant', 'lunch'])) {
+      return Icons.restaurant_rounded;
+    }
+    if (_containsAnyText(lower, const ['store', 'shop', 'market'])) {
+      return Icons.shopping_bag_rounded;
+    }
+    if (_containsAnyText(lower, const ['museum', 'gallery'])) {
+      return Icons.museum_rounded;
+    }
+    return Icons.place_rounded;
+  }
+
+  Trip _previewTrip() {
+    final preview = widget.preview;
+    return Trip(
+      id: 'preview-${preview.place.placeId}',
+      destination: preview.place.name,
+      placeId: preview.place.placeId,
+      formattedAddress: preview.place.formatted,
+      latitude: preview.place.latitude,
+      longitude: preview.place.longitude,
+      originLabel: preview.startLocation?.displayLabel,
+      originLatitude: preview.startLocation?.latitude,
+      originLongitude: preview.startLocation?.longitude,
+      startDate: _dateKey(preview.startDate),
+      endDate: _dateKey(preview.endDate),
+      budget: preview.budget,
+      spent: 0,
+      groupType: preview.groupType,
+      currency: preview.currency,
+      status: TripStatus.upcoming,
+      images: preview.images,
+      items: [..._items],
+      bookings: preview.plan.bookings,
+      checklist: preview.plan.checklist,
+      preferences: preview.preferences,
+      budgetCategories: const [],
+    );
+  }
+}
+
+Map<int, List<ScheduleItem>> _groupPreviewItemsByDay(List<ScheduleItem> items) {
+  final groups = <int, List<ScheduleItem>>{};
+  for (final item in items) {
+    groups.putIfAbsent(math.max(1, item.day), () => []).add(item);
+  }
+  for (final group in groups.values) {
+    group.sort(_compareRuntimeScheduleItems);
+  }
+  return groups;
+}
+
+bool _containsAnyText(String value, Iterable<String> keywords) {
+  return keywords.any((keyword) {
+    final trimmed = keyword.trim();
+    return trimmed.isNotEmpty && value.contains(trimmed);
+  });
+}
+
+class _AiPreviewNotice extends StatelessWidget {
+  const _AiPreviewNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E8),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFFE0A3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.info_rounded, color: Color(0xFF8A5A00)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              appText(
+                context,
+                'The live AI itinerary was unavailable, so this preview uses a local starter plan you can edit after creating.',
+              ),
+              style: const TextStyle(
+                color: Color(0xFF6B4A00),
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                height: 1.3,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiPreviewImageGrid extends StatelessWidget {
+  const _AiPreviewImageGrid({
+    required this.images,
+    required this.selectedImage,
+    required this.filterQuality,
+    required this.onSelect,
+  });
+
+  final List<String> images;
+  final String? selectedImage;
+  final FilterQuality filterQuality;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    if (images.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          appText(context, 'Searched images'),
+          style: const TextStyle(
+            color: _primary,
+            fontSize: 16,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 10),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 640;
+            final heroWidth = isWide
+                ? (constraints.maxWidth - 10) * .58
+                : constraints.maxWidth;
+            final tileWidth = isWide
+                ? (constraints.maxWidth - heroWidth - 30) / 2
+                : (constraints.maxWidth - 10) / 2;
+            final heroImage = selectedImage ?? images.first;
+            final thumbnailImages = images
+                .where((item) => item != heroImage)
+                .take(4);
+            return Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                SizedBox(
+                  width: heroWidth,
+                  height: 210,
+                  child: _AiPreviewImageTile(
+                    image: heroImage,
+                    selected: true,
+                    large: true,
+                    filterQuality: filterQuality,
+                    onTap: () {},
+                  ),
+                ),
+                for (final image in thumbnailImages)
+                  SizedBox(
+                    width: math.max(120.0, tileWidth),
+                    height: isWide ? 100 : 112,
+                    child: _AiPreviewImageTile(
+                      image: image,
+                      selected: false,
+                      large: false,
+                      filterQuality: filterQuality,
+                      onTap: () => onSelect(image),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _AiPreviewImageTile extends StatelessWidget {
+  const _AiPreviewImageTile({
+    required this.image,
+    required this.selected,
+    required this.large,
+    required this.filterQuality,
+    required this.onTap,
+  });
+
+  final String image;
+  final bool selected;
+  final bool large;
+  final FilterQuality filterQuality;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.network(
+                image,
+                fit: BoxFit.cover,
+                filterQuality: filterQuality,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  color: const Color(0xFFF4F8FA),
+                  child: Icon(
+                    Icons.image_not_supported_rounded,
+                    color: const Color(0xFFACCBE0),
+                    size: large ? 48 : 28,
+                  ),
+                ),
+              ),
+              if (selected)
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: _accent, width: 3),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+              Positioned(
+                left: 10,
+                bottom: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .92),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        selected
+                            ? Icons.check_circle_rounded
+                            : Icons.touch_app_rounded,
+                        color: _primary,
+                        size: 15,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        appText(context, selected ? 'Cover' : 'Select'),
+                        style: const TextStyle(
+                          color: _primary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiPreviewDayCard extends StatelessWidget {
+  const _AiPreviewDayCard({
+    required this.day,
+    required this.date,
+    required this.items,
+    required this.onEdit,
+  });
+
+  final int day;
+  final DateTime date;
+  final List<ScheduleItem> items;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFEFF3F6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SmallPill(label: 'Day $day'),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _dateKey(date),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: appText(context, 'Edit day'),
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_rounded, color: _primary),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (items.isEmpty)
+            Text(
+              appText(context, 'Open time to adjust after creating the trip.'),
+              style: const TextStyle(
+                color: _secondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            )
+          else
+            for (final item in items.take(5))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 9),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(item.type, color: _primary, size: 19),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 72,
+                      child: Text(
+                        item.time,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _secondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        appText(context, item.activity),
+                        style: const TextStyle(
+                          color: _primary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                          height: 1.25,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
   }
 }
 
@@ -4744,6 +6386,360 @@ class _AiContextNote extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TransportRecommendationCard extends StatelessWidget {
+  const _TransportRecommendationCard({
+    required this.available,
+    required this.loading,
+    required this.summary,
+    required this.error,
+    required this.options,
+    required this.currency,
+    required this.onRefresh,
+  });
+
+  final bool available;
+  final bool loading;
+  final String? summary;
+  final String? error;
+  final List<TransportRecommendation> options;
+  final String currency;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8F0),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.route_rounded, color: Color(0xFF355872)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      appText(context, 'Recommended transportation'),
+                      style: const TextStyle(
+                        color: Color(0xFF355872),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(
+                      appText(
+                        context,
+                        'Sorted from cheaper to more expensive using current web results when available.',
+                      ),
+                      style: const TextStyle(
+                        color: Color(0xFF72787C),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: available && !loading ? onRefresh : null,
+                icon: loading
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.travel_explore_rounded),
+                label: Text(appText(context, loading ? 'Searching' : 'Find')),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (!available)
+            const _AiContextNote(
+              icon: Icons.lock_rounded,
+              title: 'Route required',
+              text:
+                  'Choose both destination and start location before searching transport prices.',
+            )
+          else ...[
+            if (summary != null && summary!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  appText(context, summary!),
+                  style: const TextStyle(
+                    color: Color(0xFF42474C),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+            if (error != null) FormNotice(message: error!),
+            if (options.isEmpty && error == null && !loading)
+              Text(
+                appText(
+                  context,
+                  'Press Find to compare train, bus, flight, and transfer options.',
+                ),
+                style: const TextStyle(
+                  color: Color(0xFF72787C),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            for (final option in options)
+              _TransportRecommendationTile(
+                option: option,
+                fallbackCurrency: currency,
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TransportRecommendationTile extends StatelessWidget {
+  const _TransportRecommendationTile({
+    required this.option,
+    required this.fallbackCurrency,
+  });
+
+  final TransportRecommendation option;
+  final String fallbackCurrency;
+
+  @override
+  Widget build(BuildContext context) {
+    final currency = option.currency.isEmpty
+        ? fallbackCurrency
+        : option.currency;
+    final priceLabel = option.price > 0
+        ? '$currency ${_formatAmountText(option.price.toString())}'
+        : option.sourceName == 'Your ticket'
+        ? appText(context, 'Booked')
+        : appText(context, 'Price varies');
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFEFF3F6)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(_transportIcon(option.mode), color: _primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  option.provider,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _primary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  option.route,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    height: 1.25,
+                  ),
+                ),
+                if (option.bookingHint.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    option.bookingHint,
+                    style: const TextStyle(
+                      color: Color(0xFF72787C),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                priceLabel,
+                style: const TextStyle(
+                  color: _primary,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              if (option.duration.isNotEmpty)
+                Text(
+                  option.duration,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              if (option.sourceName.isNotEmpty)
+                Text(
+                  option.sourceName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF79ACD8),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+IconData _transportIcon(String mode) {
+  final lower = mode.toLowerCase();
+  if (lower.contains('flight') || lower.contains('plane')) {
+    return Icons.flight_takeoff_rounded;
+  }
+  if (lower.contains('train') || lower.contains('rail')) {
+    return Icons.train_rounded;
+  }
+  if (lower.contains('bus')) return Icons.directions_bus_rounded;
+  if (lower.contains('taxi') || lower.contains('car')) {
+    return Icons.local_taxi_rounded;
+  }
+  return Icons.route_rounded;
+}
+
+class _PurchasedFlightCard extends StatelessWidget {
+  const _PurchasedFlightCard({
+    required this.airline,
+    required this.flightCode,
+    required this.passengerName,
+    required this.confirmation,
+    required this.paidAmount,
+    required this.currency,
+    required this.onChanged,
+  });
+
+  final TextEditingController airline;
+  final TextEditingController flightCode;
+  final TextEditingController passengerName;
+  final TextEditingController confirmation;
+  final TextEditingController paidAmount;
+  final String currency;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8F0),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.flight_takeoff_rounded, color: _primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  appText(context, 'Already bought a flight'),
+                  style: const TextStyle(
+                    color: _primary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            appText(
+              context,
+              'Optional check-in details. Paid amount is saved as spent transport budget.',
+            ),
+            style: const TextStyle(
+              color: Color(0xFF72787C),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _AiInputGrid(
+            children: [
+              _AiInputCard(
+                label: 'Airline',
+                icon: Icons.flight_takeoff_rounded,
+                controller: airline,
+                hint: 'China Airlines',
+                onChanged: (_) => onChanged(),
+              ),
+              _AiInputCard(
+                label: 'Plane code',
+                icon: Icons.confirmation_number_rounded,
+                controller: flightCode,
+                hint: 'CI751 / BR123',
+                onChanged: (_) => onChanged(),
+              ),
+              _AiInputCard(
+                label: 'Name under ticket',
+                icon: Icons.badge_rounded,
+                controller: passengerName,
+                hint: 'Passenger name',
+                onChanged: (_) => onChanged(),
+              ),
+              _AiInputCard(
+                label: 'Confirmation',
+                icon: Icons.confirmation_number_rounded,
+                controller: confirmation,
+                hint: 'Confirmation number',
+                onChanged: (_) => onChanged(),
+              ),
+              _AiInputCard(
+                label: 'Already paid',
+                icon: Icons.payments_rounded,
+                controller: paidAmount,
+                hint: '$currency amount',
+                keyboardType: TextInputType.number,
+                inputFormatters: const [_GroupedNumberInputFormatter()],
+                onChanged: (_) => onChanged(),
+              ),
+            ],
           ),
         ],
       ),
