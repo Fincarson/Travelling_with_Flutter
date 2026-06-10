@@ -10,6 +10,8 @@ class UserProfile {
     this.language = 'en',
     this.notificationsEnabled = true,
     this.themeMode = 'Light',
+    this.onboardingRequired = false,
+    this.onboardingCompleted = false,
   });
 
   final String name;
@@ -20,6 +22,8 @@ class UserProfile {
   final String language;
   final bool notificationsEnabled;
   final String themeMode;
+  final bool onboardingRequired;
+  final bool onboardingCompleted;
 
   Map<String, dynamic> toMap() => {
     'name': name,
@@ -31,6 +35,8 @@ class UserProfile {
       'language': language,
       'notificationsEnabled': notificationsEnabled,
       'themeMode': themeMode,
+      'onboardingRequired': onboardingRequired,
+      'onboardingCompleted': onboardingCompleted,
     },
     'updatedAt': FieldValue.serverTimestamp(),
   };
@@ -50,6 +56,34 @@ class UserProfile {
       language: (settings['language'] as String?) ?? 'en',
       notificationsEnabled: (settings['notificationsEnabled'] as bool?) ?? true,
       themeMode: (settings['themeMode'] as String?) ?? 'Light',
+      onboardingRequired: (settings['onboardingRequired'] as bool?) ?? false,
+      onboardingCompleted: (settings['onboardingCompleted'] as bool?) ?? false,
+    );
+  }
+
+  UserProfile copyWith({
+    String? name,
+    String? email,
+    String? bio,
+    String? photoUrl,
+    List<String>? interests,
+    String? language,
+    bool? notificationsEnabled,
+    String? themeMode,
+    bool? onboardingRequired,
+    bool? onboardingCompleted,
+  }) {
+    return UserProfile(
+      name: name ?? this.name,
+      email: email ?? this.email,
+      bio: bio ?? this.bio,
+      photoUrl: photoUrl ?? this.photoUrl,
+      interests: interests ?? this.interests,
+      language: language ?? this.language,
+      notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
+      themeMode: themeMode ?? this.themeMode,
+      onboardingRequired: onboardingRequired ?? this.onboardingRequired,
+      onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
     );
   }
 }

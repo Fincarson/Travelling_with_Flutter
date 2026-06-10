@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -172,6 +173,7 @@ class AccountAuthService {
     if (trimmedName.isNotEmpty) {
       await credential.user?.updateDisplayName(trimmedName);
     }
+    await _markOnboardingPendingForNewAccount(credential);
   }
 
   Future<void> sendPasswordReset(String email) {
@@ -241,7 +243,8 @@ class AccountAuthService {
 
     final confirmationResult = session.confirmationResult;
     if (confirmationResult != null) {
-      await confirmationResult.confirm(code);
+      final credential = await confirmationResult.confirm(code);
+      await _markOnboardingPendingForNewAccount(credential);
       return;
     }
 
@@ -255,12 +258,14 @@ class AccountAuthService {
       verificationId: verificationId,
       smsCode: code,
     );
-    await _auth.signInWithCredential(credential);
+    final userCredential = await _auth.signInWithCredential(credential);
+    await _markOnboardingPendingForNewAccount(userCredential);
   }
 
   Future<void> signInWithGoogle() async {
     if (kIsWeb) {
-      await _auth.signInWithPopup(GoogleAuthProvider());
+      final credential = await _auth.signInWithPopup(GoogleAuthProvider());
+      await _markOnboardingPendingForNewAccount(credential);
       return;
     }
 
@@ -277,7 +282,8 @@ class AccountAuthService {
     final credential = GoogleAuthProvider.credential(
       idToken: googleAuth.idToken,
     );
-    await _auth.signInWithCredential(credential);
+    final userCredential = await _auth.signInWithCredential(credential);
+    await _markOnboardingPendingForNewAccount(userCredential);
   }
 
   Future<void> signOut() async {
@@ -329,5 +335,18 @@ class AccountAuthService {
           ? null
           : _googleServerClientId,
     );
+  }
+
+  static Future<void> _markOnboardingPendingForNewAccount(
+    UserCredential credential,
+  ) async {
+    if (credential.additionalUserInfo?.isNewUser != true) return;
+    final uid = credential.user?.uid;
+    if (uid == null || uid.isEmpty) return;
+
+    await FirebaseFirestore.instance.collection('travel_users').doc(uid).set({
+      'settings': {'onboardingRequired': true, 'onboardingCompleted': false},
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 }

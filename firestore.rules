@@ -28,6 +28,12 @@ service cloud.firestore {
         request.auth.uid in tripData(tripId).memberIds;
     }
 
+    function canReadTripResource() {
+      return signedIn() &&
+        resource.data.memberIds is list &&
+        request.auth.uid in resource.data.memberIds;
+    }
+
     function roleForTrip(tripId) {
       return tripData(tripId).roles[request.auth.uid];
     }
@@ -271,8 +277,31 @@ service cloud.firestore {
       ]);
     }
 
+    function validTravelUserSettings() {
+      return !request.resource.data.keys().hasAny(['settings']) ||
+        (
+          request.resource.data.settings is map &&
+          (
+            !request.resource.data.settings.keys().hasAny(['onboardingRequired']) ||
+            request.resource.data.settings.onboardingRequired is bool
+          ) &&
+          (
+            !request.resource.data.settings.keys().hasAny(['onboardingCompleted']) ||
+            request.resource.data.settings.onboardingCompleted is bool
+          )
+        );
+    }
+
+    function canWriteOwnTravelUser(userId) {
+      return signedIn() &&
+        request.auth.uid == userId &&
+        validTravelUserSettings();
+    }
+
     match /travel_users/{userId} {
-      allow read, write: if signedIn() && request.auth.uid == userId;
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create, update: if canWriteOwnTravelUser(userId);
+      allow delete: if signedIn() && request.auth.uid == userId;
 
       match /tripMemberships/{tripId} {
         allow read: if signedIn() &&
@@ -361,7 +390,7 @@ service cloud.firestore {
     }
 
     match /trips/{tripId} {
-      allow read: if canReadTrip(tripId);
+      allow read: if canReadTripResource();
       allow create: if canCreateOwnedTrip();
       allow update: if isOwner(tripId) ||
         (isEditor(tripId) && editorTripFieldsOnly());

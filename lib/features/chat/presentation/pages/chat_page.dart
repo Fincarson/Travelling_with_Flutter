@@ -5,12 +5,14 @@ class ChatListScreen extends StatefulWidget {
     required this.account,
     required this.user,
     this.onRoomOpenChanged,
+    this.onOpenChat,
     super.key,
   });
 
   final AuthenticatedAccount account;
   final UserProfile user;
   final ValueChanged<bool>? onRoomOpenChanged;
+  final ValueChanged<String>? onOpenChat;
 
   @override
   State<ChatListScreen> createState() => _ChatListScreenState();
@@ -60,13 +62,20 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final chat = _activeChat;
     final membership = _activeMembership;
     if (chat != null && membership != null) {
-      return GroupChatRoomScreen(
-        chat: chat,
-        membership: membership,
-        account: widget.account,
-        user: widget.user,
-        repository: _repository,
-        onBack: _closeActiveChat,
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          _closeActiveChat();
+        },
+        child: GroupChatRoomScreen(
+          chat: chat,
+          membership: membership,
+          account: widget.account,
+          user: widget.user,
+          repository: _repository,
+          onBack: _closeActiveChat,
+        ),
       );
     }
 
@@ -452,6 +461,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   void _showChat(GroupChat chat, GroupChatMembership membership) {
+    final onOpenChat = widget.onOpenChat;
+    if (onOpenChat != null) {
+      onOpenChat(chat.id);
+      return;
+    }
+
     setState(() {
       _activeChat = chat;
       _activeMembership = membership;
@@ -467,6 +482,121 @@ class _ChatListScreenState extends State<ChatListScreen> {
     });
     widget.onRoomOpenChanged?.call(false);
   }
+}
+
+class RoutedGroupChatRoomScreen extends StatefulWidget {
+  const RoutedGroupChatRoomScreen({
+    required this.chatId,
+    required this.account,
+    required this.user,
+    required this.onBack,
+    this.onRoomOpenChanged,
+    super.key,
+  });
+
+  final String chatId;
+  final AuthenticatedAccount account;
+  final UserProfile user;
+  final VoidCallback onBack;
+  final ValueChanged<bool>? onRoomOpenChanged;
+
+  @override
+  State<RoutedGroupChatRoomScreen> createState() =>
+      _RoutedGroupChatRoomScreenState();
+}
+
+class _RoutedGroupChatRoomScreenState extends State<RoutedGroupChatRoomScreen> {
+  final _repository = GroupChatRepository(FirebaseFirestore.instance);
+  late Future<_LoadedGroupChatRoom> _room;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.onRoomOpenChanged?.call(true);
+    _room = _loadRoom();
+  }
+
+  @override
+  void didUpdateWidget(covariant RoutedGroupChatRoomScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.chatId != widget.chatId ||
+        oldWidget.account.uid != widget.account.uid) {
+      _room = _loadRoom();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.onRoomOpenChanged?.call(false);
+    super.dispose();
+  }
+
+  Future<_LoadedGroupChatRoom> _loadRoom() async {
+    final chat = await _repository.loadChat(widget.chatId);
+    if (chat == null) throw StateError('Chat was not found.');
+
+    final membership = await _repository.loadMembership(
+      accountId: widget.account.uid,
+      chatId: widget.chatId,
+    );
+    if (membership == null || !membership.isActive) {
+      throw StateError('You are not an active member of this chat.');
+    }
+
+    return _LoadedGroupChatRoom(chat: chat, membership: membership);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        widget.onBack();
+      },
+      child: FutureBuilder<_LoadedGroupChatRoom>(
+        future: _room,
+        builder: (context, snapshot) {
+          final room = snapshot.data;
+          if (room != null) {
+            return GroupChatRoomScreen(
+              chat: room.chat,
+              membership: room.membership,
+              account: widget.account,
+              user: widget.user,
+              repository: _repository,
+              onBack: widget.onBack,
+            );
+          }
+
+          if (snapshot.hasError) {
+            return SimpleToolScreen(
+              title: 'Chat',
+              onBack: widget.onBack,
+              children: [
+                FormNotice(
+                  message: _chatErrorMessage(
+                    snapshot.error ?? 'Could not load chat.',
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return const ScreenScaffold(
+            child: Center(child: CircularProgressIndicator()),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _LoadedGroupChatRoom {
+  const _LoadedGroupChatRoom({required this.chat, required this.membership});
+
+  final GroupChat chat;
+  final GroupChatMembership membership;
 }
 
 class GroupChatRoomScreen extends StatefulWidget {

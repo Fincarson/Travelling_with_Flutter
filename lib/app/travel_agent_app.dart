@@ -8,6 +8,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 
@@ -20,6 +21,7 @@ import '../core/theme/app_theme.dart';
 import '../features/auth/data/account_auth_service.dart';
 
 part 'travel_agent_shell.dart';
+part 'router.dart';
 part '../features/profile/domain/entities/user_profile.dart';
 part '../features/itinerary/domain/entities/trip.dart';
 part '../features/itinerary/domain/entities/create_trip_draft.dart';
