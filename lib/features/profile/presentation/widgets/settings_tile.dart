@@ -59,3 +59,68 @@ class SettingsTile extends StatelessWidget {
     );
   }
 }
+
+class LocationAccessTile extends StatelessWidget {
+  const LocationAccessTile({
+    required this.enabled,
+    required this.busy,
+    required this.onChanged,
+    super.key,
+  });
+
+  final bool enabled;
+  final bool busy;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: GlassPanel(
+        child: Row(
+          children: [
+            const IconBadge(icon: Icons.my_location_rounded, size: 44),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    appText(context, 'Location access'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    appText(
+                      context,
+                      enabled
+                          ? 'AI and trip planning can use your location.'
+                          : 'The app will not request or use location.',
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _secondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            if (busy)
+              const SizedBox.square(
+                dimension: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Switch.adaptive(value: enabled, onChanged: onChanged),
+          ],
+        ),
+      ),
+    );
+  }
+}

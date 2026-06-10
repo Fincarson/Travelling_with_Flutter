@@ -66,8 +66,6 @@ const _zhHantTwText = {
   'Rain window': '降雨時段',
   'Kyoto rain expected after 2 PM.': '京都下午 2 點後可能下雨。',
   'ADD PRIMARY PHOTO': '新增主要照片',
-  'Tell AI the basics below. It will build stops, bookings, and a packing list.':
-      '告訴 AI 基本資訊，它會建立停靠點、預訂和打包清單。',
   'AI generation was unavailable, so a local draft plan was created.':
       'AI 生成功能暫時無法使用，因此已建立本機草稿計畫。',
   'Generating schedule...': '正在產生日程...',
@@ -197,6 +195,10 @@ const _zhHantTwText = {
   'Actual': '實際',
   'Free': '免費',
   'Start': '開始',
+  'Delete': '刪除',
+  'Delete trip': '刪除旅程',
+  'Trip options': '旅程選項',
+  'Undo': '復原',
   'Travel Info': '旅行資訊',
   'Weather': '天氣',
   'Rain expected after 2 PM. Move outdoor shrines earlier.':

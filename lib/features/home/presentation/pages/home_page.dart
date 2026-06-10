@@ -7,6 +7,7 @@ class DashboardScreen extends StatefulWidget {
     required this.activeTrip,
     required this.onCreate,
     required this.onOpenTrip,
+    required this.onStartTrip,
     required this.onAskAi,
     required this.onOpenMap,
     required this.onOpenInfo,
@@ -18,6 +19,7 @@ class DashboardScreen extends StatefulWidget {
   final Trip? activeTrip;
   final VoidCallback onCreate;
   final ValueChanged<Trip> onOpenTrip;
+  final ValueChanged<Trip> onStartTrip;
   final ValueChanged<String> onAskAi;
   final VoidCallback onOpenMap;
   final VoidCallback onOpenInfo;
@@ -80,7 +82,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ] else ...[
             LabelText(_profileText(widget.user.language, 'currentTrip')),
             const SizedBox(height: 8),
-            CurrentTripCard(trip: trip, onTap: () => widget.onOpenTrip(trip)),
+            CurrentTripCard(
+              trip: trip,
+              onTap: () => widget.onOpenTrip(trip),
+              onStart: trip.status == TripStatus.ongoing
+                  ? null
+                  : () => widget.onStartTrip(trip),
+            ),
             const SizedBox(height: 22),
             ResponsiveActionWrap(
               children: [
@@ -102,8 +110,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 QuickAction(
                   icon: Icons.auto_awesome_rounded,
                   label: 'AI',
-                  onTap: () =>
-                      widget.onAskAi('Plan my next ${trip.destination} stop.'),
+                  onTap: () => widget.onAskAi(_dailyTripPrompt(trip)),
                 ),
               ],
             ),
@@ -129,6 +136,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
+}
+
+String _dailyTripPrompt(Trip trip) {
+  if (trip.status != TripStatus.ongoing) {
+    return 'Help me prepare to start my ${trip.destination} trip.';
+  }
+  final runtime = _tripRuntimePlan(trip);
+  final next = runtime.nextItem;
+  final base =
+      'I am currently running my ${trip.destination} trip. Today is day ${runtime.currentDay} of ${runtime.totalDays}.';
+  if (next == null) {
+    return '$base Help me plan the rest of today based on my schedule, current time, and location if available.';
+  }
+  return '$base My next scheduled activity is "${next.activity}" at ${next.time}. Help me run today smoothly using current time and location if available.';
 }
 
 class _EmptyTripCard extends StatelessWidget {
