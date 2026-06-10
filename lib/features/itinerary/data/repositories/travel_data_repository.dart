@@ -48,15 +48,6 @@ class TravelDataRepository {
     return batch.commit();
   }
 
-  Future<bool> shouldShowOnboarding(String accountId) async {
-    final snapshot = await _userDoc(accountId).get();
-    if (!snapshot.exists) return false;
-    final profile = UserProfile.fromMap(
-      snapshot.data() ?? const <String, dynamic>{},
-    );
-    return profile.onboardingRequired && !profile.onboardingCompleted;
-  }
-
   Future<void> completeOnboarding(String accountId) {
     return _userDoc(accountId).set({
       'settings': {'onboardingRequired': false, 'onboardingCompleted': true},

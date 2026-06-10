@@ -11,9 +11,6 @@ class AppRouter {
       initialLocation: '/',
       refreshListenable: refreshListenable,
       redirect: (context, state) {
-        final isOnboarding = state.uri.path == '/onboarding';
-        if (appState._showOnboarding && !isOnboarding) return '/onboarding';
-        if (!appState._showOnboarding && isOnboarding) return '/';
         return null;
       },
       routes: [
