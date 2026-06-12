@@ -12,6 +12,7 @@ class DashboardScreen extends StatefulWidget {
     required this.onOpenMap,
     required this.onOpenInfo,
     required this.onOpenTranslate,
+    required this.onOpenNotifications,
     super.key,
   });
   final UserProfile user;
@@ -24,6 +25,7 @@ class DashboardScreen extends StatefulWidget {
   final VoidCallback onOpenMap;
   final VoidCallback onOpenInfo;
   final VoidCallback onOpenTranslate;
+  final VoidCallback onOpenNotifications;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -58,9 +60,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               Stack(
                 children: [
-                  const IconSquare(icon: Icons.notifications_none_rounded),
+                  IconSquare(
+                    icon: Icons.notifications_none_rounded,
+                    tooltip: 'Notifications',
+                    onTap: widget.onOpenNotifications,
+                  ),
                   if (widget.user.notificationsEnabled)
-                    const Positioned(right: 10, top: 10, child: Dot()),
+                    const Positioned(
+                      right: 10,
+                      top: 10,
+                      child: IgnorePointer(child: Dot()),
+                    ),
                 ],
               ),
             ],

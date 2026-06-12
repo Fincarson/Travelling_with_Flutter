@@ -8,6 +8,8 @@ class ProfileScreen extends StatefulWidget {
     required this.onSignOut,
     required this.onDeleteAccount,
     required this.onOpenPerformance,
+    required this.onOpenArchived,
+    required this.archivedItemCount,
     super.key,
   });
 
@@ -17,6 +19,8 @@ class ProfileScreen extends StatefulWidget {
   final Future<void> Function() onSignOut;
   final Future<void> Function() onDeleteAccount;
   final VoidCallback onOpenPerformance;
+  final VoidCallback onOpenArchived;
+  final int archivedItemCount;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -476,6 +480,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               PerformanceScope.settingsOf(context).preset.label,
             ),
             onTap: widget.onOpenPerformance,
+          ),
+          SettingsTile(
+            icon: Icons.inventory_2_outlined,
+            title: appText(context, 'Archived'),
+            value: appText(context, '${widget.archivedItemCount} items'),
+            onTap: widget.onOpenArchived,
           ),
           SettingsTile(
             icon: Icons.explore_outlined,
