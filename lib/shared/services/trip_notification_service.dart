@@ -20,6 +20,15 @@ class TripNotificationService {
     required List<Trip> trips,
     required bool enabled,
   }) async {
+    if (browser_notifications.supportsBrowserNotifications) {
+      await _syncBrowserTripReminders(
+        activeTrip: activeTrip,
+        trips: trips,
+        enabled: enabled,
+      );
+      return;
+    }
+
     await _ensureInitialized();
 
     if (!enabled) {
@@ -98,12 +107,101 @@ class TripNotificationService {
   }
 
   Future<void> cancelTripReminders() async {
+    if (browser_notifications.supportsBrowserNotifications) {
+      final ids = await _loadScheduledIds();
+      await browser_notifications.cancelBrowserNotifications(ids);
+      await _saveScheduledIds(const []);
+      return;
+    }
+
     await _ensureInitialized();
     final ids = await _loadScheduledIds();
     for (final id in ids) {
       await _notifications.cancel(id: id);
     }
     await _saveScheduledIds(const []);
+  }
+
+  Future<void> _syncBrowserTripReminders({
+    required Trip? activeTrip,
+    required List<Trip> trips,
+    required bool enabled,
+  }) async {
+    if (!enabled) {
+      await cancelTripReminders();
+      return;
+    }
+
+    final allowed = await browser_notifications
+        .requestBrowserNotificationPermission();
+    if (!allowed) {
+      await cancelTripReminders();
+      return;
+    }
+
+    await cancelTripReminders();
+
+    final scheduledIds = <int>[];
+    final now = _travelAgentNow();
+
+    for (final trip in trips) {
+      if (trip.status != TripStatus.upcoming) continue;
+      final startDate = _parseTripDate(trip.startDate);
+      if (startDate == null) continue;
+
+      final dayBefore = startDate
+          .subtract(const Duration(days: 1))
+          .add(const Duration(hours: 9));
+      if (dayBefore.isAfter(now)) {
+        final id = _notificationId(trip.id, 9001);
+        await _scheduleBrowserReminder(
+          id: id,
+          notifyAt: dayBefore,
+          title: '${trip.destination} starts tomorrow',
+          body: 'Open your itinerary and start the trip when you are ready.',
+          payload: trip.id,
+        );
+        scheduledIds.add(id);
+      }
+
+      final departureDay = startDate.add(const Duration(hours: 8));
+      if (departureDay.isAfter(now)) {
+        final id = _notificationId(trip.id, 9002);
+        await _scheduleBrowserReminder(
+          id: id,
+          notifyAt: departureDay,
+          title: '${trip.destination} starts today',
+          body: 'Your trip is waiting. Tap Start trip to activate the agent.',
+          payload: trip.id,
+        );
+        scheduledIds.add(id);
+      }
+    }
+
+    if (activeTrip != null && activeTrip.status == TripStatus.ongoing) {
+      for (var index = 0; index < activeTrip.items.length; index++) {
+        if (scheduledIds.length >= _maxScheduledActivities) break;
+
+        final item = activeTrip.items[index];
+        final startAt = _scheduleItemStartAt(activeTrip, item);
+        if (startAt == null) continue;
+
+        final notifyAt = startAt.subtract(const Duration(hours: 1));
+        if (!notifyAt.isAfter(now)) continue;
+
+        final id = _notificationId(activeTrip.id, index);
+        await _scheduleBrowserReminder(
+          id: id,
+          notifyAt: notifyAt,
+          title: '${activeTrip.destination} in 1 hour',
+          body: '${item.time} - ${item.activity}',
+          payload: activeTrip.id,
+        );
+        scheduledIds.add(id);
+      }
+    }
+
+    await _saveScheduledIds(scheduledIds);
   }
 
   Future<void> _ensureInitialized() async {
@@ -228,6 +326,22 @@ class TripNotificationService {
       ),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       payload: trip.id,
+    );
+  }
+
+  Future<void> _scheduleBrowserReminder({
+    required int id,
+    required DateTime notifyAt,
+    required String title,
+    required String body,
+    required String payload,
+  }) {
+    return browser_notifications.scheduleBrowserNotification(
+      id: id,
+      notifyAt: notifyAt,
+      title: title,
+      body: body,
+      payload: payload,
     );
   }
 

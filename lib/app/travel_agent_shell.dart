@@ -13,6 +13,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   final _repository = TravelDataRepository(FirebaseFirestore.instance);
   final _authService = AccountAuthService();
   final _notificationService = TripNotificationService();
+  final _automationService = const TripAutomationService();
+  late final _pushTokenService = PushTokenService(FirebaseFirestore.instance);
   static const _localProfilePrefix = 'travel_agent.profile.';
   static const _tripDeleteUndoWindow = Duration(seconds: 5);
   StreamSubscription<UserProfile?>? _userSubscription;
@@ -28,6 +30,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   final List<TripMemory> _tripMemories = [];
   final Map<String, Timer> _pendingTripDeleteTimers = {};
   final Set<String> _pendingTripDeleteIds = {};
+  final Set<String> _automationInFlight = {};
+  final Set<String> _automationCheckedKeys = {};
   Trip? _selectedTrip;
   Trip? _activeTrip;
   String? _pendingTripAiPrompt;
@@ -74,6 +78,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     });
     AppLocaleController.setProfileLanguage(user.language);
     await PerformanceScope.of(context).update(user.performanceSettings);
+    unawaited(_syncPushTokenRegistration());
     if (loadedProfile != null) {
       await _saveLocalProfile(accountId, user);
     }
@@ -95,6 +100,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         _activeTrip = _firstOngoingTrip(visibleTrips);
         _loadError = loadError.isEmpty ? null : loadError.join('\n');
       });
+      _queueTripAutomation(visibleTrips);
       unawaited(_syncTripReminders());
     } catch (error) {
       if (!mounted) return;
@@ -119,6 +125,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               _loadError = null;
             });
             unawaited(_syncTripReminders());
+            unawaited(_syncPushTokenRegistration());
             AppLocaleController.setProfileLanguage(profile.language);
             unawaited(
               PerformanceScope.of(context).update(profile.performanceSettings),
@@ -149,6 +156,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               }
               _loadError = null;
             });
+            _queueTripAutomation(visibleTrips);
             unawaited(_syncTripReminders());
           },
           onError: (Object error) {
@@ -218,6 +226,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       _loadError = null;
     });
     unawaited(_syncTripReminders());
+    unawaited(_syncPushTokenRegistration());
     AppLocaleController.setProfileLanguage(profile.language);
 
     final accountId = _accountId ?? widget.account.uid;
@@ -461,6 +470,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
             _matchingTrip(visibleTrips, _selectedTrip);
         _loadError = null;
       });
+      _queueTripAutomation(visibleTrips);
       unawaited(_syncTripReminders());
     } catch (error) {
       if (!mounted) return;
@@ -495,6 +505,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     _userSubscription?.cancel();
     _tripsSubscription?.cancel();
     _memoriesSubscription?.cancel();
+    unawaited(_pushTokenService.dispose());
     for (final timer in _pendingTripDeleteTimers.values) {
       timer.cancel();
     }
@@ -615,6 +626,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               onOpenTranslate: () =>
                   setState(() => _screen = _Screen.translate),
               onOpenMap: () => setState(() => _screen = _Screen.map),
+              onEnableNotifications: () =>
+                  unawaited(_enableNotificationsFromDashboard()),
             ),
             performance,
           ),
@@ -679,6 +692,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onOpenInfo: () => setState(() => _screen = _Screen.info),
           onOpenTranslate: () => setState(() => _screen = _Screen.translate),
           onOpenMap: () => setState(() => _screen = _Screen.map),
+          onEnableNotifications: () =>
+              unawaited(_enableNotificationsFromDashboard()),
         );
       case _Screen.create:
         return CreateTripScreen(
@@ -853,6 +868,93 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       trips: _visibleTrips,
       enabled: _user.notificationsEnabled,
     );
+  }
+
+  Future<void> _syncPushTokenRegistration() async {
+    await _syncPushTokenRegistrationResult();
+  }
+
+  Future<PushTokenSyncResult> _syncPushTokenRegistrationResult({
+    bool? enabled,
+  }) {
+    final accountId = _accountId ?? widget.account.uid;
+    return _pushTokenService.sync(
+      accountId: accountId,
+      enabled: enabled ?? _user.notificationsEnabled,
+    );
+  }
+
+  Future<void> _enableNotificationsFromDashboard() async {
+    try {
+      PushTokenSyncResult result;
+      if (_user.notificationsEnabled) {
+        result = await _syncPushTokenRegistrationResult();
+        await _syncTripReminders();
+      } else {
+        result = await _syncPushTokenRegistrationResult(enabled: true);
+        if (result.registered) {
+          await _saveProfile(_user.copyWith(notificationsEnabled: true));
+          await _syncTripReminders();
+        }
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(appText(context, result.message))),
+        );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(appText(context, 'Could not enable notifications.')),
+          ),
+        );
+    }
+  }
+
+  void _queueTripAutomation(List<Trip> trips) {
+    for (final trip in trips) {
+      final key = _tripAutomationKey(trip);
+      if (_automationCheckedKeys.contains(key)) continue;
+      if (!_automationInFlight.add(key)) continue;
+
+      unawaited(() async {
+        try {
+          final enrichedTrip = await _automationService.enrichTrip(trip);
+          if (enrichedTrip == null || !mounted) return;
+
+          final saved = await _saveTripOnline(enrichedTrip);
+          if (!saved || !mounted) return;
+
+          setState(() {
+            final index = _trips.indexWhere((item) => item.id == trip.id);
+            if (index != -1) _trips[index] = enrichedTrip;
+            if (_selectedTrip?.id == trip.id) _selectedTrip = enrichedTrip;
+            _activeTrip = _firstOngoingTrip(_visibleTrips);
+          });
+          unawaited(_syncTripReminders());
+        } finally {
+          _automationInFlight.remove(key);
+          _automationCheckedKeys.add(key);
+        }
+      }());
+    }
+  }
+
+  String _tripAutomationKey(Trip trip) {
+    final latitude = trip.latitude?.toStringAsFixed(3) ?? 'no-lat';
+    final longitude = trip.longitude?.toStringAsFixed(3) ?? 'no-lng';
+    return [
+      trip.id,
+      trip.startDate,
+      trip.endDate,
+      latitude,
+      longitude,
+      _dateKey(_travelAgentNow()),
+    ].join('|');
   }
 
   void _setChatRoomOpen(bool isOpen) {

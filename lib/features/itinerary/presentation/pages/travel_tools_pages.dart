@@ -231,15 +231,28 @@ class PackingScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 for (final item in group.items)
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: item == group.items.first,
-                    onChanged: (_) {},
-                    activeColor: _primary,
-                    title: Text(
-                      appText(context, item),
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
+                  Builder(
+                    builder: (context) {
+                      final isAiAdded = _isAiChecklistItem(item);
+                      return CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: item == group.items.first,
+                        onChanged: (_) {},
+                        activeColor: _primary,
+                        title: Text(
+                          appText(context, _checklistDisplayText(item)),
+                          style: TextStyle(
+                            color: isAiAdded ? const Color(0xFFB7791F) : null,
+                            fontWeight: isAiAdded
+                                ? FontWeight.w900
+                                : FontWeight.w700,
+                            backgroundColor: isAiAdded
+                                ? const Color(0xFFFFF3BF)
+                                : null,
+                          ),
+                        ),
+                      );
+                    },
                   ),
               ],
             ),

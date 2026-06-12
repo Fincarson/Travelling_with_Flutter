@@ -1,5 +1,6 @@
 part of travel_agent_app;
 
+// ignore: unused_element
 GeneratedTripPlan _fallbackTripPlan({
   required PlaceSuggestion place,
   required DateTime startDate,
@@ -169,18 +170,9 @@ GeneratedTripPlan _planWithTripTransport(
     currency: currency,
     firstStop: plan.items.where((item) => item.day == 1).firstOrNull,
   );
-  final returnItem = _returnTransportItem(
-    place: place,
-    startLocation: startLocation,
-    currency: currency,
-    finalDay: finalDay,
-    finalDayItems: plan.items.where((item) => item.day == finalDay),
-  );
   final items = [
     if (originItem != null && !_hasOriginTransport(plan.items)) originItem,
     ...plan.items,
-    if (returnItem != null && !_hasReturnTransport(plan.items, finalDay))
-      returnItem,
   ];
   final preferenceItems = _planWithPreferenceStops(
     items,
@@ -197,12 +189,74 @@ GeneratedTripPlan _planWithTripTransport(
     dayCount: dateDayCount,
     currency: currency,
   );
+  final returnItem = _returnTransportItem(
+    place: place,
+    startLocation: startLocation,
+    currency: currency,
+    finalDay: finalDay,
+    finalDayItems: balancedItems.where((item) => item.day == finalDay),
+  );
+  final transportCompleteItems = [
+    ...balancedItems,
+    if (returnItem != null && !_hasReturnTransport(balancedItems, finalDay))
+      returnItem,
+  ];
+  final connectedItems = _planWithLocalTransfers(
+    transportCompleteItems,
+    currency: currency,
+  );
 
   return GeneratedTripPlan(
-    items: balancedItems,
+    items: connectedItems,
     bookings: _bookingsForTripLength(plan.bookings, dayCount: dateDayCount),
     checklist: _checklistWithDeparturePrep(plan.checklist),
   );
+}
+
+List<ScheduleItem> _planWithLocalTransfers(
+  List<ScheduleItem> items, {
+  required String currency,
+}) {
+  final next = [...items]..sort(_compareRuntimeScheduleItems);
+  final additions = <ScheduleItem>[];
+  final days = next.map((item) => item.day).toSet().toList()..sort();
+
+  for (final day in days) {
+    final dayItems = next.where((item) => item.day == day).toList()
+      ..sort(_compareRuntimeScheduleItems);
+    for (var i = 0; i < dayItems.length - 1; i++) {
+      final current = dayItems[i];
+      final following = dayItems[i + 1];
+      if (_isConnectorItem(current) || _isConnectorItem(following)) continue;
+
+      final currentMinutes = _parseActivityTimeMinutes(current.time);
+      final followingMinutes = _parseActivityTimeMinutes(following.time);
+      if (currentMinutes == null || followingMinutes == null) continue;
+      final gap = followingMinutes - currentMinutes;
+      if (gap < 45 || gap > 240) continue;
+      if (_hasConnectorBetween(dayItems, currentMinutes, followingMinutes)) {
+        continue;
+      }
+
+      final transferMinutes = math
+          .max(
+            currentMinutes + 20,
+            followingMinutes - math.min(35, math.max(15, (gap * .35).round())),
+          )
+          .toInt();
+      additions.add(
+        ScheduleItem(
+          day,
+          _minutesToTimeLabel(transferMinutes),
+          'Move to the next area for ${_shortStopLabel(following.activity)}',
+          Icons.directions_walk_rounded,
+          _transportCost(currency, local: true),
+        ),
+      );
+    }
+  }
+
+  return [...next, ...additions]..sort(_compareRuntimeScheduleItems);
 }
 
 List<ScheduleItem> _planWithPreferenceStops(
@@ -677,20 +731,34 @@ ScheduleItem? _returnTransportItem({
   required int finalDay,
   required Iterable<ScheduleItem> finalDayItems,
 }) {
+  final finalItems = finalDayItems.toList();
   final originLat = startLocation?.latitude;
   final originLng = startLocation?.longitude;
   if (originLat == null ||
       originLng == null ||
       place.latitude == 0 ||
       place.longitude == 0) {
-    return null;
+    return _fallbackReturnTransportItem(
+      place: place,
+      finalDay: finalDay,
+      finalDayItems: finalItems,
+      currency: currency,
+    );
   }
 
   final km = _distanceKm(originLat, originLng, place.latitude, place.longitude);
-  if (km < 3) return null;
+  if (km < 3) {
+    return _fallbackReturnTransportItem(
+      place: place,
+      finalDay: finalDay,
+      finalDayItems: finalItems,
+      currency: currency,
+      local: true,
+    );
+  }
 
   final profile = _transportProfileForDistance(km, currency);
-  final latestStopMinutes = finalDayItems
+  final latestStopMinutes = finalItems
       .map((item) => _parseActivityTimeMinutes(item.time))
       .whereType<int>()
       .fold<int?>(null, (latest, minutes) {
@@ -709,6 +777,72 @@ ScheduleItem? _returnTransportItem({
     profile.icon,
     profile.cost,
   );
+}
+
+ScheduleItem _fallbackReturnTransportItem({
+  required PlaceSuggestion place,
+  required int finalDay,
+  required Iterable<ScheduleItem> finalDayItems,
+  required String currency,
+  bool local = false,
+}) {
+  final latestStopMinutes = finalDayItems
+      .map((item) => _parseActivityTimeMinutes(item.time))
+      .whereType<int>()
+      .fold<int?>(null, (latest, minutes) {
+        if (latest == null) return minutes;
+        return math.max(latest, minutes);
+      });
+  final startMinutes = math.min(
+    22 * 60,
+    math.max(12 * 60, (latestStopMinutes ?? 16 * 60) + 90),
+  );
+  final destination = place.name.split(',').first.trim();
+  return ScheduleItem(
+    finalDay,
+    _minutesToTimeLabel(startMinutes),
+    local
+        ? 'Pack up, then return home from ${destination.isEmpty ? place.name : destination} by local transit or taxi'
+        : 'Pack up, confirm the route and timing, then return home from ${destination.isEmpty ? place.name : destination}',
+    local ? Icons.train_rounded : Icons.flight_takeoff_rounded,
+    local
+        ? _transportCost(currency, local: true)
+        : _transportCost(currency, flight: true),
+  );
+}
+
+bool _isConnectorItem(ScheduleItem item) {
+  final activity = item.activity.toLowerCase();
+  return item.type == Icons.train_rounded ||
+      item.type == Icons.flight_takeoff_rounded ||
+      item.type == Icons.directions_walk_rounded ||
+      activity.contains('transfer') ||
+      activity.contains('transit') ||
+      activity.contains('walk to') ||
+      activity.contains('move to') ||
+      activity.contains('depart') ||
+      activity.contains('arrive') ||
+      activity.contains('return home') ||
+      activity.contains('go home');
+}
+
+bool _hasConnectorBetween(
+  List<ScheduleItem> items,
+  int startMinutes,
+  int endMinutes,
+) {
+  return items.any((item) {
+    if (!_isConnectorItem(item)) return false;
+    final minutes = _parseActivityTimeMinutes(item.time);
+    return minutes != null && minutes > startMinutes && minutes < endMinutes;
+  });
+}
+
+String _shortStopLabel(String activity) {
+  final firstSentence = activity.split(RegExp(r'[.!?]')).first.trim();
+  final words = firstSentence.split(RegExp(r'\s+'));
+  if (words.length <= 8) return firstSentence;
+  return '${words.take(8).join(' ')}...';
 }
 
 bool _hasOriginTransport(List<ScheduleItem> items) {
