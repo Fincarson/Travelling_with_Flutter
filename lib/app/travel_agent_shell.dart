@@ -32,6 +32,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   final List<TripMemory> _tripMemories = [];
   final Map<String, Timer> _pendingTripDeleteTimers = {};
   final Set<String> _pendingTripDeleteIds = {};
+  final Set<String> _archivedNotificationIds = {};
   final Set<String> _automationInFlight = {};
   final Set<String> _automationCheckedKeys = {};
   Trip? _selectedTrip;
@@ -599,7 +600,12 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       onOpenInfo: () => context.go('/tools/info'),
       onOpenTranslate: () => context.go('/tools/translate'),
       onOpenMap: () => context.go('/tools/map'),
-      onOpenNotifications: () => context.go('/notifications'),
+      onOpenNotifications: () {
+        context.go('/notifications');
+        if (!_user.notificationsEnabled) {
+          unawaited(_enableNotificationsFromDashboard());
+        }
+      },
     );
   }
 
@@ -814,8 +820,12 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               onOpenTranslate: () =>
                   setState(() => _screen = _Screen.translate),
               onOpenMap: () => setState(() => _screen = _Screen.map),
-              onEnableNotifications: () =>
-                  unawaited(_enableNotificationsFromDashboard()),
+              onOpenNotifications: () {
+                setState(() => _screen = _Screen.notifications);
+                if (!_user.notificationsEnabled) {
+                  unawaited(_enableNotificationsFromDashboard());
+                }
+              },
             ),
             performance,
           ),
@@ -884,8 +894,21 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onOpenInfo: () => setState(() => _screen = _Screen.info),
           onOpenTranslate: () => setState(() => _screen = _Screen.translate),
           onOpenMap: () => setState(() => _screen = _Screen.map),
-          onEnableNotifications: () =>
-              unawaited(_enableNotificationsFromDashboard()),
+          onOpenNotifications: () {
+            setState(() => _screen = _Screen.notifications);
+            if (!_user.notificationsEnabled) {
+              unawaited(_enableNotificationsFromDashboard());
+            }
+          },
+        );
+      case _Screen.notifications:
+        return NotificationsScreen(
+          key: const ValueKey('notifications'),
+          archivedNotificationIds: _archivedNotificationIds,
+          onArchive: (id) => setState(() => _archivedNotificationIds.add(id)),
+          onRestore: (id) =>
+              setState(() => _archivedNotificationIds.remove(id)),
+          onBack: () => setState(() => _screen = _Screen.dashboard),
         );
       case _Screen.create:
         return CreateTripScreen(

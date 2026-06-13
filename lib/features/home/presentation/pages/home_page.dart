@@ -12,7 +12,7 @@ class DashboardScreen extends StatefulWidget {
     required this.onOpenMap,
     required this.onOpenInfo,
     required this.onOpenTranslate,
-    required this.onEnableNotifications,
+    required this.onOpenNotifications,
     super.key,
   });
   final UserProfile user;
@@ -25,7 +25,7 @@ class DashboardScreen extends StatefulWidget {
   final VoidCallback onOpenMap;
   final VoidCallback onOpenInfo;
   final VoidCallback onOpenTranslate;
-  final VoidCallback onEnableNotifications;
+  final VoidCallback onOpenNotifications;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -73,7 +73,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             borderRadius: BorderRadius.circular(18),
                           ),
                         ),
-                        onPressed: widget.onEnableNotifications,
+                        onPressed: widget.onOpenNotifications,
                         icon: const Icon(Icons.notifications_none_rounded),
                       ),
                     ),

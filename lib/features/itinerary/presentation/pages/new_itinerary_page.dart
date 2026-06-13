@@ -88,14 +88,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _isSearching = false;
   var _isOriginSearching = false;
   var _isGenerating = false;
-  var _isLoadingTransport = false;
-  var _isPreparingPreview = false;
   var _isCreatingTrip = false;
   var _isThinking = false;
   var _pendingDraftConfirmed = false;
   var _appliedDeviceCurrency = false;
   var _hasBudgetText = false;
   String? _lastAiError;
+  _PendingAiTripPreview? _pendingAiTripPreview;
   AppDeviceContext? _deviceContext;
   TripStartLocation? _tripStartLocation;
   int? _aiExpandedStep;
@@ -1736,9 +1735,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
     setState(() {
       _applyDraftToForm(draft);
-      _mode = 1;
     });
-    await _generateTrip();
+    await _prepareAiTripPreviewFromDraft();
   }
 
   Future<void> _createManualTrip() async {
@@ -2085,7 +2083,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     );
   }
 
-  Future<void> _generateTrip() async {
+  Future<void> _prepareAiTripPreviewFromDraft() async {
+    final preview = _pendingAiTripPreview;
+    if (preview != null) {
+      await _showAiTripPreview(preview);
+      return;
+    }
+
     final budget = _parsedBudget();
     if (budget <= 0) {
       setState(() => _formError = 'Enter a budget greater than zero.');
@@ -2159,7 +2163,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       if (!mounted) return;
       final message = _friendlyAiError(error);
       setState(() {
-        _isPreparingPreview = false;
         _isGenerating = false;
         _pendingAiTripPreview = null;
         _formError = message;
@@ -2175,23 +2178,27 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
     final images = await imagesFuture;
     if (!mounted) return;
-    setState(() => _isGenerating = false);
-    _createTripFromPlan(
+
+    final nextPreview = _PendingAiTripPreview(
       place: place,
+      startDate: _startDate,
+      endDate: _endDate,
       budget: budget,
+      currency: _currency,
+      groupType: _group,
+      preferences: _savedTripPreferences,
       plan: plan,
       startLocation: startLocation,
       images: images,
     );
     setState(() {
-      _isPreparingPreview = false;
       _isGenerating = false;
       _pendingAiTripPreview = nextPreview;
     });
     await _showAiTripPreview(nextPreview);
   }
 
-  void _createTripFromPlan({
+  Future<List<String>> _searchedImagesForTripPreview({
     required PlaceSuggestion place,
   }) async {
     final fallbackImages = _mergedPreviewImages(
@@ -2266,42 +2273,29 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   List<String> _mergedPreviewImages({
     required String destination,
     required List<String> searchedImages,
-    required int budget,
-    required GeneratedTripPlan plan,
-    required TripStartLocation? startLocation,
   }) {
-    final bookings = _bookingsWithManualDetails(plan.bookings);
-    widget.onGenerate(
-      Trip(
-        id: 't-${DateTime.now().millisecondsSinceEpoch}',
-        destination: place.name,
-        placeId: place.placeId,
-        formattedAddress: place.formatted,
-        latitude: place.latitude,
-        longitude: place.longitude,
-        originLabel: startLocation?.displayLabel,
-        originLatitude: startLocation?.latitude,
-        originLongitude: startLocation?.longitude,
-        startDate: _dateKey(_startDate),
-        endDate: _dateKey(_endDate),
-        budget: budget,
-        spent: 0,
-        groupType: _group,
-        currency: _currency,
-        status: TripStatus.upcoming,
-        images: [
-          if (_selectedImage != null) _selectedImage!,
-          ..._imagesForDestination(place.name),
-        ],
-        items: plan.items,
-        bookings: bookings,
-        checklist: plan.checklist,
-        preferences: _savedTripPreferences,
-        budgetCategories: _defaultBudgetCategories(
-          budget: budget,
-          actual: 0,
-          items: plan.items,
-          bookings: bookings,
+    final seen = <String>{};
+    return [
+      if (_selectedImage != null) _selectedImage!,
+      ...searchedImages,
+      ..._imagesForDestination(destination),
+      ..._galleryOptions,
+    ].where((image) => seen.add(image)).take(8).toList();
+  }
+
+  Future<void> _showAiTripPreview(_PendingAiTripPreview preview) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _AiTripPreviewSheet(
+        preview: preview,
+        selectedImage: _selectedImage,
+        onConfirm: (image, plan) => _confirmAiTripPreview(
+          sheetContext: context,
+          preview: preview,
+          selectedImage: image,
+          plan: plan,
         ),
       ),
     );
@@ -2436,11 +2430,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       actual: 0,
       items: plan.items,
       bookings: bookings,
-      transportActual: _purchasedTransportCost,
-    );
-    final budgetLimit = _budgetLimitForCategories(
-      budget: budget,
-      categories: budgetCategories,
     );
     final tripImages =
         images ??
@@ -2462,8 +2451,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           originLongitude: startLocation?.longitude,
           startDate: _dateKey(_startDate),
           endDate: _dateKey(_endDate),
-          budget: budgetLimit,
-          spent: _purchasedTransportCost,
+          budget: budget,
+          spent: 0,
           groupType: _group,
           currency: _currency,
           status: TripStatus.upcoming,
@@ -2514,29 +2503,16 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
   List<Booking> _bookingsWithManualDetails(List<Booking> generated) {
     final airline = _airline.text.trim();
-    final flightCode = _flightCode.text.trim();
-    final passengerName = _ticketPassengerName.text.trim();
     final confirmation = _flightConfirmation.text.trim();
-    final paidAmount = _purchasedTransportCost;
-    if (airline.isEmpty &&
-        flightCode.isEmpty &&
-        passengerName.isEmpty &&
-        confirmation.isEmpty &&
-        paidAmount <= 0) {
+    if (airline.isEmpty && confirmation.isEmpty) {
       return generated;
     }
     final manualFlight = Booking(
-      [
-        if (airline.isNotEmpty) airline else 'Flight booking',
-        if (flightCode.isNotEmpty) flightCode,
-      ].join(' / '),
+      airline.isNotEmpty ? airline : 'Flight booking',
       _dateKey(_startDate),
       'TBD',
-      [
-        if (confirmation.isNotEmpty) confirmation else 'CONFIRMATION-TBD',
-        if (passengerName.isNotEmpty) 'Passenger: $passengerName',
-      ].join(' | '),
-      paidAmount,
+      confirmation.isNotEmpty ? confirmation : 'CONFIRMATION-TBD',
+      0,
       Icons.flight_takeoff_rounded,
     );
     return [manualFlight, ...generated];
@@ -4793,34 +4769,25 @@ class _AiPreviewDayCard extends StatelessWidget {
                           fontSize: 11,
                           fontWeight: FontWeight.w900,
                         ),
-                        const SizedBox(width: 10),
-                        IconButton.filled(
-                          style: IconButton.styleFrom(
-                            backgroundColor: _primary,
-                            foregroundColor: Colors.white,
-                            fixedSize: const Size(54, 54),
-                          ),
-                          onPressed: _isThinking || _isGenerating
-                              ? null
-                              : () => _sendCreateTripChat(),
-                          icon: const Icon(Icons.send_rounded),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        appText(context, item.activity),
+                        style: const TextStyle(
+                          color: _primary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                          height: 1.25,
                         ),
-                      ],
+                      ),
                     ),
                   ],
                 ),
               ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (_mode == 2) {
-      return _buildManualTripPage(context);
-    }
-
-    return _buildAiTripBuilderPage(context);
+        ],
+      ),
+    );
   }
 }
 

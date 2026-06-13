@@ -9,6 +9,7 @@ class TravelAssistantService {
   static const _createTripReplyTimeout = Duration(seconds: 35);
   static const _tripPlanTimeout = Duration(seconds: 35);
   static const _scheduleStopTimeout = Duration(seconds: 18);
+  static const _dayPlanEditTimeout = Duration(seconds: 28);
 
   final FirebaseFunctions _functions;
   final _deviceContext = AppDeviceContextService();
@@ -339,6 +340,89 @@ class TravelAssistantService {
     );
   }
 
+  Future<DayPlanEditResult> generateDayPlanEdit({
+    required Trip trip,
+    required int day,
+    required String placeRequest,
+  }) async {
+    final trimmed = placeRequest.trim();
+    if (trimmed.isEmpty) {
+      throw Exception('Place is required.');
+    }
+    final appContext = await _deviceContext.load(requestLocation: false);
+    final input = {
+      'destination': trip.destination,
+      'startDate': trip.startDate,
+      'endDate': trip.endDate,
+      'currency': trip.currency,
+      'budget': trip.budget,
+      'groupType': trip.groupType,
+      'preferences': trip.preferences,
+      'targetDay': day,
+      'placeRequest': trimmed,
+      'targetDaySchedule': trip.items
+          .where((item) => item.day == day)
+          .map(_scheduleItemToAiMap)
+          .toList(),
+      'fullSchedule': trip.items.map(_scheduleItemToAiMap).toList(),
+      'appContext': appContext.toAiMap(),
+    };
+
+    if (!LocalApiKeys.hasOpenAiApiKey) {
+      final callable = _functions.httpsCallable('generateDayPlanEdit');
+      final response = await callable
+          .call<Map<String, dynamic>>(input)
+          .timeout(_dayPlanEditTimeout);
+      final data = response.data['result'] is Map
+          ? Map<String, dynamic>.from(response.data['result'] as Map)
+          : response.data;
+      return DayPlanEditResult.fromMap(data, fallbackDay: day);
+    }
+
+    final response = await http
+        .post(
+          Uri.https('api.openai.com', '/v1/responses'),
+          headers: {
+            'Authorization': 'Bearer ${LocalApiKeys.openAiApiKey}',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': 'gpt-5.5',
+            'instructions': [
+              'Edit one day of a travel itinerary and return strict JSON only.',
+              'Judge whether the requested place realistically fits the day.',
+              'Consider route distance, schedule density, opening hours, and travel time.',
+              'If it does not fit, set feasible=false and preserve the existing day.',
+              'If it fits, return the complete revised day in practical time order.',
+              'Return no markdown or explanation outside the JSON fields.',
+            ].join(' '),
+            'input': jsonEncode(input),
+            'store': false,
+            'tools': [
+              {
+                'type': 'web_search',
+                'search_context_size': 'low',
+                'external_web_access': true,
+              },
+            ],
+            'tool_choice': 'required',
+            'reasoning': {'effort': 'low'},
+            'text': {'verbosity': 'low', 'format': _dayPlanEditTextFormat()},
+          }),
+        )
+        .timeout(_dayPlanEditTimeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('AI day edit failed.');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return DayPlanEditResult.fromMap(
+      _decodeJsonObject(_responseOutputText(body)),
+      fallbackDay: day,
+    );
+  }
+
   Future<CreateTripAiResponse> createTripReply({
     required String message,
     required CreateTripDraft currentDraft,
@@ -454,6 +538,54 @@ ScheduleItem _scheduleItemFromAiMap(
     item.type,
     item.cost < 0 ? 0 : item.cost,
   );
+}
+
+Map<String, dynamic> _scheduleItemToAiMap(ScheduleItem item) => {
+  'day': item.day,
+  'time': item.time,
+  'activity': item.activity,
+  'type': _iconName(item.type),
+  'cost': item.cost,
+};
+
+class DayPlanEditResult {
+  const DayPlanEditResult({
+    required this.feasible,
+    required this.warning,
+    required this.items,
+  });
+
+  final bool feasible;
+  final String warning;
+  final List<ScheduleItem> items;
+
+  static DayPlanEditResult fromMap(
+    Map<String, dynamic> map, {
+    required int fallbackDay,
+  }) {
+    final items = ((map['items'] as List<dynamic>?) ?? const [])
+        .whereType<Map>()
+        .map((item) {
+          final parsed = _scheduleItemFromAiMap(
+            Map<String, dynamic>.from(item),
+            fallbackDay: fallbackDay,
+          );
+          return ScheduleItem(
+            fallbackDay,
+            parsed.time,
+            parsed.activity,
+            parsed.type,
+            parsed.cost,
+          );
+        })
+        .take(8)
+        .toList();
+    return DayPlanEditResult(
+      feasible: map['feasible'] == true,
+      warning: (map['warning'] as String?)?.trim() ?? '',
+      items: items,
+    );
+  }
 }
 
 String _aiLanguageName(String profileLanguage) {
@@ -675,6 +807,54 @@ Map<String, dynamic> _createTripReplyTextFormat() => {
       },
     },
     'required': ['message', 'draft', 'widget'],
+  },
+};
+
+Map<String, dynamic> _dayPlanEditTextFormat() => {
+  'type': 'json_schema',
+  'name': 'day_plan_edit',
+  'strict': true,
+  'schema': {
+    'type': 'object',
+    'additionalProperties': false,
+    'properties': {
+      'feasible': {'type': 'boolean'},
+      'warning': {'type': 'string'},
+      'items': {
+        'type': 'array',
+        'maxItems': 8,
+        'items': {
+          'type': 'object',
+          'additionalProperties': false,
+          'properties': {
+            'day': {'type': 'integer'},
+            'time': {'type': 'string'},
+            'activity': {'type': 'string'},
+            'type': {
+              'type': 'string',
+              'enum': [
+                'place',
+                'food',
+                'restaurant',
+                'walk',
+                'museum',
+                'beach',
+                'shopping',
+                'train',
+                'flight',
+                'hotel',
+                'cafe',
+                'hiking',
+                'temple',
+              ],
+            },
+            'cost': {'type': 'integer'},
+          },
+          'required': ['day', 'time', 'activity', 'type', 'cost'],
+        },
+      },
+    },
+    'required': ['feasible', 'warning', 'items'],
   },
 };
 
