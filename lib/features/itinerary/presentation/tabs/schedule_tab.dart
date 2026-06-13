@@ -346,9 +346,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
       grouped.putIfAbsent(item.day, () => []).add((index: index, item: item));
     }
     final days = _scheduleDays(widget.trip.items);
-    final visibleDays = grouped.containsKey(_selectedDay)
-        ? [_selectedDay]
-        : const <int>[];
+    final visibleDays = days.contains(_selectedDay) ? [_selectedDay] : days;
 
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
@@ -357,6 +355,12 @@ class _ScheduleTabState extends State<ScheduleTab> {
           label: 'Add schedule stop',
           icon: Icons.add_rounded,
           onPressed: () => _addScheduleStop(context),
+        ),
+        const SizedBox(height: 16),
+        _ScheduleDayTabs(
+          days: days,
+          selectedDay: _selectedDay,
+          onSelect: (day) => setState(() => _selectedDay = day),
         ),
         const SizedBox(height: 16),
         if (trip.status == TripStatus.ongoing) ...[
@@ -423,7 +427,19 @@ class _ScheduleTabState extends State<ScheduleTab> {
         for (final day in visibleDays) ...[
           LabelText('${appText(context, 'Day')} $day'),
           const SizedBox(height: 10),
-          for (final entry in grouped[day]!)
+          if ((grouped[day] ?? const []).isEmpty) ...[
+            GlassPanel(
+              child: Text(
+                appText(context, 'No stops planned for this day yet.'),
+                style: const TextStyle(
+                  color: _secondary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          for (final entry in grouped[day] ?? const [])
             Dismissible(
               key: ValueKey(
                 '${entry.index}-${entry.item.day}-${entry.item.time}-${entry.item.activity}',

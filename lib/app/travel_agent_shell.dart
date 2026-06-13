@@ -15,12 +15,14 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   final _notificationService = TripNotificationService();
   static const _localProfilePrefix = 'travel_agent.profile.';
   static const _tripDeleteUndoWindow = Duration(seconds: 5);
+  final _routerRefresh = _TravelRouteRefresh();
+  late final GoRouter _router;
   StreamSubscription<UserProfile?>? _userSubscription;
   StreamSubscription<List<Trip>>? _tripsSubscription;
   var _isLoading = true;
-  var _tab = _NavTab.home;
-  var _screen = _Screen.dashboard;
   var _isChatRoomOpen = false;
+  var _screen = _Screen.dashboard;
+  var _tab = _NavTab.home;
   var _tripDetailInitialTab = 0;
   var _user = const UserProfile(name: '', email: '', interests: []);
   final List<Trip> _trips = [];
@@ -32,9 +34,20 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   String? _accountId;
   String? _loadError;
 
+  int get _cachedTabIndex => switch (_tab) {
+    _NavTab.home => 0,
+    _NavTab.trips || _NavTab.add => 1,
+    _NavTab.chat => 2,
+    _NavTab.profile => 3,
+  };
+
   @override
   void initState() {
     super.initState();
+    _router = AppRouter._createTravelAgentRouter(
+      appState: this,
+      refreshListenable: _routerRefresh,
+    );
     _loadSavedState();
   }
 
@@ -96,7 +109,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     _watchAccountData(accountId);
   }
 
-  void _watchAccountData(String accountId) {
+  void _watchAccountData(String accountId, {bool watchTrips = true}) {
     _userSubscription?.cancel();
     _tripsSubscription?.cancel();
 
@@ -119,9 +132,15 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onError: (Object error) {
             if (!mounted) return;
             setState(() => _loadError = 'Could not sync profile data: $error');
+            _notifyRoutes();
           },
         );
 
+    if (watchTrips) _watchTrips(accountId);
+  }
+
+  void _watchTrips(String accountId) {
+    _tripsSubscription?.cancel();
     _tripsSubscription = _repository
         .watchTrips(accountId)
         .listen(
@@ -145,6 +164,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onError: (Object error) {
             if (!mounted) return;
             setState(() => _loadError = 'Could not sync trip data: $error');
+            _notifyRoutes();
           },
         );
   }
@@ -193,7 +213,11 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     final accountId = _accountId ?? widget.account.uid;
     await _saveLocalProfile(accountId, profile);
     try {
-      await _repository.saveUser(accountId, profile);
+      await _repository.saveUser(
+        accountId,
+        profile.copyWith(onboardingRequired: false, onboardingCompleted: true),
+      );
+      await _repository.completeOnboarding(accountId);
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = 'Could not save profile online: $error');
@@ -245,12 +269,9 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   Future<void> _createTrip(Trip trip) async {
     final saved = await _saveTripOnline(trip);
     if (!saved || !mounted) return;
-    await _refreshTripsFromBackend(selectTripId: trip.id);
-    if (!mounted) return;
-    setState(() {
-      _screen = _Screen.tripDetail;
-      _tab = _NavTab.trips;
-    });
+    await _refreshTripsFromBackend();
+    if (!mounted || !context.mounted) return;
+    context.replace(_tripLocation(trip.id));
   }
 
   Future<void> _startTrip(Trip trip) async {
@@ -366,7 +387,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   Future<void> _updateTrip(Trip trip) async {
     final saved = await _saveTripOnline(trip);
     if (!saved || !mounted) return;
-    await _refreshTripsFromBackend(selectTripId: trip.id);
+    await _refreshTripsFromBackend();
   }
 
   Future<bool> _saveTripOnline(Trip trip) async {
@@ -377,6 +398,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     } catch (error) {
       if (!mounted) return false;
       setState(() => _loadError = 'Could not save trip online: $error');
+      _notifyRoutes();
       return false;
     }
   }
@@ -430,6 +452,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = 'Could not refresh trip data: $error');
+      _notifyRoutes();
     }
   }
 
@@ -442,6 +465,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = 'Could not delete account: $error');
+      _notifyRoutes();
       rethrow;
     }
   }
@@ -458,11 +482,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
 
   @override
   Widget build(BuildContext context) {
-    final performance = PerformanceScope.settingsOf(context);
-    final body = performance.cachePages && _isCachedTabScreen
-        ? _buildCachedTabStack(performance)
-        : _performanceBoundary(_buildScreen(), performance);
-
     return Theme(
       data: _user.themeMode == 'Dark'
           ? TravelAgentTheme.dark()
@@ -475,12 +494,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               ? const LoadingScreen()
               : Stack(
                   children: [
-                    AnimatedSwitcher(
-                      duration: performance.transitionDuration,
-                      child: body,
-                    ),
-                    if (_showsBottomNav)
-                      _BottomNav(tab: _tab, onSelect: _selectTab),
+                    Router.withConfig(config: _router),
                     if (_loadError != null)
                       Positioned(
                         left: 16,
@@ -495,40 +509,181 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     );
   }
 
-  bool get _isCachedTabScreen {
-    return switch (_screen) {
-      _Screen.dashboard ||
-      _Screen.trips ||
-      _Screen.chatList ||
-      _Screen.profile => true,
-      _ => false,
-    };
-  }
-
-  bool get _showsBottomNav {
-    if (_screen == _Screen.chatList && _isChatRoomOpen) return false;
-    return switch (_screen) {
-      _Screen.create || _Screen.performance => false,
-      _ => true,
-    };
-  }
-
-  int get _cachedTabIndex {
-    return switch (_screen) {
-      _Screen.dashboard => 0,
-      _Screen.trips => 1,
-      _Screen.chatList => 2,
-      _Screen.profile => 3,
-      _ => 0,
-    };
-  }
-
   Widget _performanceBoundary(
     Widget child,
     AppPerformanceSettings performance,
   ) {
     if (!performance.isolateRepaints) return child;
     return RepaintBoundary(child: child);
+  }
+
+  Widget _buildOnboardingScreen() {
+    return OnboardingScreen(
+      account: widget.account,
+      onComplete: (profile) {
+        unawaited(_saveProfile(profile));
+        if (mounted && context.mounted) context.go('/');
+      },
+    );
+  }
+
+  Widget _buildDashboardScreen(BuildContext context) {
+    return DashboardScreen(
+      user: _user,
+      trips: _visibleTrips,
+      activeTrip: _visibleActiveTrip,
+      onCreate: () => context.go('/trips/new'),
+      onOpenTrip: (trip) => context.go(_tripLocation(trip.id)),
+      onStartTrip: _startTrip,
+      onAskAi: (prompt) {
+        _openTripAssistant(prompt);
+        final trip = _selectedTrip;
+        if (trip != null) context.go(_tripLocation(trip.id));
+      },
+      onOpenInfo: () => context.go('/tools/info'),
+      onOpenTranslate: () => context.go('/tools/translate'),
+      onOpenMap: () => context.go('/tools/map'),
+    );
+  }
+
+  Widget _buildInfoScreen(BuildContext context) {
+    return InfoScreen(onBack: () => context.go('/'));
+  }
+
+  Widget _buildTranslateScreen(BuildContext context) {
+    return TranslateScreen(onBack: () => context.go('/'));
+  }
+
+  Widget _buildGlobalMapScreen(BuildContext context) {
+    return MapScreen(
+      trip: _visibleActiveTrip ?? _selectedTrip ?? mockKyotoTrip,
+      onBack: () => context.go('/'),
+    );
+  }
+
+  Widget _buildTripsScreen(BuildContext context) {
+    return TripsScreen(
+      trips: _visibleTrips,
+      onBack: () => context.go('/'),
+      onCreate: () => context.go('/trips/new'),
+      onOpenTrip: (trip) => context.go(_tripLocation(trip.id)),
+      onStartTrip: _startTrip,
+      onDeleteTrip: _deleteTrip,
+    );
+  }
+
+  Widget _buildCreateTripScreen(BuildContext context) {
+    return CreateTripScreen(
+      profileLanguage: _user.language,
+      savedTrips: _trips,
+      onBack: () => context.go('/trips'),
+      onGenerate: _createTrip,
+    );
+  }
+
+  Widget _buildTripDetailScreen(BuildContext context, String tripId) {
+    final trip = _tripById(_visibleTrips, tripId) ?? _selectedTrip;
+    if (trip == null) {
+      return _NoTripSelectedScreen(
+        title: 'Trip',
+        onBack: () => context.go('/trips'),
+        onCreate: () => context.go('/trips/new'),
+      );
+    }
+    return TripDetailScreen(
+      key: ValueKey('trip-detail-${trip.id}'),
+      trip: trip,
+      onBack: () => context.go('/trips'),
+      onOpenChat: () => context.go('/chat'),
+      onOpenBudget: () => context.go('/trips/${trip.id}/budget'),
+      onOpenPacking: () => context.go('/trips/${trip.id}/packing'),
+      onOpenMap: () => context.go('/trips/${trip.id}/map'),
+      onUpdateTrip: _updateTrip,
+      initialTabIndex: _tripDetailInitialTab,
+      initialAiPrompt: _pendingTripAiPrompt,
+    );
+  }
+
+  Widget _buildTripMapScreen(BuildContext context, String tripId) {
+    final trip = _tripById(_visibleTrips, tripId) ?? _selectedTrip;
+    if (trip == null) {
+      return _NoTripSelectedScreen(
+        title: 'Map',
+        onBack: () => context.go('/trips'),
+        onCreate: () => context.go('/trips/new'),
+      );
+    }
+    return MapScreen(
+      trip: trip,
+      onBack: () => context.go(_tripLocation(trip.id)),
+    );
+  }
+
+  Widget _buildBudgetScreen(BuildContext context, String tripId) {
+    final trip = _tripById(_visibleTrips, tripId) ?? _selectedTrip;
+    if (trip == null) {
+      return _NoTripSelectedScreen(
+        title: 'Budget',
+        onBack: () => context.go('/trips'),
+        onCreate: () => context.go('/trips/new'),
+      );
+    }
+    return BudgetScreen(
+      trip: trip,
+      onBack: () => context.go(_tripLocation(trip.id)),
+    );
+  }
+
+  Widget _buildPackingScreen(BuildContext context, String tripId) {
+    final trip = _tripById(_visibleTrips, tripId) ?? _selectedTrip;
+    if (trip == null) {
+      return _NoTripSelectedScreen(
+        title: 'Packing',
+        onBack: () => context.go('/trips'),
+        onCreate: () => context.go('/trips/new'),
+      );
+    }
+    return PackingScreen(
+      trip: trip,
+      onBack: () => context.go(_tripLocation(trip.id)),
+    );
+  }
+
+  Widget _buildChatListScreen(BuildContext context) {
+    return ChatListScreen(
+      account: widget.account,
+      user: _user,
+      onRoomOpenChanged: _setChatRoomOpen,
+      onOpenChat: (chatId) => context.go('/chat/$chatId'),
+    );
+  }
+
+  Widget _buildGroupChatRoomScreen(BuildContext context, String chatId) {
+    return RoutedGroupChatRoomScreen(
+      chatId: chatId,
+      account: widget.account,
+      user: _user,
+      onBack: () => context.go('/chat'),
+      onRoomOpenChanged: _setChatRoomOpen,
+    );
+  }
+
+  Widget _buildProfileScreen(BuildContext context) {
+    return ProfileScreen(
+      account: widget.account,
+      user: _user,
+      onSave: _saveProfile,
+      onSignOut: _authService.signOut,
+      onDeleteAccount: _deleteAccount,
+      onOpenPerformance: () => context.go('/profile/performance'),
+    );
+  }
+
+  Widget _buildPerformanceSettingsScreen(BuildContext context) {
+    return PerformanceSettingsScreen(
+      onBack: () => context.go('/profile'),
+      onSettingsChanged: _savePerformanceSettings,
+    );
   }
 
   List<Trip> get _visibleTrips => _withoutPendingDeletes(_trips);
@@ -547,6 +702,16 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         .toList(growable: false);
   }
 
+  Trip? _matchingTrip(List<Trip> trips, Trip? current) {
+    if (current == null) return null;
+    return _tripById(trips, current.id);
+  }
+
+  String _tripLocation(String tripId) => '/trips/$tripId';
+
+  void _notifyRoutes() => _routerRefresh.notify();
+
+  // ignore: unused_element
   Widget _buildCachedTabStack(AppPerformanceSettings performance) {
     return KeyedSubtree(
       key: const ValueKey('cached-tabs'),
@@ -615,6 +780,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     );
   }
 
+  // ignore: unused_element
   Widget _buildScreen() {
     switch (_screen) {
       case _Screen.dashboard:
@@ -787,6 +953,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     }
   }
 
+  // ignore: unused_element
   void _selectTab(_NavTab tab) {
     setState(() {
       _tab = tab;
@@ -879,14 +1046,6 @@ Trip? _firstOngoingTrip(List<Trip> trips) {
   return null;
 }
 
-Trip? _matchingTrip(List<Trip> trips, Trip? current) {
-  if (current == null) return null;
-  for (final trip in trips) {
-    if (trip.id == current.id) return trip;
-  }
-  return null;
-}
-
 Trip? _tripById(List<Trip> trips, String? tripId) {
   if (tripId == null) return null;
   for (final trip in trips) {
@@ -894,6 +1053,8 @@ Trip? _tripById(List<Trip> trips, String? tripId) {
   }
   return null;
 }
+
+enum _NavTab { home, trips, add, chat, profile }
 
 enum _Screen {
   dashboard,
@@ -910,4 +1071,6 @@ enum _Screen {
   packing,
 }
 
-enum _NavTab { home, trips, add, chat, profile }
+class _TravelRouteRefresh extends ChangeNotifier {
+  void notify() => notifyListeners();
+}
