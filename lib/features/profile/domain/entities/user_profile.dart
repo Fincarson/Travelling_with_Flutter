@@ -10,6 +10,8 @@ class UserProfile {
     this.language = 'en',
     this.notificationsEnabled = true,
     this.themeMode = 'Light',
+    this.onboardingRequired = false,
+    this.onboardingCompleted = true,
     this.performanceSettings = const AppPerformanceSettings(
       preset: PerformancePreset.balanced,
       motionLevel: MotionLevel.reduced,
@@ -29,6 +31,8 @@ class UserProfile {
   final String language;
   final bool notificationsEnabled;
   final String themeMode;
+  final bool onboardingRequired;
+  final bool onboardingCompleted;
   final AppPerformanceSettings performanceSettings;
 
   UserProfile copyWith({
@@ -40,6 +44,8 @@ class UserProfile {
     String? language,
     bool? notificationsEnabled,
     String? themeMode,
+    bool? onboardingRequired,
+    bool? onboardingCompleted,
     AppPerformanceSettings? performanceSettings,
   }) {
     return UserProfile(
@@ -51,6 +57,8 @@ class UserProfile {
       language: language ?? this.language,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
       themeMode: themeMode ?? this.themeMode,
+      onboardingRequired: onboardingRequired ?? this.onboardingRequired,
+      onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
       performanceSettings: performanceSettings ?? this.performanceSettings,
     );
   }
@@ -65,6 +73,8 @@ class UserProfile {
       'language': language,
       'notificationsEnabled': notificationsEnabled,
       'themeMode': themeMode,
+      'onboardingRequired': onboardingRequired,
+      'onboardingCompleted': onboardingCompleted,
       'performance': performanceSettings.toJson(),
     },
     'updatedAt': FieldValue.serverTimestamp(),
@@ -80,6 +90,8 @@ class UserProfile {
       'language': language,
       'notificationsEnabled': notificationsEnabled,
       'themeMode': themeMode,
+      'onboardingRequired': onboardingRequired,
+      'onboardingCompleted': onboardingCompleted,
       'performance': performanceSettings.toJson(),
     },
   };
@@ -99,6 +111,8 @@ class UserProfile {
       language: (settings['language'] as String?) ?? 'en',
       notificationsEnabled: (settings['notificationsEnabled'] as bool?) ?? true,
       themeMode: (settings['themeMode'] as String?) ?? 'Light',
+      onboardingRequired: (settings['onboardingRequired'] as bool?) ?? false,
+      onboardingCompleted: (settings['onboardingCompleted'] as bool?) ?? true,
       performanceSettings: AppPerformanceSettings.fromJson(
         Map<String, dynamic>.from(
           (settings['performance'] as Map?) ?? const <String, dynamic>{},

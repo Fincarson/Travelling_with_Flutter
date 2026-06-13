@@ -51,6 +51,13 @@ class TravelDataRepository {
     return batch.commit();
   }
 
+  Future<void> completeOnboarding(String accountId) {
+    return _userDoc(accountId).set({
+      'settings': {'onboardingRequired': false, 'onboardingCompleted': true},
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   Future<List<Trip>> loadTrips(String accountId) async {
     await migrateLegacyTrips(accountId);
     final memberships = await _membershipsRef(accountId).get();
