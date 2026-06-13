@@ -47,6 +47,15 @@ class GroupChatRepository {
         );
   }
 
+  Future<GroupChatMembership?> loadMembership({
+    required String accountId,
+    required String chatId,
+  }) async {
+    final snapshot = await _membershipsRef(accountId).doc(chatId).get();
+    if (!snapshot.exists) return null;
+    return GroupChatMembership.fromDoc(snapshot);
+  }
+
   Stream<List<GroupChatInvite>> watchPendingInvites(String accountId) {
     return _userInvitesRef(accountId).snapshots().map((snapshot) {
       final invites = snapshot.docs

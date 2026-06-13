@@ -411,6 +411,12 @@ class _ScheduleTabState extends State<ScheduleTab> {
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
       children: [
+        PrimaryButton(
+          label: 'Add schedule stop',
+          icon: Icons.add_rounded,
+          onPressed: () => _addScheduleStop(context),
+        ),
+        const SizedBox(height: 16),
         _ScheduleDayTabs(
           days: days,
           selectedDay: _selectedDay,
@@ -420,12 +426,6 @@ class _ScheduleTabState extends State<ScheduleTab> {
               (_) => _maybeAutofillSelectedDay(),
             );
           },
-        ),
-        const SizedBox(height: 16),
-        PrimaryButton(
-          label: 'Add schedule stop',
-          icon: Icons.add_rounded,
-          onPressed: () => unawaited(_addScheduleStop(context)),
         ),
         const SizedBox(height: 16),
         if (trip.status == TripStatus.ongoing) ...[

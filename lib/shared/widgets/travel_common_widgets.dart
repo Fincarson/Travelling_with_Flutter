@@ -381,12 +381,14 @@ class IconBadge extends StatelessWidget {
 }
 
 class IconSquare extends StatelessWidget {
-  const IconSquare({required this.icon, super.key});
+  const IconSquare({required this.icon, this.onTap, this.tooltip, super.key});
   final IconData icon;
+  final VoidCallback? onTap;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final content = Container(
       width: 50,
       height: 50,
       decoration: BoxDecoration(
@@ -394,6 +396,33 @@ class IconSquare extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
       ),
       child: Icon(icon, color: _primary),
+    );
+
+    if (onTap == null) return content;
+
+    final interactiveContent = Semantics(
+      button: true,
+      label: tooltip == null ? null : appText(context, tooltip!),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: SizedBox(
+            width: 50,
+            height: 50,
+            child: Icon(icon, color: _primary),
+          ),
+        ),
+      ),
+    );
+
+    if (tooltip == null) return interactiveContent;
+
+    return Tooltip(
+      message: appText(context, tooltip!),
+      child: interactiveContent,
     );
   }
 }
