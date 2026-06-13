@@ -1063,6 +1063,27 @@ class ChecklistCategory {
       );
 }
 
+const _aiChecklistMarker = '[AI] ';
+
+bool _isAiChecklistItem(String item) =>
+    item.trimLeft().startsWith(_aiChecklistMarker);
+
+String _checklistDisplayText(String item) {
+  final trimmed = item.trimLeft();
+  if (!trimmed.startsWith(_aiChecklistMarker)) return item;
+  return trimmed.substring(_aiChecklistMarker.length).trimLeft();
+}
+
+String _aiChecklistItem(String item) {
+  final display = _checklistDisplayText(item).trim();
+  if (display.isEmpty) return _aiChecklistMarker.trimRight();
+  return '$_aiChecklistMarker$display';
+}
+
+String _checklistCompareText(String item) => _checklistDisplayText(
+  item,
+).toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+
 Map<String, dynamic> _iconToMap(IconData icon) => {'name': _iconName(icon)};
 
 IconData _iconFromMap(Object? value) {
@@ -1084,6 +1105,7 @@ String _iconName(IconData icon) {
   if (icon == Icons.beach_access_rounded) return 'beach';
   if (icon == Icons.local_cafe_rounded) return 'cafe';
   if (icon == Icons.shopping_bag_rounded) return 'shopping';
+  if (icon == Icons.cloud_rounded) return 'cloud';
   return 'place';
 }
 
@@ -1113,6 +1135,8 @@ IconData _iconByName(String? name) {
       return Icons.local_cafe_rounded;
     case 'shopping':
       return Icons.shopping_bag_rounded;
+    case 'cloud':
+      return Icons.cloud_rounded;
     case 'place':
       return Icons.place_rounded;
     default:

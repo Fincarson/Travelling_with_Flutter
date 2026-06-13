@@ -6,6 +6,8 @@ import 'dart:math' as math;
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:flutter/material.dart';
@@ -24,10 +26,14 @@ import '../core/localization/app_text.dart';
 import '../core/performance/app_performance.dart';
 import '../core/theme/app_theme.dart';
 import '../features/auth/data/account_auth_service.dart';
+import '../shared/services/browser_notifications.dart' as browser_notifications;
 
 part 'travel_agent_shell.dart';
+part '../core/config/firebase_push_config.dart';
 part '../core/device/app_device_context.dart';
 part '../shared/services/trip_notification_service.dart';
+part '../shared/services/trip_automation_service.dart';
+part '../shared/services/push_token_service.dart';
 part 'router.dart';
 part '../features/profile/domain/entities/user_profile.dart';
 part '../features/itinerary/domain/entities/trip.dart';

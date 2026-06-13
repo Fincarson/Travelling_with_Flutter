@@ -1,13 +1,14 @@
 /* global process */
 
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
+const {onSchedule} = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 
 admin.initializeApp();
 
 const openAiModel = "gpt-5.5";
-const openAiTimeoutMs = 50000;
+const openAiTimeoutMs = 30000;
 
 function geoapifyApiKey() {
   return String(process.env.GEOAPIFY_API_KEY ?? "").trim();
@@ -42,11 +43,16 @@ const tripPlanInstructions = [
   "For trips of 3 or more days, include at least 2 useful schedule items per day and 3 on full sightseeing days.",
   "Day 1 must start with realistic transportation from the trip origin to the destination before destination activities.",
   "The final trip day must include realistic return transportation home after destination activities.",
+  "Every day must include realistic place-to-place movement between separated stops, such as walk, metro, taxi, train, airport transfer, or buffer time before the next venue.",
+  "Do not list attractions back-to-back as if travel time is zero. Leave realistic gaps for transit, walking, queues, family pacing, meals, check-in, check-out, airport security, and baggage.",
+  "If exact public transport schedules or flight times are uncertain, say to confirm the exact operator/time instead of presenting the time as guaranteed.",
+  "For international trips, do not end the itinerary at sightseeing. Add pack-up, airport or station transfer, departure, arrival, and return-home steps when the trip ends.",
   "For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.",
   "When moving to a different city or district, or when returning home, include pack-up/preparation wording before the transport.",
   "Choose transport by distance: local transit/taxi for nearby trips, train/bus/high-speed rail for regional trips, and flights only for genuinely long-distance trips.",
   "Never suggest a plane for short regional travel such as Hsinchu to Taipei.",
-  "Use web search data for current attraction names, transportation options, ticket prices, and local food costs.",
+  "Use current-known attraction names, transportation options, ticket prices, and local food costs.",
+  "When live data may vary, mark times, prices, and operator details as approximate and tell the user to confirm before departure.",
   "Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.",
 ].join(" ");
 
@@ -693,14 +699,6 @@ exports.generateTripPlan = onCall(
         appContext: data.appContext ?? null,
       },
       format: tripPlanFormat,
-      tools: [
-        {
-          type: "web_search",
-          search_context_size: "low",
-          external_web_access: true,
-        },
-      ],
-      toolChoice: "required",
       logContext: "OpenAI itinerary generation failed",
       publicMessage: "AI itinerary generation failed.",
     });
@@ -800,6 +798,424 @@ exports.createTripReply = onCall(
     return {reply};
   },
 );
+
+exports.runTripAutomationReminders = onSchedule(
+  {
+    region: "us-central1",
+    schedule: "every day 06:00",
+    timeZone: "Asia/Taipei",
+  },
+  async () => {
+    const db = admin.firestore();
+    const snapshot = await db
+      .collection("trips")
+      .where("status", "in", ["upcoming", "ongoing"])
+      .get();
+
+    let checked = 0;
+    let updated = 0;
+    let notified = 0;
+
+    for (const tripDoc of snapshot.docs) {
+      checked += 1;
+      const result = await automateTripWeatherReminder(db, tripDoc).catch(
+        (error) => {
+          logger.warn("Trip automation failed", {
+            tripId: tripDoc.id,
+            message: error?.message,
+          });
+          return {updated: false, notified: 0};
+        },
+      );
+      if (result.updated) updated += 1;
+      notified += result.notified;
+    }
+
+    logger.info("Trip automation reminders complete", {
+      checked,
+      updated,
+      notified,
+    });
+  },
+);
+
+const aiChecklistMarker = "[AI] ";
+const aiGuardianCategory = "AI Trip Guardian";
+const aiWeatherReminderPrefix = "AI weather check:";
+const rainWeatherCodes = new Set([
+  51,
+  53,
+  55,
+  56,
+  57,
+  61,
+  63,
+  65,
+  66,
+  67,
+  80,
+  81,
+  82,
+  95,
+  96,
+  99,
+]);
+
+async function automateTripWeatherReminder(db, tripDoc) {
+  const trip = tripDoc.data();
+  if (!canAutomateTrip(trip)) return {updated: false, notified: 0};
+
+  const rainyDays = await fetchRainyTripDays(trip);
+  if (!rainyDays.length) return {updated: false, notified: 0};
+
+  const checklist = withRainChecklist(trip.checklist, rainyDays);
+  const existingRainReminders = await tripDoc.ref
+    .collection("itineraryItems")
+    .get();
+  const existingReminderDays = new Set(
+    existingRainReminders.docs
+      .filter((doc) => {
+        const item = doc.data();
+        return (
+          item.source === "ai_weather" ||
+          String(item.activity || "")
+            .trimStart()
+            .toLowerCase()
+            .startsWith(aiWeatherReminderPrefix.toLowerCase())
+        );
+      })
+      .map((doc) => Number(doc.data().day)),
+  );
+  const newReminderDays = rainyDays.filter(
+    (day) => !existingReminderDays.has(day.day),
+  );
+
+  const checklistChanged = !sameJson(
+    Array.isArray(trip.checklist) ? trip.checklist : [],
+    checklist,
+  );
+  if (!checklistChanged && !newReminderDays.length) {
+    return {updated: false, notified: 0};
+  }
+
+  const batch = db.batch();
+  if (checklistChanged) {
+    batch.set(
+      tripDoc.ref,
+      {
+        checklist,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        automationLastWeatherCheck: dateKey(new Date()),
+      },
+      {merge: true},
+    );
+  }
+
+  for (const day of newReminderDays) {
+    batch.set(tripDoc.ref.collection("itineraryItems").doc(day.docId), {
+      day: day.day,
+      time: "07:30",
+      activity:
+        `${aiWeatherReminderPrefix} ${day.summary}. Pack umbrella/raincoat, ` +
+        "protect tickets and electronics, and keep an indoor backup ready " +
+        "if showers build.",
+      type: "cloud",
+      cost: 0,
+      source: "ai_weather",
+      order: 730,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+
+  await batch.commit();
+  const notified = await notifyTripMembers(db, tripDoc.id, trip, rainyDays);
+  return {updated: true, notified};
+}
+
+function canAutomateTrip(trip) {
+  if (!trip || trip.status === "past") return false;
+  if (typeof trip.latitude !== "number" || typeof trip.longitude !== "number") {
+    return false;
+  }
+
+  const start = parseIsoDate(trip.startDate);
+  const end = parseIsoDate(trip.endDate);
+  if (!start || !end || end < start) return false;
+
+  const today = dateOnly(new Date());
+  const forecastLimit = addDays(today, 15);
+  return end >= today && start <= forecastLimit;
+}
+
+async function fetchRainyTripDays(trip) {
+  const start = parseIsoDate(trip.startDate);
+  const end = parseIsoDate(trip.endDate);
+  if (!start || !end) return [];
+
+  const url = new URL("https://api.open-meteo.com/v1/forecast");
+  url.searchParams.set("latitude", Number(trip.latitude).toFixed(5));
+  url.searchParams.set("longitude", Number(trip.longitude).toFixed(5));
+  url.searchParams.set(
+    "daily",
+    "weather_code,precipitation_sum,precipitation_probability_max",
+  );
+  url.searchParams.set("timezone", "auto");
+  url.searchParams.set("forecast_days", "16");
+
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) return [];
+
+  const body = await response.json();
+  const daily = body?.daily ?? {};
+  const times = Array.isArray(daily.time) ? daily.time : [];
+  const codes = Array.isArray(daily.weather_code) ? daily.weather_code : [];
+  const amounts = Array.isArray(daily.precipitation_sum)
+    ? daily.precipitation_sum
+    : [];
+  const probabilities = Array.isArray(daily.precipitation_probability_max)
+    ? daily.precipitation_probability_max
+    : [];
+
+  const today = dateOnly(new Date());
+  const rainyDays = [];
+  for (let index = 0; index < times.length; index += 1) {
+    const date = parseIsoDate(times[index]);
+    if (!date || date < today || date < start || date > end) continue;
+
+    const weatherDay = {
+      day: daysBetween(start, date) + 1,
+      date,
+      dateKey: dateKey(date),
+      weatherCode: numberAt(codes, index),
+      precipitationSum: numberAt(amounts, index),
+      precipitationProbability: numberAt(probabilities, index),
+    };
+    weatherDay.docId = `ai-weather-${weatherDay.dateKey}`;
+    weatherDay.summary = weatherSummary(weatherDay);
+    if (isRainyWeatherDay(weatherDay)) rainyDays.push(weatherDay);
+  }
+  return rainyDays;
+}
+
+function withRainChecklist(checklistValue, rainyDays) {
+  const checklist = Array.isArray(checklistValue)
+    ? checklistValue.map((category) => ({
+        category: String(category?.category || "Checklist"),
+        items: Array.isArray(category?.items)
+          ? category.items.filter((item) => typeof item === "string")
+          : [],
+      }))
+    : [];
+  const index = checklist.findIndex(
+    (category) =>
+      category.category.trim().toLowerCase() ===
+      aiGuardianCategory.toLowerCase(),
+  );
+  const guardian =
+    index === -1
+      ? {category: aiGuardianCategory, items: []}
+      : checklist[index];
+  const existing = new Set(guardian.items.map(checklistCompareText));
+  const additions = [
+    "Umbrella or light raincoat",
+    "Waterproof pouch for phone, passport, and tickets",
+    rainSummaryChecklistItem(rainyDays),
+  ];
+
+  const items = [...guardian.items];
+  for (const addition of additions) {
+    if (existing.has(checklistCompareText(addition))) continue;
+    existing.add(checklistCompareText(addition));
+    items.push(aiChecklistItem(addition));
+  }
+
+  const nextGuardian = {...guardian, items};
+  if (index === -1) checklist.push(nextGuardian);
+  else checklist[index] = nextGuardian;
+  return checklist;
+}
+
+async function notifyTripMembers(db, tripId, trip, rainyDays) {
+  const memberIds = Array.isArray(trip.memberIds) ? trip.memberIds : [];
+  const tokens = [];
+  const tokenRefs = [];
+
+  for (const memberId of memberIds) {
+    const tokenSnapshot = await db
+      .collection("travel_users")
+      .doc(String(memberId))
+      .collection("notificationTokens")
+      .where("enabled", "==", true)
+      .get();
+    for (const tokenDoc of tokenSnapshot.docs) {
+      const token = tokenDoc.data().token;
+      if (typeof token !== "string" || !token.trim()) continue;
+      tokens.push(token);
+      tokenRefs.push(tokenDoc.ref);
+    }
+  }
+
+  if (!tokens.length) return 0;
+
+  const title = `${trip.destination || "Your trip"} weather update`;
+  const body = rainPushBody(rainyDays);
+  let sent = 0;
+
+  for (let start = 0; start < tokens.length; start += 500) {
+    const chunk = tokens.slice(start, start + 500);
+    const response = await admin.messaging().sendEachForMulticast({
+      tokens: chunk,
+      notification: {title, body},
+      data: {
+        title,
+        body,
+        tripId,
+        tag: `trip-weather-${tripId}-${dateKey(new Date())}`,
+        type: "trip_weather",
+      },
+      webpush: {
+        notification: {
+          title,
+          body,
+          icon: "/icons/Icon-192.png",
+          tag: `trip-weather-${tripId}-${dateKey(new Date())}`,
+        },
+        fcmOptions: {
+          link: "/",
+        },
+      },
+      android: {
+        priority: "high",
+        notification: {
+          tag: `trip-weather-${tripId}`,
+        },
+      },
+    });
+
+    sent += response.successCount;
+    const deletes = [];
+    response.responses.forEach((result, offset) => {
+      if (!result.error) return;
+      const code = result.error.code;
+      if (
+        code === "messaging/registration-token-not-registered" ||
+        code === "messaging/invalid-registration-token"
+      ) {
+        deletes.push(tokenRefs[start + offset].delete());
+      }
+    });
+    await Promise.all(deletes);
+  }
+
+  return sent;
+}
+
+function rainPushBody(rainyDays) {
+  const peak = rainyDays
+    .map((day) => day.precipitationProbability)
+    .filter((value) => typeof value === "number")
+    .reduce((max, value) => Math.max(max, value), 0);
+  const dayText = rainyDays.length === 1 ? "one day" : `${rainyDays.length} days`;
+  if (peak > 0) {
+    return `Rain is possible on ${dayText}, up to ${peak}%. I added umbrella/raincoat reminders.`;
+  }
+  return `Rain is possible on ${dayText}. I added umbrella/raincoat reminders.`;
+}
+
+function rainSummaryChecklistItem(rainyDays) {
+  const peak = rainyDays
+    .map((day) => day.precipitationProbability)
+    .filter((value) => typeof value === "number")
+    .reduce((max, value) => Math.max(max, value), 0);
+  const rainyDayText =
+    rainyDays.length === 1
+      ? "Rain is possible on one trip day"
+      : `Rain is possible on ${rainyDays.length} trip days`;
+  if (peak > 0) return `${rainyDayText}, up to ${peak}%; keep shoes dry`;
+  return `${rainyDayText}; keep shoes dry`;
+}
+
+function isRainyWeatherDay(day) {
+  return (
+    rainWeatherCodes.has(day.weatherCode) ||
+    (typeof day.precipitationSum === "number" && day.precipitationSum >= 1) ||
+    (typeof day.precipitationProbability === "number" &&
+      day.precipitationProbability >= 50)
+  );
+}
+
+function weatherSummary(day) {
+  const parts = [];
+  if (typeof day.precipitationProbability === "number") {
+    parts.push(`${day.precipitationProbability}% rain chance`);
+  }
+  if (typeof day.precipitationSum === "number" && day.precipitationSum > 0) {
+    const digits = day.precipitationSum >= 10 ? 0 : 1;
+    parts.push(`${day.precipitationSum.toFixed(digits)} mm expected`);
+  }
+  return parts.length ? parts.join(", ") : "rain is possible today";
+}
+
+function aiChecklistItem(item) {
+  const display = checklistDisplayText(item).trim();
+  return display ? `${aiChecklistMarker}${display}` : aiChecklistMarker.trim();
+}
+
+function checklistDisplayText(item) {
+  const text = String(item ?? "").trimStart();
+  if (!text.startsWith(aiChecklistMarker)) return String(item ?? "");
+  return text.slice(aiChecklistMarker.length).trimStart();
+}
+
+function checklistCompareText(item) {
+  return checklistDisplayText(item)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function sameJson(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function numberAt(values, index) {
+  const value = values[index];
+  return typeof value === "number" ? value : null;
+}
+
+function parseIsoDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
+  if (!match) return null;
+  return new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+  );
+}
+
+function dateOnly(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function daysBetween(start, end) {
+  const millisPerDay = 24 * 60 * 60 * 1000;
+  return Math.round((dateOnly(end) - dateOnly(start)) / millisPerDay);
+}
+
+function dateKey(date) {
+  const year = date.getFullYear().toString().padStart(4, "0");
+  const month = (date.getMonth() + 1).toString().padStart(2, "0");
+  const day = date.getDate().toString().padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 async function createStructuredResponse({
   instructions,

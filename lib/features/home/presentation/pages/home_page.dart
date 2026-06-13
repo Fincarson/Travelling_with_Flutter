@@ -12,7 +12,7 @@ class DashboardScreen extends StatefulWidget {
     required this.onOpenMap,
     required this.onOpenInfo,
     required this.onOpenTranslate,
-    required this.onOpenNotifications,
+    required this.onEnableNotifications,
     super.key,
   });
   final UserProfile user;
@@ -25,7 +25,7 @@ class DashboardScreen extends StatefulWidget {
   final VoidCallback onOpenMap;
   final VoidCallback onOpenInfo;
   final VoidCallback onOpenTranslate;
-  final VoidCallback onOpenNotifications;
+  final VoidCallback onEnableNotifications;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -58,20 +58,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ),
-              Stack(
-                children: [
-                  IconSquare(
-                    icon: Icons.notifications_none_rounded,
-                    tooltip: 'Notifications',
-                    onTap: widget.onOpenNotifications,
-                  ),
-                  if (widget.user.notificationsEnabled)
-                    const Positioned(
-                      right: 10,
-                      top: 10,
-                      child: IgnorePointer(child: Dot()),
+              SizedBox.square(
+                dimension: 50,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned.fill(
+                      child: IconButton.filled(
+                        tooltip: appText(context, 'Notifications'),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: _primary,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                        ),
+                        onPressed: widget.onEnableNotifications,
+                        icon: const Icon(Icons.notifications_none_rounded),
+                      ),
                     ),
-                ],
+                    if (widget.user.notificationsEnabled)
+                      const Positioned(right: 10, top: 10, child: Dot()),
+                  ],
+                ),
               ),
             ],
           ),

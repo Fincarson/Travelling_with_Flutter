@@ -328,6 +328,11 @@ service cloud.firestore {
           request.auth.uid == userId;
       }
 
+      match /notificationTokens/{tokenId} {
+        allow read, create, update, delete: if signedIn() &&
+          request.auth.uid == userId;
+      }
+
       match /chatMemberships/{chatId} {
         allow read: if signedIn() &&
           (request.auth.uid == userId || canReadChat(chatId));
