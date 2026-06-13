@@ -28,6 +28,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   final List<TripMemory> _tripMemories = [];
   final Map<String, Timer> _pendingTripDeleteTimers = {};
   final Set<String> _pendingTripDeleteIds = {};
+  final Set<String> _archivedNotificationIds = {};
   Trip? _selectedTrip;
   Trip? _activeTrip;
   String? _pendingTripAiPrompt;
@@ -520,10 +521,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               ? const LoadingScreen()
               : Stack(
                   children: [
-                    AnimatedSwitcher(
-                      duration: performance.transitionDuration,
-                      child: body,
-                    ),
+                    Positioned.fill(child: body),
                     if (_showsBottomNav)
                       _BottomNav(tab: _tab, onSelect: _selectTab),
                     if (_loadError != null)
@@ -553,7 +551,10 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   bool get _showsBottomNav {
     if (_screen == _Screen.chatList && _isChatRoomOpen) return false;
     return switch (_screen) {
-      _Screen.create || _Screen.performance => false,
+      _Screen.create ||
+      _Screen.performance ||
+      _Screen.notifications ||
+      _Screen.archived => false,
       _ => true,
     };
   }
@@ -615,6 +616,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               onOpenTranslate: () =>
                   setState(() => _screen = _Screen.translate),
               onOpenMap: () => setState(() => _screen = _Screen.map),
+              onOpenNotifications: () =>
+                  setState(() => _screen = _Screen.notifications),
             ),
             performance,
           ),
@@ -653,6 +656,9 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               onDeleteAccount: _deleteAccount,
               onOpenPerformance: () =>
                   setState(() => _screen = _Screen.performance),
+              archivedItemCount:
+                  _tripMemories.length + _archivedNotificationIds.length,
+              onOpenArchived: () => setState(() => _screen = _Screen.archived),
             ),
             performance,
           ),
@@ -679,6 +685,17 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onOpenInfo: () => setState(() => _screen = _Screen.info),
           onOpenTranslate: () => setState(() => _screen = _Screen.translate),
           onOpenMap: () => setState(() => _screen = _Screen.map),
+          onOpenNotifications: () =>
+              setState(() => _screen = _Screen.notifications),
+        );
+      case _Screen.notifications:
+        return NotificationsScreen(
+          key: const ValueKey('notifications'),
+          archivedNotificationIds: _archivedNotificationIds,
+          onArchive: (id) => setState(() => _archivedNotificationIds.add(id)),
+          onRestore: (id) =>
+              setState(() => _archivedNotificationIds.remove(id)),
+          onBack: () => setState(() => _screen = _Screen.dashboard),
         );
       case _Screen.create:
         return CreateTripScreen(
@@ -756,6 +773,18 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onDeleteAccount: _deleteAccount,
           onOpenPerformance: () =>
               setState(() => _screen = _Screen.performance),
+          archivedItemCount:
+              _tripMemories.length + _archivedNotificationIds.length,
+          onOpenArchived: () => setState(() => _screen = _Screen.archived),
+        );
+      case _Screen.archived:
+        return ArchivedItemsScreen(
+          key: const ValueKey('archived'),
+          tripMemories: _tripMemories,
+          archivedNotificationIds: _archivedNotificationIds,
+          onRestoreNotification: (id) =>
+              setState(() => _archivedNotificationIds.remove(id)),
+          onBack: () => setState(() => _screen = _Screen.profile),
         );
       case _Screen.performance:
         return PerformanceSettingsScreen(
@@ -945,11 +974,13 @@ Trip? _tripById(List<Trip> trips, String? tripId) {
 
 enum _Screen {
   dashboard,
+  notifications,
   create,
   tripDetail,
   trips,
   chatList,
   profile,
+  archived,
   performance,
   map,
   info,

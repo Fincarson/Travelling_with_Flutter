@@ -26,12 +26,7 @@ class TripsScreen extends StatelessWidget {
       child: ListView(
         padding: _responsivePagePadding(context, top: 18, bottom: 112),
         children: [
-          TopBar(
-            title: 'Trips',
-            onBack: onBack,
-            action: Icons.add_rounded,
-            onAction: onCreate,
-          ),
+          TopBar(title: 'Trips', onBack: onBack),
           const SizedBox(height: 18),
           if (trips.isEmpty)
             GlassPanel(

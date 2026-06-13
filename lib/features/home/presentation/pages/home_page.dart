@@ -12,6 +12,7 @@ class DashboardScreen extends StatefulWidget {
     required this.onOpenMap,
     required this.onOpenInfo,
     required this.onOpenTranslate,
+    required this.onOpenNotifications,
     super.key,
   });
   final UserProfile user;
@@ -24,6 +25,7 @@ class DashboardScreen extends StatefulWidget {
   final VoidCallback onOpenMap;
   final VoidCallback onOpenInfo;
   final VoidCallback onOpenTranslate;
+  final VoidCallback onOpenNotifications;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -58,9 +60,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               Stack(
                 children: [
-                  const IconSquare(icon: Icons.notifications_none_rounded),
+                  IconSquare(
+                    icon: Icons.notifications_none_rounded,
+                    tooltip: 'Notifications',
+                    onTap: widget.onOpenNotifications,
+                  ),
                   if (widget.user.notificationsEnabled)
-                    const Positioned(right: 10, top: 10, child: Dot()),
+                    const Positioned(
+                      right: 10,
+                      top: 10,
+                      child: IgnorePointer(child: Dot()),
+                    ),
                 ],
               ),
             ],
@@ -116,9 +126,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ],
           const SizedBox(height: 28),
-          const SectionHeader(
-            title: 'Ready for your next Adventure',
-          ),
+          const SectionHeader(title: 'Ready for your next Adventure'),
           const SizedBox(height: 12),
           SizedBox(
             height: 190,
@@ -167,7 +175,7 @@ class _EmptyTripCard extends StatelessWidget {
           const IconBadge(icon: Icons.add_location_alt_rounded, size: 48),
           const SizedBox(height: 14),
           Text(
-            appText(context, 'Start your first trip'),
+            appText(context, 'Start your trip'),
             style: Theme.of(
               context,
             ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
