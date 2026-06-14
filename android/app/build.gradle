@@ -27,6 +27,11 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
+def mapsApiKey = localProperties.getProperty('MAPS_API_KEY')
+if (mapsApiKey == null) {
+    mapsApiKey = System.getenv('MAPS_API_KEY') ?: ''
+}
+
 android {
     namespace "com.example.lab05_example"
     compileSdk 36
@@ -53,6 +58,7 @@ android {
         minSdkVersion flutter.minSdkVersion
         targetSdkVersion flutter.targetSdkVersion
         multiDexEnabled true
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }

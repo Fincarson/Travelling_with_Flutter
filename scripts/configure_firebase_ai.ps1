@@ -21,6 +21,7 @@ function Read-RequiredSecret {
 
 $geoapifyKey = Read-RequiredSecret "GEOAPIFY_API_KEY"
 $openAiKey = Read-RequiredSecret "OPENAI_API_KEY"
+$googleMapsPlatformKey = Read-RequiredSecret "GOOGLE_MAPS_PLATFORM_API_KEY"
 
 $functionsDir = Join-Path $PSScriptRoot "..\functions"
 $envPath = Join-Path $functionsDir ".env"
@@ -28,6 +29,7 @@ $envPath = Join-Path $functionsDir ".env"
 @(
     "GEOAPIFY_API_KEY=$geoapifyKey"
     "OPENAI_API_KEY=$openAiKey"
+    "GOOGLE_MAPS_PLATFORM_API_KEY=$googleMapsPlatformKey"
 ) | Set-Content -LiteralPath $envPath -Encoding UTF8
 
 firebase deploy --only functions --project $Project

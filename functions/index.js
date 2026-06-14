@@ -17,6 +17,10 @@ function openAiApiKey() {
   return String(process.env.OPENAI_API_KEY ?? "").trim();
 }
 
+function googleMapsPlatformApiKey() {
+  return String(process.env.GOOGLE_MAPS_PLATFORM_API_KEY ?? "").trim();
+}
+
 const travelAssistantInstructions = [
   "You are a concise travel planning assistant inside a mobile app.",
   "Help with itinerary order, budget tradeoffs, packing, food, transit,",
@@ -431,6 +435,280 @@ exports.searchNearbyPlaces = onCall(
     }
   },
 );
+
+exports.resolveItineraryMapStops = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const userId = requireAuthenticatedUser(request);
+    const tripId = String(request.data?.tripId ?? "").trim();
+    const destination = String(request.data?.destination ?? "").trim();
+    const items = Array.isArray(request.data?.items) ?
+      request.data.items.slice(0, 16) :
+      [];
+    if (!tripId || !destination || !items.length) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Trip destination and itinerary stops are required.",
+      );
+    }
+    await requireTripMember({tripId, userId});
+
+    const apiKey = googleMapsPlatformApiKey();
+    if (!apiKey) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Google Places is not configured.",
+      );
+    }
+
+    const stops = [];
+    for (const item of items) {
+      const existingLatitude = Number(item?.latitude);
+      const existingLongitude = Number(item?.longitude);
+      if (
+        Number.isFinite(existingLatitude) &&
+        Number.isFinite(existingLongitude) &&
+        existingLatitude !== 0 &&
+        existingLongitude !== 0
+      ) {
+        const existingPlaceId = String(item?.placeId ?? "").trim();
+        stops.push({
+          index: Number.parseInt(item?.index ?? -1, 10),
+          placeId: existingPlaceId,
+          formattedAddress: String(item?.formattedAddress ?? ""),
+          latitude: existingLatitude,
+          longitude: existingLongitude,
+        });
+        continue;
+      }
+
+      const activity = String(item?.activity ?? "").trim();
+      if (!activity) continue;
+      const place = await searchGooglePlace({
+        textQuery: `${activity}, ${destination}`,
+        apiKey,
+      });
+      if (!place?.location) continue;
+      stops.push({
+        index: Number.parseInt(item?.index ?? -1, 10),
+        placeId: String(place.id ?? ""),
+        formattedAddress: String(place.formattedAddress ?? activity),
+        latitude: Number(place.location.latitude),
+        longitude: Number(place.location.longitude),
+      });
+    }
+
+    return {stops};
+  },
+);
+
+exports.computeItineraryRoute = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const userId = requireAuthenticatedUser(request);
+    const tripId = String(request.data?.tripId ?? "").trim();
+    if (!tripId) {
+      throw new HttpsError("invalid-argument", "Trip is required.");
+    }
+    await requireTripMember({tripId, userId});
+    const apiKey = googleMapsPlatformApiKey();
+    if (!apiKey) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Google Routes is not configured.",
+      );
+    }
+
+    const allowedModes = new Set([
+      "DRIVE",
+      "WALK",
+      "BICYCLE",
+      "TRANSIT",
+    ]);
+    const requestedMode = String(request.data?.mode ?? "").toUpperCase();
+    const mode = {
+      DRIVING: "DRIVE",
+      WALKING: "WALK",
+      BICYCLING: "BICYCLE",
+      TRANSIT: "TRANSIT",
+    }[requestedMode] ?? requestedMode;
+    const stops = normalizeRouteStops(request.data?.stops);
+    if (!allowedModes.has(mode) || stops.length < 2) {
+      throw new HttpsError(
+        "invalid-argument",
+        "A valid travel mode and at least two stops are required.",
+      );
+    }
+
+    const routeParts = [];
+    if (mode === "TRANSIT") {
+      for (let index = 0; index < stops.length - 1; index += 1) {
+        routeParts.push(
+          await fetchGoogleRoute({
+            stops: [stops[index], stops[index + 1]],
+            mode,
+            apiKey,
+          }),
+        );
+      }
+    } else {
+      routeParts.push(await fetchGoogleRoute({stops, mode, apiKey}));
+    }
+
+    const validParts = routeParts.filter((part) => part?.encodedPolyline);
+    if (!validParts.length) {
+      throw new HttpsError("not-found", "No route was found for these stops.");
+    }
+    return {
+      encodedPolylines: validParts.map((part) => part.encodedPolyline),
+      distanceMeters: validParts.reduce(
+        (total, part) => total + part.distanceMeters,
+        0,
+      ),
+      durationSeconds: validParts.reduce(
+        (total, part) => total + part.durationSeconds,
+        0,
+      ),
+    };
+  },
+);
+
+function requireAuthenticatedUser(request) {
+  const userId = String(request.auth?.uid ?? "").trim();
+  if (!userId) {
+    throw new HttpsError("unauthenticated", "Sign in to use trip maps.");
+  }
+  return userId;
+}
+
+async function requireTripMember({tripId, userId}) {
+  const member = await admin.firestore()
+    .collection("trips")
+    .doc(tripId)
+    .collection("members")
+    .doc(userId)
+    .get();
+  if (!member.exists || member.data()?.status !== "active") {
+    throw new HttpsError(
+      "permission-denied",
+      "You do not have access to this trip.",
+    );
+  }
+}
+
+async function searchGooglePlace({textQuery, apiKey}) {
+  const response = await fetch(
+    "https://places.googleapis.com/v1/places:searchText",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": [
+          "places.id",
+          "places.displayName",
+          "places.formattedAddress",
+          "places.location",
+        ].join(","),
+      },
+      body: JSON.stringify({
+        textQuery,
+        maxResultCount: 1,
+      }),
+    },
+  );
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    logger.warn("Google Place search failed", {
+      status: response.status,
+      detail: detail.slice(0, 300),
+    });
+    return null;
+  }
+  const body = await response.json();
+  return Array.isArray(body.places) && body.places.length ?
+    body.places[0] :
+    null;
+}
+
+function normalizeRouteStops(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 12).map((stop) => ({
+    latitude: Number(stop?.latitude),
+    longitude: Number(stop?.longitude),
+  })).filter(
+    (stop) =>
+      Number.isFinite(stop.latitude) &&
+      Number.isFinite(stop.longitude) &&
+      Math.abs(stop.latitude) <= 90 &&
+      Math.abs(stop.longitude) <= 180,
+  );
+}
+
+async function fetchGoogleRoute({stops, mode, apiKey}) {
+  const location = (stop) => ({
+    location: {
+      latLng: {
+        latitude: stop.latitude,
+        longitude: stop.longitude,
+      },
+    },
+  });
+  const body = {
+    origin: location(stops[0]),
+    destination: location(stops[stops.length - 1]),
+    travelMode: mode,
+    polylineQuality: "HIGH_QUALITY",
+  };
+  if (stops.length > 2) {
+    body.intermediates = stops.slice(1, -1).map(location);
+  }
+
+  const response = await fetch(
+    "https://routes.googleapis.com/directions/v2:computeRoutes",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": [
+          "routes.distanceMeters",
+          "routes.duration",
+          "routes.polyline.encodedPolyline",
+        ].join(","),
+      },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    logger.warn("Google route request failed", {
+      mode,
+      status: response.status,
+      detail: detail.slice(0, 300),
+    });
+    return null;
+  }
+  const responseBody = await response.json();
+  const route = Array.isArray(responseBody.routes) ?
+    responseBody.routes[0] :
+    null;
+  if (!route) return null;
+  return {
+    encodedPolyline: String(route.polyline?.encodedPolyline ?? ""),
+    distanceMeters: Number(route.distanceMeters ?? 0),
+    durationSeconds: googleDurationSeconds(route.duration),
+  };
+}
+
+function googleDurationSeconds(value) {
+  const match = String(value ?? "").match(/^([\d.]+)s$/);
+  return match ? Math.round(Number(match[1])) : 0;
+}
 
 async function fetchGeoapifyAutocomplete({query, type, apiKey}) {
   const url = new URL("https://api.geoapify.com/v1/geocode/autocomplete");

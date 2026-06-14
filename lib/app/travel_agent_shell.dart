@@ -611,9 +611,16 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   Widget _buildGlobalMapScreen(BuildContext context) {
+    final trip = _visibleActiveTrip ?? _selectedTrip ?? mockKyotoTrip;
     return MapScreen(
-      trip: _visibleActiveTrip ?? _selectedTrip ?? mockKyotoTrip,
+      trip: trip,
       onBack: () => context.go('/'),
+      onUpdateTrip: trip.id == mockKyotoTrip.id ? null : _updateTrip,
+      onAskAi: (prompt) {
+        _openTripAssistant(prompt);
+        final selected = _selectedTrip;
+        if (selected != null) context.go(_tripLocation(selected.id));
+      },
     );
   }
 
@@ -673,6 +680,11 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     return MapScreen(
       trip: trip,
       onBack: () => context.go(_tripLocation(trip.id)),
+      onUpdateTrip: _updateTrip,
+      onAskAi: (prompt) {
+        _openTripAssistant(prompt);
+        context.go(_tripLocation(trip.id));
+      },
     );
   }
 
@@ -997,6 +1009,8 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         return MapScreen(
           key: const ValueKey('map'),
           trip: trip,
+          onUpdateTrip: _updateTrip,
+          onAskAi: _openTripAssistant,
           onBack: () => setState(
             () => _screen = _selectedTrip == null
                 ? _Screen.dashboard

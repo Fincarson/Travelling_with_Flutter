@@ -32,6 +32,18 @@
   <title>lab05_example</title>
   <link rel="manifest" href="manifest.json">
 
+  <script src="maps_config.js"></script>
+  <script>
+    if (window.GOOGLE_MAPS_API_KEY) {
+      const mapsScript = document.createElement('script');
+      mapsScript.async = false;
+      mapsScript.src =
+        'https://maps.googleapis.com/maps/api/js?key=' +
+        encodeURIComponent(window.GOOGLE_MAPS_API_KEY);
+      document.head.appendChild(mapsScript);
+    }
+  </script>
+
   <script>
     // The value below is injected by flutter build, do not touch.
     const serviceWorkerVersion = null;

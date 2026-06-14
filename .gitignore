@@ -31,6 +31,8 @@ ios/.symlinks/
 ios/Flutter/Flutter.framework
 ios/Flutter/Flutter.podspec
 ios/Flutter/Generated.xcconfig
+ios/Flutter/GoogleMaps.xcconfig
+web/maps_config.js
 
 # macOS / Linux / Windows
 *.log

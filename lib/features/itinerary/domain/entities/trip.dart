@@ -348,12 +348,51 @@ class TripMemory {
 }
 
 class ScheduleItem {
-  const ScheduleItem(this.day, this.time, this.activity, this.type, this.cost);
+  const ScheduleItem(
+    this.day,
+    this.time,
+    this.activity,
+    this.type,
+    this.cost, {
+    this.placeId,
+    this.formattedAddress,
+    this.latitude,
+    this.longitude,
+  });
+
   final int day;
   final String time;
   final String activity;
   final IconData type;
   final int cost;
+  final String? placeId;
+  final String? formattedAddress;
+  final double? latitude;
+  final double? longitude;
+
+  bool get hasMapLocation => latitude != null && longitude != null;
+
+  ScheduleItem copyWith({
+    int? day,
+    String? time,
+    String? activity,
+    IconData? type,
+    int? cost,
+    String? placeId,
+    String? formattedAddress,
+    double? latitude,
+    double? longitude,
+  }) => ScheduleItem(
+    day ?? this.day,
+    time ?? this.time,
+    activity ?? this.activity,
+    type ?? this.type,
+    cost ?? this.cost,
+    placeId: placeId ?? this.placeId,
+    formattedAddress: formattedAddress ?? this.formattedAddress,
+    latitude: latitude ?? this.latitude,
+    longitude: longitude ?? this.longitude,
+  );
 
   Map<String, dynamic> toMap() => {
     'day': day,
@@ -361,6 +400,10 @@ class ScheduleItem {
     'activity': activity,
     'type': _iconToMap(type),
     'cost': cost,
+    'placeId': placeId,
+    'formattedAddress': formattedAddress,
+    'latitude': latitude,
+    'longitude': longitude,
   };
 
   static ScheduleItem fromMap(Map<String, dynamic> map) => ScheduleItem(
@@ -369,6 +412,10 @@ class ScheduleItem {
     (map['activity'] as String?) ?? 'Activity',
     _iconFromMap(map['type']),
     (map['cost'] as num?)?.toInt() ?? 0,
+    placeId: map['placeId'] as String?,
+    formattedAddress: map['formattedAddress'] as String?,
+    latitude: (map['latitude'] as num?)?.toDouble(),
+    longitude: (map['longitude'] as num?)?.toDouble(),
   );
 }
 
