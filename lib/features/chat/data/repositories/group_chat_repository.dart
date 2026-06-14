@@ -1,11 +1,17 @@
 part of travel_agent_app;
 
 class GroupChatRepository {
-  GroupChatRepository(this._firestore, {FirebaseStorage? storage})
-    : _storage = storage ?? FirebaseStorage.instance;
+  GroupChatRepository(
+    this._firestore, {
+    FirebaseStorage? storage,
+    FirebaseFunctions? functions,
+  }) : _storage = storage ?? FirebaseStorage.instance,
+       _functions =
+           functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
 
   final FirebaseFirestore _firestore;
   final FirebaseStorage _storage;
+  final FirebaseFunctions _functions;
 
   CollectionReference<Map<String, dynamic>> get _chatsRef =>
       _firestore.collection('chat_groups');
@@ -83,6 +89,24 @@ class GroupChatRepository {
         .snapshots()
         .map(
           (snapshot) => snapshot.docs.map(GroupChatMessage.fromDoc).toList(),
+        );
+  }
+
+  Stream<Map<String, int>> watchPollVotes({
+    required String chatId,
+    required String messageId,
+  }) {
+    return _chatDoc(chatId)
+        .collection('messages')
+        .doc(messageId)
+        .collection('votes')
+        .snapshots()
+        .map(
+          (snapshot) => {
+            for (final doc in snapshot.docs)
+              if (doc.data()['optionIndex'] is int)
+                doc.id: doc.data()['optionIndex'] as int,
+          },
         );
   }
 
@@ -238,6 +262,81 @@ class GroupChatRepository {
       }, SetOptions(merge: true));
     }
     await batch.commit();
+  }
+
+  Future<void> sendPoll({
+    required String chatId,
+    required String accountId,
+    required UserProfile profile,
+    required ChatPollDraft draft,
+    String? senderPhotoUrl,
+  }) async {
+    final question = draft.question.trim();
+    final options = draft.options
+        .map((option) => option.trim())
+        .where((option) => option.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (question.isEmpty || question.length > 300) {
+      throw StateError('Poll questions must be between 1 and 300 characters.');
+    }
+    if (options.length < 2 || options.length > 10) {
+      throw StateError('Polls need between 2 and 10 unique options.');
+    }
+    if (options.any((option) => option.length > 120)) {
+      throw StateError('Poll options must be 120 characters or fewer.');
+    }
+
+    final chat = await _requireActiveChatMember(chatId, accountId);
+    final now = FieldValue.serverTimestamp();
+    final preview = 'Poll: $question';
+    final messageRef = _chatDoc(chatId).collection('messages').doc();
+    final batch = _firestore.batch();
+    batch.set(messageRef, {
+      'senderId': accountId,
+      'senderNameSnapshot': _displayNameFor(profile),
+      'senderPhotoUrlSnapshot': senderPhotoUrl,
+      'text': '',
+      'type': 'poll',
+      'attachments': const <Map<String, dynamic>>[],
+      'poll': ChatPoll(question: question, options: options).toMap(),
+      'createdAt': now,
+      'editedAt': null,
+    });
+    _setChatActivitySnapshots(
+      batch: batch,
+      chat: chat,
+      chatId: chatId,
+      preview: preview,
+      timestamp: now,
+    );
+    await batch.commit();
+  }
+
+  Future<void> voteInPoll({
+    required String chatId,
+    required String messageId,
+    required String accountId,
+    required UserProfile profile,
+    required int optionIndex,
+  }) async {
+    await _requireActiveChatMember(chatId, accountId);
+    final messageRef = _chatDoc(chatId).collection('messages').doc(messageId);
+    final message = await messageRef.get();
+    final poll = ChatPoll.fromMap(message.data()?['poll']);
+    if (!message.exists || poll == null) {
+      throw StateError('This poll is no longer available.');
+    }
+    if (optionIndex < 0 || optionIndex >= poll.options.length) {
+      throw StateError('That poll option is no longer available.');
+    }
+
+    await messageRef.collection('votes').doc(accountId).set({
+      'optionIndex': optionIndex,
+      'voterNameSnapshot': _displayNameFor(profile),
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> sendAttachment({
@@ -537,6 +636,39 @@ class GroupChatRepository {
     );
     await _writeInvite(invite: invite, userInviteeId: null);
     return invite;
+  }
+
+  Future<String> getGroupJoinCode({
+    required String chatId,
+    bool regenerate = false,
+  }) async {
+    final callable = _functions.httpsCallable('getGroupChatJoinCode');
+    final result = await callable.call(<String, dynamic>{
+      'chatId': chatId,
+      'regenerate': regenerate,
+    });
+    final data = Map<String, dynamic>.from(
+      (result.data as Map?) ?? const <String, dynamic>{},
+    );
+    final code = (data['code'] as String?)?.trim() ?? '';
+    if (code.isEmpty) {
+      throw StateError('Firebase did not return a group code.');
+    }
+    return code;
+  }
+
+  Future<GroupChatJoinResult> joinGroupByCode(String value) async {
+    final code = _inviteCodeFromText(value);
+    final callable = _functions.httpsCallable('joinGroupChatByCode');
+    final result = await callable.call(<String, dynamic>{'code': code});
+    final data = Map<String, dynamic>.from(
+      (result.data as Map?) ?? const <String, dynamic>{},
+    );
+    final joinResult = GroupChatJoinResult.fromMap(data);
+    if (joinResult.chatId.isEmpty) {
+      throw StateError('Firebase did not return the joined group.');
+    }
+    return joinResult;
   }
 
   Future<GroupChatInvite> inviteByUserInput({

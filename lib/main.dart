@@ -36,11 +36,20 @@ Future<void> main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    if (_supportsFirebaseMessaging) {
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    }
     runApp(const AppRestartScope(child: MyApp()));
   } catch (error, stackTrace) {
     runApp(_BootstrapErrorApp(error: AppErrorData.from(error, stackTrace)));
   }
+}
+
+bool get _supportsFirebaseMessaging {
+  if (kIsWeb) return true;
+  return defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.macOS;
 }
 
 class _BootstrapErrorApp extends StatelessWidget {

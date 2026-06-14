@@ -348,8 +348,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     TextField(
                       controller: controller,
                       decoration: InputDecoration(
-                        labelText: appText(context, 'Invite link or code'),
-                        prefixIcon: const Icon(Icons.link_rounded),
+                        labelText: appText(
+                          context,
+                          'Invite link or group code',
+                        ),
+                        prefixIcon: const Icon(Icons.key_rounded),
                       ),
                       textInputAction: TextInputAction.done,
                       onSubmitted: (_) =>
@@ -357,7 +360,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     ),
                     const SizedBox(height: 18),
                     PrimaryButton(
-                      label: 'Review invite',
+                      label: 'Continue',
                       icon: Icons.search_rounded,
                       onPressed: () =>
                           Navigator.of(context).pop(controller.text),
@@ -370,9 +373,18 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ),
       );
       if (code == null || code.trim().isEmpty) return;
-      final invite = await _repository.loadInvite(code);
-      if (!mounted) return;
-      await _showInviteReview(invite);
+      try {
+        final result = await _repository.joinGroupByCode(code);
+        if (!mounted) return;
+        await _openJoinedGroup(result);
+      } on FirebaseFunctionsException catch (error) {
+        if (error.code != 'not-found' && error.code != 'invalid-argument') {
+          rethrow;
+        }
+        final invite = await _repository.loadInvite(code);
+        if (!mounted) return;
+        await _showInviteReview(invite);
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = _chatErrorMessage(error));
@@ -432,6 +444,24 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
+  Future<void> _openJoinedGroup(GroupChatJoinResult result) async {
+    final chat = await _repository.loadChat(result.chatId);
+    if (!mounted) return;
+    if (chat == null) {
+      setState(() => _error = 'Chat was not found.');
+      return;
+    }
+    _showChat(
+      chat,
+      GroupChatMembership(
+        chatId: result.chatId,
+        role: result.role,
+        status: GroupChatMemberStatus.active.name,
+        titleSnapshot: result.title,
+      ),
+    );
+  }
+
   Future<void> _declineInvite(GroupChatInvite invite) async {
     try {
       await _repository.declineInvite(
@@ -486,6 +516,7 @@ class RoutedGroupChatRoomScreen extends StatefulWidget {
     required this.account,
     required this.user,
     required this.onBack,
+    required this.onVisibilityChanged,
     super.key,
   });
 
@@ -493,6 +524,7 @@ class RoutedGroupChatRoomScreen extends StatefulWidget {
   final AuthenticatedAccount account;
   final UserProfile user;
   final VoidCallback onBack;
+  final ValueChanged<String?> onVisibilityChanged;
 
   @override
   State<RoutedGroupChatRoomScreen> createState() =>
@@ -507,6 +539,9 @@ class _RoutedGroupChatRoomScreenState extends State<RoutedGroupChatRoomScreen> {
   void initState() {
     super.initState();
     _room = _loadRoom();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onVisibilityChanged(widget.chatId);
+    });
   }
 
   @override
@@ -516,6 +551,17 @@ class _RoutedGroupChatRoomScreenState extends State<RoutedGroupChatRoomScreen> {
         oldWidget.account.uid != widget.account.uid) {
       _room = _loadRoom();
     }
+    if (oldWidget.chatId != widget.chatId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onVisibilityChanged(widget.chatId);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.onVisibilityChanged(null);
+    super.dispose();
   }
 
   Future<_LoadedGroupChatRoom> _loadRoom() async {
@@ -718,10 +764,29 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                   controller: _scrollController,
                   padding: _responsivePagePadding(context, top: 12, bottom: 12),
                   itemCount: messages.length,
-                  itemBuilder: (context, index) => GroupMessageBubble(
-                    message: messages[index],
-                    isMine: messages[index].senderId == widget.account.uid,
-                  ),
+                  itemBuilder: (context, index) {
+                    final message = messages[index];
+                    return GroupMessageBubble(
+                      message: message,
+                      isMine: message.senderId == widget.account.uid,
+                      currentUserId: widget.account.uid,
+                      pollVotes: message.poll == null
+                          ? null
+                          : widget.repository.watchPollVotes(
+                              chatId: widget.chat.id,
+                              messageId: message.id,
+                            ),
+                      onPollVote: message.poll == null
+                          ? null
+                          : (optionIndex) => widget.repository.voteInPoll(
+                              chatId: widget.chat.id,
+                              messageId: message.id,
+                              accountId: widget.account.uid,
+                              profile: widget.user,
+                              optionIndex: optionIndex,
+                            ),
+                    );
+                  },
                 );
               },
             ),
@@ -1094,7 +1159,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   }
 
   Future<void> _showAttachmentMenu() async {
-    final source = await showModalBottomSheet<ChatAttachmentSource>(
+    final action = await showModalBottomSheet<_ChatComposerAction>(
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
@@ -1110,32 +1175,51 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                 label: 'Camera',
                 enabled: _attachmentService.cameraAvailable,
                 onTap: () =>
-                    Navigator.of(context).pop(ChatAttachmentSource.camera),
+                    Navigator.of(context).pop(_ChatComposerAction.camera),
               ),
               _AttachmentSourceButton(
                 icon: Icons.photo_library_rounded,
                 label: 'Photos',
                 onTap: () =>
-                    Navigator.of(context).pop(ChatAttachmentSource.photos),
+                    Navigator.of(context).pop(_ChatComposerAction.photos),
               ),
               _AttachmentSourceButton(
                 icon: Icons.video_library_rounded,
                 label: 'Videos',
                 onTap: () =>
-                    Navigator.of(context).pop(ChatAttachmentSource.videos),
+                    Navigator.of(context).pop(_ChatComposerAction.videos),
               ),
               _AttachmentSourceButton(
                 icon: Icons.attach_file_rounded,
                 label: 'Files',
                 onTap: () =>
-                    Navigator.of(context).pop(ChatAttachmentSource.files),
+                    Navigator.of(context).pop(_ChatComposerAction.files),
+              ),
+              _AttachmentSourceButton(
+                icon: Icons.poll_rounded,
+                label: 'Poll',
+                onTap: () =>
+                    Navigator.of(context).pop(_ChatComposerAction.poll),
               ),
             ],
           ),
         ),
       ),
     );
-    if (!mounted || source == null) return;
+    if (!mounted || action == null) return;
+    if (action == _ChatComposerAction.poll) {
+      await _showCreatePollSheet();
+      return;
+    }
+    final source = switch (action) {
+      _ChatComposerAction.camera => ChatAttachmentSource.camera,
+      _ChatComposerAction.photos => ChatAttachmentSource.photos,
+      _ChatComposerAction.videos => ChatAttachmentSource.videos,
+      _ChatComposerAction.files => ChatAttachmentSource.files,
+      _ChatComposerAction.poll => throw StateError(
+        'Poll is not an attachment.',
+      ),
+    };
     setState(() {
       _isSendingAttachment = true;
       _error = null;
@@ -1161,11 +1245,44 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
     }
   }
 
+  Future<void> _showCreatePollSheet() async {
+    final draft = await showModalBottomSheet<ChatPollDraft>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => const _CreatePollSheet(),
+    );
+    if (!mounted || draft == null) return;
+
+    setState(() {
+      _isSending = true;
+      _error = null;
+    });
+    try {
+      await widget.repository.sendPoll(
+        chatId: widget.chat.id,
+        accountId: widget.account.uid,
+        profile: widget.user,
+        senderPhotoUrl: widget.user.photoUrl ?? widget.account.photoUrl,
+        draft: draft,
+      );
+    } catch (error) {
+      if (mounted) setState(() => _error = _chatErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
   Future<void> _showInviteSheet() async {
     final controller = TextEditingController();
     String? sheetError;
     var isInviting = false;
     var isSharing = false;
+    var isChangingCode = false;
+    var codeFuture = widget.repository.getGroupJoinCode(chatId: widget.chat.id);
+    final canChangeCode =
+        _membership.role == GroupChatRole.owner.name ||
+        _membership.role == GroupChatRole.admin.name;
     try {
       await showModalBottomSheet<void>(
         context: context,
@@ -1175,7 +1292,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
         builder: (context) => StatefulBuilder(
           builder: (sheetContext, setSheetState) {
             Future<void> inviteUser() async {
-              if (isInviting || isSharing) return;
+              if (isInviting || isSharing || isChangingCode) return;
               final navigator = Navigator.of(sheetContext);
               setSheetState(() {
                 isInviting = true;
@@ -1201,7 +1318,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
             }
 
             Future<void> shareLink() async {
-              if (isInviting || isSharing) return;
+              if (isInviting || isSharing || isChangingCode) return;
               final navigator = Navigator.of(sheetContext);
               setSheetState(() {
                 isSharing = true;
@@ -1225,8 +1342,58 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
               }
             }
 
+            Future<void> changeCode() async {
+              if (!canChangeCode || isInviting || isSharing || isChangingCode) {
+                return;
+              }
+              final confirmed = await showDialog<bool>(
+                context: sheetContext,
+                builder: (dialogContext) => AlertDialog(
+                  title: Text(appText(dialogContext, 'Change group code?')),
+                  content: Text(
+                    appText(
+                      dialogContext,
+                      'The current code will stop working immediately.',
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(false),
+                      child: Text(appText(dialogContext, 'Cancel')),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(true),
+                      child: Text(appText(dialogContext, 'Change code')),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed != true || !sheetContext.mounted) return;
+              setSheetState(() {
+                isChangingCode = true;
+                sheetError = null;
+              });
+              try {
+                final code = await widget.repository.getGroupJoinCode(
+                  chatId: widget.chat.id,
+                  regenerate: true,
+                );
+                if (!sheetContext.mounted) return;
+                setSheetState(() {
+                  codeFuture = Future.value(code);
+                  isChangingCode = false;
+                });
+              } catch (error) {
+                if (!sheetContext.mounted) return;
+                setSheetState(() {
+                  isChangingCode = false;
+                  sheetError = _chatErrorMessage(error);
+                });
+              }
+            }
+
             return PopScope(
-              canPop: !isInviting && !isSharing,
+              canPop: !isInviting && !isSharing && !isChangingCode,
               child: SafeArea(
                 child: Center(
                   child: ConstrainedBox(
@@ -1256,7 +1423,8 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                                 ),
                                 IconButton(
                                   tooltip: appText(sheetContext, 'Cancel'),
-                                  onPressed: isInviting || isSharing
+                                  onPressed:
+                                      isInviting || isSharing || isChangingCode
                                       ? null
                                       : () => Navigator.of(sheetContext).pop(),
                                   icon: const Icon(Icons.close_rounded),
@@ -1264,6 +1432,151 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                               ],
                             ),
                             const SizedBox(height: 14),
+                            GlassPanel(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.key_rounded),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          appText(sheetContext, 'Group code'),
+                                          style: Theme.of(sheetContext)
+                                              .textTheme
+                                              .titleMedium
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w900,
+                                              ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    appText(
+                                      sheetContext,
+                                      'Anyone signed in with this code can join as a member.',
+                                    ),
+                                    style: TextStyle(
+                                      color: Theme.of(
+                                        sheetContext,
+                                      ).colorScheme.onSurfaceVariant,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  FutureBuilder<String>(
+                                    future: codeFuture,
+                                    builder: (context, snapshot) {
+                                      final code = snapshot.data;
+                                      if (snapshot.hasError) {
+                                        return FormNotice(
+                                          message: _chatErrorMessage(
+                                            snapshot.error ??
+                                                'Could not load group code.',
+                                          ),
+                                        );
+                                      }
+                                      if (code == null) {
+                                        return const Center(
+                                          child: CircularProgressIndicator(),
+                                        );
+                                      }
+                                      return Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          SelectableText(
+                                            code,
+                                            textAlign: TextAlign.center,
+                                            style: Theme.of(sheetContext)
+                                                .textTheme
+                                                .headlineSmall
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.w900,
+                                                  letterSpacing: 2,
+                                                ),
+                                          ),
+                                          const SizedBox(height: 12),
+                                          Wrap(
+                                            alignment: WrapAlignment.center,
+                                            spacing: 10,
+                                            runSpacing: 10,
+                                            children: [
+                                              OutlinedButton.icon(
+                                                onPressed: isChangingCode
+                                                    ? null
+                                                    : () async {
+                                                        await Clipboard.setData(
+                                                          ClipboardData(
+                                                            text: code,
+                                                          ),
+                                                        );
+                                                        if (!sheetContext
+                                                            .mounted) {
+                                                          return;
+                                                        }
+                                                        ScaffoldMessenger.of(
+                                                          sheetContext,
+                                                        ).showSnackBar(
+                                                          SnackBar(
+                                                            content: Text(
+                                                              appText(
+                                                                sheetContext,
+                                                                'Code copied.',
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        );
+                                                      },
+                                                icon: const Icon(
+                                                  Icons.copy_rounded,
+                                                ),
+                                                label: Text(
+                                                  appText(
+                                                    sheetContext,
+                                                    'Copy code',
+                                                  ),
+                                                ),
+                                              ),
+                                              if (canChangeCode)
+                                                OutlinedButton.icon(
+                                                  onPressed: isChangingCode
+                                                      ? null
+                                                      : () => unawaited(
+                                                          changeCode(),
+                                                        ),
+                                                  icon: isChangingCode
+                                                      ? const SizedBox.square(
+                                                          dimension: 16,
+                                                          child:
+                                                              CircularProgressIndicator(
+                                                                strokeWidth: 2,
+                                                              ),
+                                                        )
+                                                      : const Icon(
+                                                          Icons.refresh_rounded,
+                                                        ),
+                                                  label: Text(
+                                                    appText(
+                                                      sheetContext,
+                                                      'Change code',
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ],
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
                             TextField(
                               controller: controller,
                               decoration: InputDecoration(
@@ -1288,13 +1601,15 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                               icon: isInviting
                                   ? Icons.hourglass_top_rounded
                                   : Icons.person_add_rounded,
-                              onPressed: isInviting || isSharing
+                              onPressed:
+                                  isInviting || isSharing || isChangingCode
                                   ? null
                                   : () => unawaited(inviteUser()),
                             ),
                             const SizedBox(height: 12),
                             OutlinedButton.icon(
-                              onPressed: isInviting || isSharing
+                              onPressed:
+                                  isInviting || isSharing || isChangingCode
                                   ? null
                                   : () => unawaited(shareLink()),
                               icon: isSharing
@@ -1384,6 +1699,167 @@ enum _GroupChatMenuAction { addMembers, info, media, notifications, more }
 enum _ChatMuteChoice { unmuted, thirtyMinutes, oneHour, oneDay, forever }
 
 enum _ChatMoreAction { report, exit }
+
+enum _ChatComposerAction { camera, photos, videos, files, poll }
+
+class _CreatePollSheet extends StatefulWidget {
+  const _CreatePollSheet();
+
+  @override
+  State<_CreatePollSheet> createState() => _CreatePollSheetState();
+}
+
+class _CreatePollSheetState extends State<_CreatePollSheet> {
+  final _question = TextEditingController();
+  final List<TextEditingController> _options = [
+    TextEditingController(),
+    TextEditingController(),
+  ];
+  String? _error;
+
+  @override
+  void dispose() {
+    _question.dispose();
+    for (final option in _options) {
+      option.dispose();
+    }
+    super.dispose();
+  }
+
+  void _addOption() {
+    if (_options.length >= 6) return;
+    setState(() => _options.add(TextEditingController()));
+  }
+
+  void _removeOption(int index) {
+    if (_options.length <= 2) return;
+    final controller = _options.removeAt(index);
+    controller.dispose();
+    setState(() {});
+  }
+
+  void _createPoll() {
+    final question = _question.text.trim();
+    final options = _options
+        .map((controller) => controller.text.trim())
+        .where((option) => option.isNotEmpty)
+        .toList(growable: false);
+    if (question.isEmpty) {
+      setState(() => _error = 'Enter a poll question.');
+      return;
+    }
+    if (options.length < 2) {
+      setState(() => _error = 'Enter at least two poll options.');
+      return;
+    }
+    if (options.toSet().length != options.length) {
+      setState(() => _error = 'Poll options must be different.');
+      return;
+    }
+    Navigator.of(
+      context,
+    ).pop(ChatPollDraft(question: question, options: options));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          MediaQuery.viewInsetsOf(context).bottom + 20,
+        ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 620),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  appText(context, 'Create poll'),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _question,
+                  autofocus: true,
+                  maxLength: 300,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Question'),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                for (var index = 0; index < _options.length; index++) ...[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _options[index],
+                          maxLength: 120,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: InputDecoration(
+                            labelText:
+                                '${appText(context, 'Option')} ${index + 1}',
+                          ),
+                        ),
+                      ),
+                      if (_options.length > 2) ...[
+                        const SizedBox(width: 6),
+                        IconButton(
+                          tooltip: appText(context, 'Remove option'),
+                          onPressed: () => _removeOption(index),
+                          icon: const Icon(Icons.remove_circle_outline_rounded),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                if (_options.length < 6)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _addOption,
+                      icon: const Icon(Icons.add_rounded),
+                      label: Text(appText(context, 'Add option')),
+                    ),
+                  ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  FormNotice(message: _error!),
+                ],
+                const SizedBox(height: 14),
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: Text(appText(context, 'Cancel')),
+                    ),
+                    FilledButton.icon(
+                      onPressed: _createPoll,
+                      icon: const Icon(Icons.poll_rounded),
+                      label: Text(appText(context, 'Create poll')),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _AttachmentSourceButton extends StatelessWidget {
   const _AttachmentSourceButton({

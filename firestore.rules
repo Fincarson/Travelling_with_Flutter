@@ -79,6 +79,10 @@ service cloud.firestore {
       return /databases/$(database)/documents/chat_invites/$(inviteCode);
     }
 
+    function chatMessagePath(chatId, messageId) {
+      return /databases/$(database)/documents/chat_groups/$(chatId)/messages/$(messageId);
+    }
+
     function chatData(chatId) {
       return get(chatPath(chatId)).data;
     }
@@ -231,6 +235,7 @@ service cloud.firestore {
         'text',
         'type',
         'attachments',
+        'poll',
         'createdAt',
         'editedAt',
       ]) &&
@@ -243,9 +248,47 @@ service cloud.firestore {
           'system',
           'ai',
           'trip_update',
+          'poll',
         ] &&
         request.resource.data.attachments is list &&
-        request.resource.data.attachments.size() <= 1;
+        request.resource.data.attachments.size() <= 1 &&
+        (
+          request.resource.data.type != 'poll' ||
+          (
+            request.resource.data.attachments.size() == 0 &&
+            request.resource.data.poll is map &&
+            request.resource.data.poll.keys().hasOnly([
+              'question',
+              'options',
+            ]) &&
+            request.resource.data.poll.question is string &&
+            request.resource.data.poll.question.size() > 0 &&
+            request.resource.data.poll.question.size() <= 300 &&
+            request.resource.data.poll.options is list &&
+            request.resource.data.poll.options.size() >= 2 &&
+            request.resource.data.poll.options.size() <= 10
+          )
+        );
+    }
+
+    function validPollVote(chatId, messageId, userId) {
+      return signedIn() &&
+        request.auth.uid == userId &&
+        exists(chatMessagePath(chatId, messageId)) &&
+        get(chatMessagePath(chatId, messageId)).data.type == 'poll' &&
+        get(chatMessagePath(chatId, messageId)).data.poll is map &&
+        request.resource.data.keys().hasOnly([
+          'optionIndex',
+          'voterNameSnapshot',
+          'createdAt',
+          'updatedAt',
+        ]) &&
+        request.resource.data.optionIndex is int &&
+        request.resource.data.optionIndex >= 0 &&
+        request.resource.data.optionIndex <
+          get(chatMessagePath(chatId, messageId)).data.poll.options.size() &&
+        request.resource.data.voterNameSnapshot is string &&
+        request.resource.data.voterNameSnapshot.size() <= 120;
     }
 
     function validChatInviteCreate(inviteCode) {
@@ -408,6 +451,10 @@ service cloud.firestore {
           (
             !request.resource.data.settings.keys().hasAny(['onboardingCompleted']) ||
             request.resource.data.settings.onboardingCompleted is bool
+          ) &&
+          (
+            !request.resource.data.settings.keys().hasAny(['notificationsEnabled']) ||
+            request.resource.data.settings.notificationsEnabled is bool
           ) &&
           (
             !request.resource.data.settings.keys().hasAny(['displayCurrencyCode']) ||
@@ -721,6 +768,14 @@ service cloud.firestore {
             canManageChat(chatId) ||
             resource.data.senderId == request.auth.uid
           );
+
+        match /votes/{userId} {
+          allow read: if canReadChat(chatId);
+          allow create, update: if canReadChat(chatId) &&
+            validPollVote(chatId, messageId, userId);
+          allow delete: if canReadChat(chatId) &&
+            request.auth.uid == userId;
+        }
       }
 
       match /invites/{inviteCode} {
@@ -752,6 +807,10 @@ service cloud.firestore {
       allow create: if canCreateChatInvite(inviteCode);
       allow update: if canResolveChatInvite();
       allow delete: if signedIn() && canInviteToChat(resource.data.chatId);
+    }
+
+    match /chat_join_codes/{joinCode} {
+      allow read, write: if false;
     }
   }
 }

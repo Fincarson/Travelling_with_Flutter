@@ -22,6 +22,35 @@ class PendingChatAttachment {
   int get sizeBytes => bytes.lengthInBytes;
 }
 
+class ChatPollDraft {
+  const ChatPollDraft({required this.question, required this.options});
+
+  final String question;
+  final List<String> options;
+}
+
+class ChatPoll {
+  const ChatPoll({required this.question, required this.options});
+
+  final String question;
+  final List<String> options;
+
+  static ChatPoll? fromMap(Object? value) {
+    if (value is! Map) return null;
+    final map = Map<String, dynamic>.from(value);
+    final question = (map['question'] as String?)?.trim() ?? '';
+    final options = ((map['options'] as List<dynamic>?) ?? const [])
+        .whereType<String>()
+        .map((option) => option.trim())
+        .where((option) => option.isNotEmpty)
+        .toList(growable: false);
+    if (question.isEmpty || options.length < 2) return null;
+    return ChatPoll(question: question, options: options);
+  }
+
+  Map<String, dynamic> toMap() => {'question': question, 'options': options};
+}
+
 class GroupChat {
   const GroupChat({
     required this.id,
@@ -161,6 +190,7 @@ class GroupChatMessage {
     required this.type,
     this.senderPhotoUrlSnapshot,
     this.attachments = const [],
+    this.poll,
     this.createdAt,
     this.editedAt,
   });
@@ -172,6 +202,7 @@ class GroupChatMessage {
   final String text;
   final String type;
   final List<Map<String, dynamic>> attachments;
+  final ChatPoll? poll;
   final Timestamp? createdAt;
   final Timestamp? editedAt;
 
@@ -188,6 +219,7 @@ class GroupChatMessage {
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
           .toList(),
+      poll: ChatPoll.fromMap(map['poll']),
       createdAt: map['createdAt'] as Timestamp?,
       editedAt: map['editedAt'] as Timestamp?,
     );
@@ -234,6 +266,29 @@ class GroupChatInvite {
       inviteeUid: map['inviteeUid'] as String?,
       inviteeEmail: map['inviteeEmail'] as String?,
       expiresAt: map['expiresAt'] as Timestamp?,
+    );
+  }
+}
+
+class GroupChatJoinResult {
+  const GroupChatJoinResult({
+    required this.chatId,
+    required this.title,
+    required this.role,
+    required this.alreadyMember,
+  });
+
+  final String chatId;
+  final String title;
+  final String role;
+  final bool alreadyMember;
+
+  static GroupChatJoinResult fromMap(Map<String, dynamic> map) {
+    return GroupChatJoinResult(
+      chatId: (map['chatId'] as String?) ?? '',
+      title: (map['title'] as String?) ?? 'Group chat',
+      role: (map['role'] as String?) ?? GroupChatRole.member.name,
+      alreadyMember: (map['alreadyMember'] as bool?) ?? false,
     );
   }
 }

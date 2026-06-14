@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../core/localization/app_localizations_extension.dart';
+import '../../../../core/localization/app_text.dart';
 import '../../../auth/domain/entities/user_profile.dart';
 import 'profile_photo_button.dart';
 
@@ -20,20 +20,21 @@ class ProfileEditSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = context.l10n;
     final fields = Column(
       children: [
         TextField(
           controller: displayNameController,
           textInputAction: TextInputAction.next,
-          decoration: InputDecoration(labelText: l10n.displayName),
+          decoration: InputDecoration(
+            labelText: appText(context, 'Display name'),
+          ),
         ),
         const SizedBox(height: 12),
         TextField(
           controller: bioController,
           minLines: 2,
           maxLines: 4,
-          decoration: InputDecoration(labelText: l10n.bio),
+          decoration: InputDecoration(labelText: appText(context, 'Bio')),
         ),
       ],
     );

@@ -43,6 +43,7 @@ part 'travel_agent_shell.dart';
 part '../core/config/firebase_push_config.dart';
 part '../core/device/app_device_context.dart';
 part '../core/localization/currency_exchange.dart';
+part '../shared/services/app_notification_service.dart';
 part '../shared/services/trip_notification_service.dart';
 part '../shared/services/trip_automation_service.dart';
 part '../shared/services/push_token_service.dart';

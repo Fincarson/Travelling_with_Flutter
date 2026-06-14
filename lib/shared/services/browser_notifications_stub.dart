@@ -1,4 +1,5 @@
 bool get supportsBrowserNotifications => false;
+Stream<String> get browserNotificationClicks => const Stream.empty();
 
 Future<bool> requestBrowserNotificationPermission() async => false;
 
@@ -11,3 +12,11 @@ Future<void> scheduleBrowserNotification({
 }) async {}
 
 Future<void> cancelBrowserNotifications(Iterable<int> ids) async {}
+
+Future<void> showBrowserNotification({
+  required int id,
+  required String title,
+  required String body,
+  String? payload,
+  String? tag,
+}) async {}
