@@ -1,0 +1,48 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function activeChatMember(chatId) {
+      return signedIn() &&
+        firestore.exists(
+          /databases/(default)/documents/chat_groups/$(chatId)/members/$(request.auth.uid)
+        ) &&
+        firestore.get(
+          /databases/(default)/documents/chat_groups/$(chatId)/members/$(request.auth.uid)
+        ).data.status == 'active';
+    }
+
+    function managesChat(chatId) {
+      return activeChatMember(chatId) &&
+        firestore.get(
+          /databases/(default)/documents/chat_groups/$(chatId)
+        ).data.roles[request.auth.uid] in ['owner', 'admin'];
+    }
+
+    match /user_avatars/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /chat_attachments/{chatId}/{messageId}/{fileName} {
+      allow read: if activeChatMember(chatId);
+      allow create: if activeChatMember(chatId)
+        && request.resource.size < 50 * 1024 * 1024
+        && request.resource.contentType != null;
+      allow update: if false;
+      allow delete: if activeChatMember(chatId) &&
+        (
+          resource.metadata.uploaderId == request.auth.uid ||
+          managesChat(chatId)
+        );
+    }
+  }
+}

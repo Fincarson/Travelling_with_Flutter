@@ -64,7 +64,8 @@ class MapScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
-          for (final item in trip.items.take(4)) ScheduleTile(item: item),
+          for (final item in trip.items.take(4))
+            ScheduleTile(item: item, currency: trip.currency),
         ],
       ),
     );
@@ -539,7 +540,8 @@ class BudgetScreen extends StatelessWidget {
             children: [
               const LabelText('Spent'),
               Text(
-                '${trip.currency} $actual of ${trip.currency} ${trip.budget}',
+                '${_displayMoney(context, actual, trip.currency)} of '
+                '${_displayMoney(context, trip.budget, trip.currency)}',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.w900,
                 ),

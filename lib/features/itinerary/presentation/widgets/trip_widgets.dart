@@ -104,8 +104,9 @@ class CurrentTripCard extends StatelessWidget {
               ),
               StatCard(
                 title: 'Budget',
-                value: '${trip.currency} ${trip.spent}',
-                detail: 'of ${trip.currency} ${trip.budget}',
+                value: _displayMoney(context, trip.spent, trip.currency),
+                detail:
+                    'of ${_displayMoney(context, trip.budget, trip.currency)}',
                 trailing: Icons.add_rounded,
               ),
             ],
@@ -703,8 +704,14 @@ class _TripDeleteRevealBackground extends StatelessWidget {
 }
 
 class ScheduleTile extends StatelessWidget {
-  const ScheduleTile({required this.item, this.onDelete, super.key});
+  const ScheduleTile({
+    required this.item,
+    required this.currency,
+    this.onDelete,
+    super.key,
+  });
   final ScheduleItem item;
+  final String currency;
   final VoidCallback? onDelete;
 
   @override
@@ -741,8 +748,10 @@ class ScheduleTile extends StatelessWidget {
             Flexible(
               fit: FlexFit.loose,
               child: Text(
-                item.cost == 0 ? appText(context, 'Free') : '\$${item.cost}',
-                maxLines: 1,
+                item.cost == 0
+                    ? appText(context, 'Free')
+                    : _displayMoney(context, item.cost, currency),
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.end,
                 style: const TextStyle(fontWeight: FontWeight.w900),
@@ -764,8 +773,9 @@ class ScheduleTile extends StatelessWidget {
 }
 
 class BookingTile extends StatelessWidget {
-  const BookingTile({required this.booking, super.key});
+  const BookingTile({required this.booking, required this.currency, super.key});
   final Booking booking;
+  final String currency;
 
   @override
   Widget build(BuildContext context) {
@@ -799,9 +809,17 @@ class BookingTile extends StatelessWidget {
                 ],
               ),
             ),
-            const Flexible(
+            Flexible(
               fit: FlexFit.loose,
-              child: SmallPill(label: 'Confirmed'),
+              child: booking.cost <= 0
+                  ? const SmallPill(label: 'Confirmed')
+                  : Text(
+                      _displayMoney(context, booking.cost, currency),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
             ),
           ],
         ),

@@ -23,6 +23,7 @@ class AppRouter {
             return _TravelRouteFrame(
               appState: appState,
               navigationShell: navigationShell,
+              location: state.uri.path,
             );
           },
           branches: [
@@ -134,6 +135,18 @@ class AppRouter {
                       appState._buildProfileScreen(context),
                   routes: [
                     GoRoute(
+                      path: 'settings',
+                      builder: (context, state) =>
+                          appState._buildSettingsScreen(context),
+                      routes: [
+                        GoRoute(
+                          path: 'linked-accounts',
+                          builder: (context, state) =>
+                              appState._buildLinkedAccountsScreen(context),
+                        ),
+                      ],
+                    ),
+                    GoRoute(
                       path: 'archived',
                       builder: (context, state) =>
                           appState._buildArchivedItemsScreen(context),
@@ -154,24 +167,92 @@ class AppRouter {
   }
 }
 
-class _TravelRouteFrame extends StatelessWidget {
+class _TravelRouteFrame extends StatefulWidget {
   const _TravelRouteFrame({
     required this.appState,
     required this.navigationShell,
+    required this.location,
   });
 
   final _TravelAgentAppState appState;
   final StatefulNavigationShell navigationShell;
+  final String location;
+
+  @override
+  State<_TravelRouteFrame> createState() => _TravelRouteFrameState();
+}
+
+class _TravelRouteFrameState extends State<_TravelRouteFrame>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _slideController = AnimationController(
+    vsync: this,
+    value: 1,
+  );
+  Offset _slideBegin = Offset.zero;
+  double _horizontalDrag = 0;
+  bool _tracksHorizontalDrag = false;
+
+  @override
+  void dispose() {
+    _slideController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final performance = PerformanceScope.settingsOf(context);
-    final location = GoRouterState.of(context).uri.path;
+    final title = _mainPageTitle(widget.location);
+    _slideController.duration = performance.transitionDuration;
 
     return Stack(
       children: [
-        appState._performanceBoundary(navigationShell, performance),
-        if (_showsBottomNav(location))
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragStart: _onHorizontalDragStart,
+            onHorizontalDragUpdate: _onHorizontalDragUpdate,
+            onHorizontalDragEnd: _onHorizontalDragEnd,
+            onHorizontalDragCancel: _resetHorizontalDrag,
+            child: SlideTransition(
+              position: Tween<Offset>(begin: _slideBegin, end: Offset.zero)
+                  .animate(
+                    CurvedAnimation(
+                      parent: _slideController,
+                      curve: Curves.easeOutCubic,
+                    ),
+                  ),
+              child: Column(
+                children: [
+                  if (title != null)
+                    _MainPageHeader(
+                      title: title,
+                      leading: widget.location == '/trips/new'
+                          ? IconButton(
+                              tooltip: appText(context, 'Back'),
+                              onPressed: _navigateBack,
+                              icon: const Icon(Icons.chevron_left_rounded),
+                            )
+                          : null,
+                      action: widget.location == '/profile'
+                          ? IconButton(
+                              tooltip: appText(context, 'Settings'),
+                              onPressed: () => context.go('/profile/settings'),
+                              icon: const Icon(Icons.settings_rounded),
+                            )
+                          : null,
+                    ),
+                  Expanded(
+                    child: widget.appState._performanceBoundary(
+                      widget.navigationShell,
+                      performance,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_showsBottomNav(widget.location))
           _BottomNav(
             tab: _tabForIndex,
             onSelect: (tab) => _select(context, tab),
@@ -187,15 +268,25 @@ class _TravelRouteFrame extends StatelessWidget {
         location == '/profile/performance') {
       return false;
     }
+    if (location.startsWith('/profile/settings')) return false;
     if (location.startsWith('/chat/') ||
-        (location == '/chat' && appState._isChatRoomOpen)) {
+        (location == '/chat' && widget.appState._isChatRoomOpen)) {
       return false;
     }
     return true;
   }
 
+  String? _mainPageTitle(String location) {
+    if (location == '/') return 'Home';
+    if (location == '/trips') return 'Trips';
+    if (location == '/trips/new') return 'New Plan';
+    if (location == '/profile') return 'Profile';
+    if (location == '/chat' && !widget.appState._isChatRoomOpen) return 'Chats';
+    return null;
+  }
+
   _NavTab get _tabForIndex {
-    return switch (navigationShell.currentIndex) {
+    return switch (widget.navigationShell.currentIndex) {
       0 => _NavTab.home,
       1 => _NavTab.trips,
       2 => _NavTab.chat,
@@ -217,6 +308,170 @@ class _TravelRouteFrame extends StatelessWidget {
       _NavTab.profile => 3,
       _NavTab.add => 1,
     };
-    navigationShell.goBranch(index, initialLocation: true);
+    _goToMainTab(index);
+  }
+
+  void _onHorizontalDragStart(DragStartDetails details) {
+    final isMainPage = _mainTabIndex(widget.location) != null;
+    _tracksHorizontalDrag = isMainPage || details.globalPosition.dx <= 32;
+    _horizontalDrag = 0;
+  }
+
+  void _onHorizontalDragUpdate(DragUpdateDetails details) {
+    if (!_tracksHorizontalDrag) return;
+    _horizontalDrag += details.delta.dx;
+  }
+
+  void _onHorizontalDragEnd(DragEndDetails details) {
+    if (!_tracksHorizontalDrag) {
+      _resetHorizontalDrag();
+      return;
+    }
+    final velocity = details.primaryVelocity ?? 0;
+    final currentTab = _mainTabIndex(widget.location);
+    if (currentTab != null) {
+      if (_horizontalDrag <= -64 || velocity <= -550) {
+        _goToMainTab(currentTab + 1);
+      } else if (_horizontalDrag >= 64 || velocity >= 550) {
+        _goToMainTab(currentTab - 1);
+      }
+    } else if (_horizontalDrag >= 64 || velocity >= 550) {
+      _navigateBack();
+    }
+    _resetHorizontalDrag();
+  }
+
+  void _resetHorizontalDrag() {
+    _tracksHorizontalDrag = false;
+    _horizontalDrag = 0;
+  }
+
+  void _goToMainTab(int index) {
+    if (index < 0 || index > 3) return;
+    final currentIndex = widget.navigationShell.currentIndex;
+    if (index == currentIndex && _mainTabIndex(widget.location) == index) {
+      return;
+    }
+    _runNavigationAnimation(
+      incomingFromRight: index > currentIndex,
+      navigate: () =>
+          widget.navigationShell.goBranch(index, initialLocation: true),
+    );
+  }
+
+  void _navigateBack() {
+    final parent = _parentLocation(widget.location);
+    if (parent == null) return;
+    _runNavigationAnimation(
+      incomingFromRight: false,
+      navigate: () => context.go(parent),
+    );
+  }
+
+  void _runNavigationAnimation({
+    required bool incomingFromRight,
+    required VoidCallback navigate,
+  }) {
+    final performance = PerformanceScope.settingsOf(context);
+    if (!performance.animationsEnabled) {
+      navigate();
+      _slideController.value = 1;
+      return;
+    }
+    setState(() {
+      _slideBegin = Offset(incomingFromRight ? 1 : -1, 0);
+    });
+    _slideController.value = 0;
+    navigate();
+    _slideController.forward(from: 0);
+  }
+}
+
+int? _mainTabIndex(String location) {
+  return switch (location) {
+    '/' => 0,
+    '/trips' => 1,
+    '/chat' => 2,
+    '/profile' => 3,
+    _ => null,
+  };
+}
+
+String? _parentLocation(String location) {
+  if (location == '/notifications' || location.startsWith('/tools/')) {
+    return '/';
+  }
+  if (location == '/trips/new') return '/trips';
+  if (location.startsWith('/trips/')) {
+    final segments = location
+        .split('/')
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (segments.length >= 3) return '/trips/${segments[1]}';
+    return '/trips';
+  }
+  if (location.startsWith('/chat/')) return '/chat';
+  if (location == '/profile/settings/linked-accounts') {
+    return '/profile/settings';
+  }
+  if (location == '/profile/performance' || location == '/profile/archived') {
+    return '/profile/settings';
+  }
+  if (location == '/profile/settings') return '/profile';
+  return null;
+}
+
+class _MainPageHeader extends StatelessWidget {
+  const _MainPageHeader({required this.title, this.leading, this.action});
+
+  final String title;
+  final Widget? leading;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final pageColor = Theme.of(context).scaffoldBackgroundColor;
+    return Material(
+      color: pageColor,
+      child: SafeArea(
+        bottom: false,
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.fromLTRB(
+            _responsiveHorizontalPadding(context),
+            14,
+            _responsiveHorizontalPadding(context),
+            12,
+          ),
+          color: pageColor,
+          child: SizedBox(
+            height: 48,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Positioned.fill(
+                  left: 58,
+                  right: 58,
+                  child: Center(
+                    child: Text(
+                      appText(context, title),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ),
+                if (leading != null)
+                  Align(alignment: Alignment.centerLeft, child: leading!),
+                if (action != null)
+                  Align(alignment: Alignment.centerRight, child: action!),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

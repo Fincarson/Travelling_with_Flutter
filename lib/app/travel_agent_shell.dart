@@ -9,13 +9,20 @@ class TravelAgentApp extends StatefulWidget {
   State<TravelAgentApp> createState() => _TravelAgentAppState();
 }
 
-class _TravelAgentAppState extends State<TravelAgentApp> {
+class _TravelAgentAppState extends State<TravelAgentApp>
+    with WidgetsBindingObserver {
   final _repository = TravelDataRepository(FirebaseFirestore.instance);
   final _authService = AccountAuthService();
   final _notificationService = TripNotificationService();
   final _automationService = const TripAutomationService();
+  final _deviceContextService = AppDeviceContextService();
+  final _placesService = GeoapifyPlacesService();
+  final _currencyExchangeService = CurrencyExchangeService();
+  final _profilePhotoService = ProfilePhotoService();
   late final _pushTokenService = PushTokenService(FirebaseFirestore.instance);
   static const _localProfilePrefix = 'travel_agent.profile.';
+  static const _lastCurrencyCountryPrefix =
+      'travel_agent.currency.last_country.';
   static const _tripDeleteUndoWindow = Duration(seconds: 5);
   final _routerRefresh = _TravelRouteRefresh();
   late final GoRouter _router;
@@ -23,6 +30,9 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   StreamSubscription<List<Trip>>? _tripsSubscription;
   StreamSubscription<List<TripMemory>>? _memoriesSubscription;
   var _isLoading = true;
+  var _loadingMessage = 'Checking account updates...';
+  var _exchangeData = CurrencyExchangeData.fallback;
+  var _currencyLocationCheckInFlight = false;
   var _isChatRoomOpen = false;
   var _screen = _Screen.dashboard;
   var _tab = _NavTab.home;
@@ -51,6 +61,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _router = AppRouter._createTravelAgentRouter(
       appState: this,
       refreshListenable: _routerRefresh,
@@ -62,6 +73,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     final accountId = widget.account.uid;
 
     var loadError = <String>[];
+    _updateLoadingMessage('Checking account updates...');
     final localProfile = await _loadLocalProfile(accountId);
     UserProfile? remoteProfile;
     try {
@@ -71,7 +83,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     }
 
     final loadedProfile = remoteProfile ?? localProfile;
-    final user =
+    var user =
         loadedProfile ??
         UserProfile(
           name: widget.account.name,
@@ -82,24 +94,40 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           notificationsEnabled: true,
           themeMode: 'Light',
         );
+    if (user.currencySettingsVersion < 1) {
+      _updateLoadingMessage('Updating currency settings...');
+      user = user.copyWith(
+        displayCurrencyCode: AppCurrency.fallbackCurrencyCode,
+        currencyUpdateMode: CurrencyUpdateMode.automatic,
+        currencySettingsVersion: 1,
+      );
+      try {
+        await _repository.saveUser(accountId, user);
+      } catch (error) {
+        loadError.add('Could not update currency settings: $error');
+      }
+    }
 
     if (!mounted) return;
     setState(() {
       _accountId = accountId;
       _user = user;
-      _isLoading = false;
       _loadError = loadError.isEmpty ? null : loadError.join('\n');
     });
     AppLocaleController.setProfileLanguage(user.language);
     await PerformanceScope.of(context).update(user.performanceSettings);
+    _updateLoadingMessage('Refreshing daily exchange rates...');
+    final exchangeData = await _currencyExchangeService.loadDailyRates();
+    if (!mounted) return;
+    setState(() => _exchangeData = exchangeData);
     unawaited(_syncPushTokenRegistration());
-    if (loadedProfile != null) {
-      await _saveLocalProfile(accountId, user);
-    }
+    await _saveLocalProfile(accountId, user);
 
+    _updateLoadingMessage('Checking saved plans...');
     await _archiveExpiredTripsQuietly(accountId);
 
     try {
+      _updateLoadingMessage('Loading your trips...');
       final trips = await _repository.loadTrips(accountId);
       final memories = await _repository.loadTripMemories(accountId);
       if (!mounted) return;
@@ -121,7 +149,18 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       setState(() => _loadError = 'Could not load online trip data: $error');
     }
 
+    _updateLoadingMessage('Preparing chats and notifications...');
     _watchAccountData(accountId);
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_checkForCurrencyLocationChange());
+    });
+  }
+
+  void _updateLoadingMessage(String message) {
+    if (!mounted || _loadingMessage == message) return;
+    setState(() => _loadingMessage = message);
   }
 
   void _watchAccountData(String accountId, {bool watchTrips = true}) {
@@ -134,17 +173,28 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
         .listen(
           (profile) {
             if (!mounted || profile == null) return;
+            final normalized = profile.currencySettingsVersion < 1
+                ? profile.copyWith(
+                    displayCurrencyCode: AppCurrency.fallbackCurrencyCode,
+                    currencyUpdateMode: CurrencyUpdateMode.automatic,
+                    currencySettingsVersion: 1,
+                  )
+                : profile;
             setState(() {
-              _user = profile;
+              _user = normalized;
               _loadError = null;
             });
             unawaited(_syncTripReminders());
             unawaited(_syncPushTokenRegistration());
-            AppLocaleController.setProfileLanguage(profile.language);
             unawaited(
-              PerformanceScope.of(context).update(profile.performanceSettings),
+              PerformanceScope.of(
+                context,
+              ).update(normalized.performanceSettings),
             );
-            unawaited(_saveLocalProfile(accountId, profile));
+            unawaited(_saveLocalProfile(accountId, normalized));
+            if (profile.currencySettingsVersion < 1) {
+              unawaited(_repository.saveUser(accountId, normalized));
+            }
           },
           onError: (Object error) {
             if (!mounted) return;
@@ -242,25 +292,50 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
   }
 
   Future<void> _saveProfile(UserProfile profile) async {
+    final previous = _user;
+    final displayCurrencyChanged =
+        profile.displayCurrencyCode != _user.displayCurrencyCode;
+    final normalized = profile.copyWith(currencySettingsVersion: 1);
+    final languageChanged = normalized.language != previous.language;
     setState(() {
-      _user = profile;
+      _user = normalized;
       _loadError = null;
     });
     unawaited(_syncTripReminders());
     unawaited(_syncPushTokenRegistration());
-    AppLocaleController.setProfileLanguage(profile.language);
+    if (!languageChanged) {
+      AppLocaleController.setProfileLanguage(normalized.language);
+    }
 
     final accountId = _accountId ?? widget.account.uid;
-    await _saveLocalProfile(accountId, profile);
+    await _saveLocalProfile(accountId, normalized);
     try {
       await _repository.saveUser(
         accountId,
-        profile.copyWith(onboardingRequired: false, onboardingCompleted: true),
+        normalized.copyWith(
+          onboardingRequired: false,
+          onboardingCompleted: true,
+        ),
       );
       await _repository.completeOnboarding(accountId);
+      if (displayCurrencyChanged) {
+        unawaited(_rememberCurrentCurrencyCountry());
+      } else if (normalized.currencyUpdateMode ==
+          CurrencyUpdateMode.automatic) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(_checkForCurrencyLocationChange());
+        });
+      }
     } catch (error) {
       if (!mounted) return;
-      setState(() => _loadError = 'Could not save profile online: $error');
+      setState(() {
+        _user = previous;
+        _loadError = 'Could not save profile online: $error';
+      });
+      if (!languageChanged) {
+        AppLocaleController.setProfileLanguage(previous.language);
+      }
+      await _saveLocalProfile(accountId, previous);
       rethrow;
     }
   }
@@ -304,6 +379,115 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       '$_localProfilePrefix$accountId',
       jsonEncode(profile.toLocalMap()),
     );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_checkForCurrencyLocationChange());
+    }
+  }
+
+  Future<void> _checkForCurrencyLocationChange() async {
+    if (_isLoading ||
+        _currencyLocationCheckInFlight ||
+        _user.currencyUpdateMode != CurrencyUpdateMode.automatic) {
+      return;
+    }
+
+    _currencyLocationCheckInFlight = true;
+    try {
+      if (!await _deviceContextService.isLocationAccessEnabled()) return;
+      final deviceContext = await _deviceContextService.load(
+        requestLocation: false,
+      );
+      if (!deviceContext.hasLocation) return;
+
+      final place = await _placesService.reverseLocation(
+        latitude: deviceContext.latitude!,
+        longitude: deviceContext.longitude!,
+      );
+      final countryCode = place?.countryCode?.trim().toUpperCase();
+      if (countryCode == null || countryCode.length != 2) return;
+
+      final accountId = _accountId ?? widget.account.uid;
+      final prefs = await SharedPreferences.getInstance();
+      final countryKey = '$_lastCurrencyCountryPrefix$accountId';
+      if (prefs.getString(countryKey) == countryCode) return;
+
+      final suggestedCurrency = _currencyForCountryCode(countryCode);
+      if (suggestedCurrency == null ||
+          !_exchangeData.rates.containsKey(suggestedCurrency)) {
+        await prefs.setString(countryKey, countryCode);
+        return;
+      }
+
+      final currentCurrency = _user.displayCurrencyCode.toUpperCase();
+      if (suggestedCurrency == currentCurrency) {
+        await prefs.setString(countryKey, countryCode);
+        return;
+      }
+      if (!mounted || !context.mounted) return;
+
+      final countryName = place?.country?.trim();
+      final changeCurrency = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Change display currency?'),
+          content: Text(
+            'You appear to be in '
+            '${countryName == null || countryName.isEmpty ? countryCode : countryName}. '
+            'Would you like to change your display currency from '
+            '$currentCurrency to $suggestedCurrency?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text('Keep $currentCurrency'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text('Change to $suggestedCurrency'),
+            ),
+          ],
+        ),
+      );
+      await prefs.setString(countryKey, countryCode);
+      if (changeCurrency == true && mounted) {
+        await _saveProfile(
+          _user.copyWith(displayCurrencyCode: suggestedCurrency),
+        );
+      }
+    } catch (_) {
+      // Location-based currency suggestions are best effort.
+    } finally {
+      _currencyLocationCheckInFlight = false;
+    }
+  }
+
+  Future<void> _rememberCurrentCurrencyCountry() async {
+    try {
+      if (!await _deviceContextService.isLocationAccessEnabled()) return;
+      final deviceContext = await _deviceContextService.load(
+        requestLocation: false,
+      );
+      if (!deviceContext.hasLocation) return;
+      final place = await _placesService.reverseLocation(
+        latitude: deviceContext.latitude!,
+        longitude: deviceContext.longitude!,
+      );
+      final countryCode = place?.countryCode?.trim().toUpperCase();
+      if (countryCode == null || countryCode.length != 2) return;
+      final prefs = await SharedPreferences.getInstance();
+      final accountId = _accountId ?? widget.account.uid;
+      await prefs.setString(
+        '$_lastCurrencyCountryPrefix$accountId',
+        countryCode,
+      );
+    } catch (_) {
+      // Manual currency selection still succeeds if location is unavailable.
+    }
   }
 
   Future<void> _createTrip(Trip trip) async {
@@ -515,6 +699,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     final accountId = _accountId ?? widget.account.uid;
     try {
       _authService.ensureCanDeleteCurrentAccount();
+      await _profilePhotoService.deleteForUser(accountId);
       await _repository.deleteUserData(accountId);
       await _authService.deleteCurrentAccount();
     } catch (error) {
@@ -527,6 +712,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _userSubscription?.cancel();
     _tripsSubscription?.cancel();
     _memoriesSubscription?.cancel();
@@ -539,28 +725,32 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
 
   @override
   Widget build(BuildContext context) {
-    return Theme(
-      data: _user.themeMode == 'Dark'
-          ? TravelAgentTheme.dark()
-          : TravelAgentTheme.light(),
-      child: Scaffold(
-        resizeToAvoidBottomInset: false,
-        body: SafeArea(
-          bottom: false,
-          child: _isLoading
-              ? const LoadingScreen()
-              : Stack(
-                  children: [
-                    Router.withConfig(config: _router),
-                    if (_loadError != null)
-                      Positioned(
-                        left: 16,
-                        right: 16,
-                        top: 12,
-                        child: SyncBanner(message: _loadError!),
-                      ),
-                  ],
-                ),
+    return CurrencyScope(
+      displayCurrencyCode: _user.displayCurrencyCode,
+      exchangeData: _exchangeData,
+      child: Theme(
+        data: _user.themeMode == 'Dark'
+            ? TravelAgentTheme.dark()
+            : TravelAgentTheme.light(),
+        child: Scaffold(
+          resizeToAvoidBottomInset: false,
+          body: SafeArea(
+            bottom: false,
+            child: _isLoading
+                ? LoadingScreen(message: _loadingMessage)
+                : Stack(
+                    children: [
+                      Router.withConfig(config: _router),
+                      if (_loadError != null)
+                        Positioned(
+                          left: 16,
+                          right: 16,
+                          top: 12,
+                          child: SyncBanner(message: _loadError!),
+                        ),
+                    ],
+                  ),
+          ),
         ),
       ),
     );
@@ -637,7 +827,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
     return TripsScreen(
       trips: _visibleTrips,
       memories: _tripMemories,
-      onBack: () => context.go('/'),
       onCreate: () => context.go('/trips/new'),
       onOpenTrip: (trip) => context.go(_tripLocation(trip.id)),
       onStartTrip: _startTrip,
@@ -737,20 +926,34 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       account: widget.account,
       user: _user,
       onBack: () => context.go('/chat'),
-      onRoomOpenChanged: _setChatRoomOpen,
     );
   }
 
   Widget _buildProfileScreen(BuildContext context) {
-    return ProfileScreen(
+    return ProfileScreen(account: widget.account, user: _user);
+  }
+
+  Widget _buildSettingsScreen(BuildContext context) {
+    return SettingsScreen(
       account: widget.account,
       user: _user,
+      authService: _authService,
       onSave: _saveProfile,
       onSignOut: _authService.signOut,
       onDeleteAccount: _deleteAccount,
+      onBack: () => context.pop(),
+      onOpenLinkedAccounts: () =>
+          context.go('/profile/settings/linked-accounts'),
       onOpenPerformance: () => context.go('/profile/performance'),
       archivedItemCount: _tripMemories.length + _archivedNotificationIds.length,
       onOpenArchived: () => context.go('/profile/archived'),
+    );
+  }
+
+  Widget _buildLinkedAccountsScreen(BuildContext context) {
+    return LinkedAccountsScreen(
+      authService: _authService,
+      onBack: () => context.go('/profile/settings'),
     );
   }
 
@@ -760,13 +963,13 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
       archivedNotificationIds: _archivedNotificationIds,
       onRestoreNotification: (id) =>
           setState(() => _archivedNotificationIds.remove(id)),
-      onBack: () => context.go('/profile'),
+      onBack: () => context.go('/profile/settings'),
     );
   }
 
   Widget _buildPerformanceSettingsScreen(BuildContext context) {
     return PerformanceSettingsScreen(
-      onBack: () => context.go('/profile'),
+      onBack: () => context.go('/profile/settings'),
       onSettingsChanged: _savePerformanceSettings,
     );
   }
@@ -834,7 +1037,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               key: const PageStorageKey('trips-tab'),
               trips: _visibleTrips,
               memories: _tripMemories,
-              onBack: () => setState(() => _screen = _Screen.dashboard),
               onCreate: () => setState(() {
                 _screen = _Screen.create;
                 _tab = _NavTab.add;
@@ -859,14 +1061,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               key: const PageStorageKey('profile-tab'),
               account: widget.account,
               user: _user,
-              onSave: _saveProfile,
-              onSignOut: _authService.signOut,
-              onDeleteAccount: _deleteAccount,
-              onOpenPerformance: () =>
-                  setState(() => _screen = _Screen.performance),
-              archivedItemCount:
-                  _tripMemories.length + _archivedNotificationIds.length,
-              onOpenArchived: () => setState(() => _screen = _Screen.archived),
             ),
             performance,
           ),
@@ -960,7 +1154,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           key: const ValueKey('trips'),
           trips: _visibleTrips,
           memories: _tripMemories,
-          onBack: () => setState(() => _screen = _Screen.dashboard),
           onCreate: () => setState(() {
             _screen = _Screen.create;
             _tab = _NavTab.add;
@@ -981,14 +1174,30 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           key: const ValueKey('profile'),
           account: widget.account,
           user: _user,
+        );
+      case _Screen.settings:
+        return SettingsScreen(
+          key: const ValueKey('settings'),
+          account: widget.account,
+          user: _user,
+          authService: _authService,
           onSave: _saveProfile,
           onSignOut: _authService.signOut,
           onDeleteAccount: _deleteAccount,
+          onBack: () => setState(() => _screen = _Screen.profile),
+          onOpenLinkedAccounts: () =>
+              setState(() => _screen = _Screen.linkedAccounts),
           onOpenPerformance: () =>
               setState(() => _screen = _Screen.performance),
           archivedItemCount:
               _tripMemories.length + _archivedNotificationIds.length,
           onOpenArchived: () => setState(() => _screen = _Screen.archived),
+        );
+      case _Screen.linkedAccounts:
+        return LinkedAccountsScreen(
+          key: const ValueKey('linked-accounts'),
+          authService: _authService,
+          onBack: () => setState(() => _screen = _Screen.settings),
         );
       case _Screen.archived:
         return ArchivedItemsScreen(
@@ -997,12 +1206,12 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           archivedNotificationIds: _archivedNotificationIds,
           onRestoreNotification: (id) =>
               setState(() => _archivedNotificationIds.remove(id)),
-          onBack: () => setState(() => _screen = _Screen.profile),
+          onBack: () => setState(() => _screen = _Screen.settings),
         );
       case _Screen.performance:
         return PerformanceSettingsScreen(
           key: const ValueKey('performance'),
-          onBack: () => setState(() => _screen = _Screen.profile),
+          onBack: () => setState(() => _screen = _Screen.settings),
           onSettingsChanged: _savePerformanceSettings,
         );
       case _Screen.map:
@@ -1275,6 +1484,8 @@ enum _Screen {
   trips,
   chatList,
   profile,
+  settings,
+  linkedAccounts,
   archived,
   performance,
   map,

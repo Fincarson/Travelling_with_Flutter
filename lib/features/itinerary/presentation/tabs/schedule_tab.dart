@@ -517,6 +517,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
               onDismissed: (_) => _removeScheduleStop(entry.index),
               child: ScheduleTile(
                 item: entry.item,
+                currency: widget.trip.currency,
                 onDelete: () => _removeScheduleStop(entry.index),
               ),
             ),

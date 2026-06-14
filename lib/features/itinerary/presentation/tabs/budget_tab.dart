@@ -30,7 +30,8 @@ class BudgetTab extends StatelessWidget {
               const LabelText('Budget'),
               const SizedBox(height: 8),
               Text(
-                '${trip.currency} $actual of ${trip.currency} ${trip.budget}',
+                '${_displayMoney(context, actual, trip.currency)} of '
+                '${_displayMoney(context, trip.budget, trip.currency)}',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w900,
                 ),

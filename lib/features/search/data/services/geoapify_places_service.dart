@@ -164,6 +164,7 @@ class GeoapifyPlacesService {
       placeId:
           'osm-${body['osm_type'] ?? 'place'}-${body['osm_id'] ?? displayName}',
       country: address['country'] as String?,
+      countryCode: (address['country_code'] as String?)?.toUpperCase(),
       resultType: body['type'] as String?,
     );
   }

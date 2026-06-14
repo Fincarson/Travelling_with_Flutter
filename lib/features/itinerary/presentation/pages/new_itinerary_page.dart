@@ -123,9 +123,15 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     'Walking',
   ];
 
-  static const _currencyOptions = ['USD', 'TWD', 'IDR', 'JPY', 'EUR'];
+  List<String> get _currencyOptions {
+    final scope = CurrencyScope.maybeOf(context);
+    return scope?.supportedCodes ??
+        CurrencyExchangeData.fallback.currencies
+            .map((item) => item.code)
+            .toList(growable: false);
+  }
+
   static const _groupOptions = ['Friends', 'Family', 'Tour'];
-  static const _twdToIdrFallbackRate = 562.0;
 
   static const _planningGoals = [
     PlanningGoal(
@@ -407,12 +413,15 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     if (_appliedDeviceCurrency) return;
     _appliedDeviceCurrency = true;
 
-    final deviceCurrency = AppCurrency.defaultForDevice(
-      supportedCurrencies: _currencyOptions,
-    );
-    if (deviceCurrency == _currency) return;
+    final displayCurrency =
+        CurrencyScope.maybeOf(context)?.displayCurrencyCode ??
+        AppCurrency.fallbackCurrencyCode;
+    if (!_currencyOptions.contains(displayCurrency) ||
+        displayCurrency == _currency) {
+      return;
+    }
 
-    _currency = deviceCurrency;
+    _currency = displayCurrency;
   }
 
   @override
@@ -1229,13 +1238,14 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     required String toCurrency,
   }) {
     if (fromCurrency == toCurrency) return amount;
-    if (fromCurrency == 'TWD' && toCurrency == 'IDR') {
-      return (amount * _twdToIdrFallbackRate).round();
-    }
-    if (fromCurrency == 'IDR' && toCurrency == 'TWD') {
-      return (amount / _twdToIdrFallbackRate).round();
-    }
-    return amount;
+    return CurrencyScope.maybeOf(context)?.exchangeData
+            .convert(
+              amount: amount,
+              fromCurrency: fromCurrency,
+              toCurrency: toCurrency,
+            )
+            ?.round() ??
+        amount;
   }
 
   // ignore: unused_element
@@ -3521,7 +3531,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         child: ListView(
           padding: _responsivePagePadding(context, top: 18),
           children: [
-            TopBar(title: 'How do you want to start?', onBack: widget.onBack),
+            Text(
+              appText(context, 'How do you want to start?'),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+            ),
             const SizedBox(height: 18),
             const AnimatedGlobe(),
             const SizedBox(height: 22),
@@ -4802,8 +4817,8 @@ String _templateFormatNumber(int value) {
   return buffer.toString();
 }
 
-String _templateBudgetLabel(Trip trip) =>
-    '${trip.currency} ${_templateFormatNumber(trip.budget)}';
+String _templateBudgetLabel(BuildContext context, Trip trip) =>
+    _displayMoney(context, trip.budget, trip.currency);
 
 String _templateImageFor(Trip trip) => trip.images.isNotEmpty
     ? trip.images.first
@@ -5047,7 +5062,7 @@ class _TemplateCard extends StatelessWidget {
                         ),
                         _TemplateMetaPill(
                           icon: Icons.payments_rounded,
-                          label: _templateBudgetLabel(trip),
+                          label: _templateBudgetLabel(context, trip),
                         ),
                         _TemplateMetaPill(
                           icon: Icons.route_rounded,
@@ -5190,7 +5205,9 @@ class _TemplatePreviewSheet extends StatelessWidget {
                             runSpacing: 8,
                             children: [
                               SmallPill(label: '$lengthDays days'),
-                              SmallPill(label: _templateBudgetLabel(trip)),
+                              SmallPill(
+                                label: _templateBudgetLabel(context, trip),
+                              ),
                               SmallPill(label: trip.groupType),
                               for (final tag in trip.preferences.take(3))
                                 SmallPill(label: tag),
@@ -6903,17 +6920,14 @@ class _ManualTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F8F0).withValues(alpha: .9),
-        border: Border(
-          bottom: BorderSide(
-            color: const Color(0xFFC2C7CC).withValues(alpha: .32),
-          ),
-        ),
+        color: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: .94),
+        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF355872).withValues(alpha: .06),
+            color: Colors.black.withValues(alpha: .08),
             blurRadius: 18,
             offset: const Offset(0, 6),
           ),
@@ -6931,7 +6945,7 @@ class _ManualTopBar extends StatelessWidget {
             IconButton(
               style: IconButton.styleFrom(
                 backgroundColor: Colors.transparent,
-                foregroundColor: const Color(0xFF42474C),
+                foregroundColor: colorScheme.onSurface,
               ),
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back_rounded),
@@ -6942,8 +6956,8 @@ class _ManualTopBar extends StatelessWidget {
                 appText(context, title),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF355872),
+                style: TextStyle(
+                  color: colorScheme.onSurface,
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
                 ),

@@ -49,7 +49,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    LabelText(_profileText(widget.user.language, 'welcome')),
+                    LabelText(appText(context, 'Welcome Back')),
                     Text(
                       '${widget.user.name.isEmpty ? 'Explorer' : widget.user.name}!',
                       style: Theme.of(context).textTheme.headlineSmall
@@ -67,8 +67,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: IconButton.filled(
                         tooltip: appText(context, 'Notifications'),
                         style: IconButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: _primary,
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHigh,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onSurface,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(18),
                           ),
@@ -99,7 +103,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (trip == null) ...[
             _EmptyTripCard(onCreate: widget.onCreate),
           ] else ...[
-            LabelText(_profileText(widget.user.language, 'currentTrip')),
+            LabelText(appText(context, 'Current trip')),
             const SizedBox(height: 8),
             CurrentTripCard(
               trip: trip,

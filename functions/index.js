@@ -2,6 +2,8 @@
 
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
+const {onDocumentCreated} = require("firebase-functions/v2/firestore");
+const {TranslationServiceClient} = require("@google-cloud/translate").v3;
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 
@@ -9,6 +11,12 @@ admin.initializeApp();
 
 const openAiModel = "gpt-5.5";
 const openAiTimeoutMs = 30000;
+const translationClient = new TranslationServiceClient();
+const currencyRatesCacheLifetimeMs = 24 * 60 * 60 * 1000;
+const currencyRatesDocument = admin
+    .firestore()
+    .collection("app_config")
+    .doc("currencyRates");
 
 function geoapifyApiKey() {
   return String(process.env.GEOAPIFY_API_KEY ?? "").trim();
@@ -67,7 +75,7 @@ const createTripInstructions = [
   "Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.",
   "Required final fields: destination, startDate, endDate, budget, groupType.",
   "Dates must be ISO yyyy-MM-dd. groupType must be Solo, Friends, Family, or Tour.",
-  "If the user names a currency, set currency to USD, TWD, IDR, JPY, or EUR.",
+  "If the user names a currency, set currency to its three-letter ISO 4217 code.",
 ].join(" ");
 
 function aiLanguageName(profileLanguage, outputLanguage) {
@@ -295,6 +303,243 @@ const scheduleStopFormat = {
   },
 };
 
+exports.translateUiStrings = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Sign in to translate the app interface.",
+      );
+    }
+
+    const targetCode = String(request.data?.targetCode ?? "").trim();
+    const targetLanguage = String(request.data?.targetLanguage ?? "")
+      .trim()
+      .replace(/[^\p{L}\p{M} ()-]/gu, "")
+      .slice(0, 80);
+    const strings = Array.isArray(request.data?.strings) ?
+      request.data.strings :
+      [];
+
+    if (!/^[A-Za-z_]{2,16}$/.test(targetCode) || !targetLanguage) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Choose a supported target language.",
+      );
+    }
+    if (
+      strings.length < 1 ||
+      strings.length > 40 ||
+      strings.some((value) =>
+        typeof value !== "string" ||
+        value.length < 1 ||
+        value.length > 500
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Translation requests must contain 1 to 40 short strings.",
+      );
+    }
+
+    if (targetCode === "en") {
+      return {translations: strings};
+    }
+
+    const projectId =
+      process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT;
+    if (!projectId) {
+      logger.error("translateUiStrings has no Firebase project ID");
+      throw new HttpsError(
+        "unavailable",
+        "Could not translate the app interface right now.",
+      );
+    }
+
+    try {
+      const [response] = await translationClient.translateText({
+        parent: `projects/${projectId}/locations/global`,
+        contents: strings,
+        mimeType: "text/plain",
+        sourceLanguageCode: "en",
+        targetLanguageCode: cloudTranslationCode(targetCode),
+      });
+      const translations = response.translations?.map((translation) =>
+        String(translation.translatedText ?? ""),
+      ) ?? [];
+      if (
+        translations.length !== strings.length ||
+        translations.some((value) => !value)
+      ) {
+        throw new Error("The translation response was incomplete.");
+      }
+      return {translations};
+    } catch (error) {
+      logger.error("translateUiStrings failed", {
+        targetCode,
+        targetLanguage,
+        error,
+      });
+      throw new HttpsError(
+        "unavailable",
+        "Could not translate the app interface right now.",
+      );
+    }
+  },
+);
+
+function cloudTranslationCode(targetCode) {
+  switch (targetCode) {
+    case "zh_Hans":
+      return "zh-CN";
+    case "zh_Hant_TW":
+      return "zh-TW";
+    case "tl":
+      return "fil";
+    case "gsw":
+      return "de";
+    case "nb":
+      return "no";
+    default:
+      return targetCode.replaceAll("_", "-");
+  }
+}
+
+exports.getExchangeRates = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Sign in to load currency rates.",
+      );
+    }
+
+    const cachedSnapshot = await currencyRatesDocument.get();
+    const cached = cachedSnapshot.data();
+    const cachedAt = cached?.fetchedAt?.toDate?.();
+    if (
+      cached &&
+      cachedAt &&
+      Date.now() - cachedAt.getTime() < currencyRatesCacheLifetimeMs
+    ) {
+      return currencyRatesResponse(cached, cachedAt);
+    }
+
+    try {
+      const fresh = await fetchCurrencyRates();
+      await currencyRatesDocument.set({
+        ...fresh,
+        fetchedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return {
+        ...fresh,
+        fetchedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      if (cached && cachedAt) {
+        logger.warn("Using stale currency rates after refresh failure", {
+          message: error?.message,
+        });
+        return currencyRatesResponse(cached, cachedAt);
+      }
+
+      logger.error("Currency rate refresh failed", {
+        message: error?.message,
+      });
+      throw new HttpsError(
+        "unavailable",
+        "Currency rates are temporarily unavailable.",
+      );
+    }
+  },
+);
+
+function currencyRatesResponse(data, fetchedAt) {
+  return {
+    baseCurrency: data.baseCurrency ?? "USD",
+    asOf: data.asOf ?? "",
+    rates: data.rates ?? {USD: 1},
+    currencies: data.currencies ?? [],
+    fetchedAt: fetchedAt.toISOString(),
+  };
+}
+
+async function fetchCurrencyRates() {
+  const [ratesResponse, currenciesResponse] = await Promise.all([
+    fetch("https://api.frankfurter.dev/v2/rates?base=USD"),
+    fetch("https://api.frankfurter.dev/v2/currencies"),
+  ]);
+  if (!ratesResponse.ok || !currenciesResponse.ok) {
+    throw new Error(
+      `Frankfurter request failed: rates=${ratesResponse.status}, ` +
+      `currencies=${currenciesResponse.status}`,
+    );
+  }
+
+  const rateRows = await ratesResponse.json();
+  const currencyRows = await currenciesResponse.json();
+  if (!Array.isArray(rateRows) || !Array.isArray(currencyRows)) {
+    throw new Error("Frankfurter returned an unexpected response.");
+  }
+
+  const rates = {USD: 1};
+  let asOf = "";
+  for (const row of rateRows) {
+    const code = String(row?.quote ?? "").trim().toUpperCase();
+    const rate = Number(row?.rate);
+    if (!/^[A-Z]{3}$/.test(code) || !Number.isFinite(rate) || rate <= 0) {
+      continue;
+    }
+    rates[code] = rate;
+    const date = String(row?.date ?? "");
+    if (date > asOf) asOf = date;
+  }
+
+  const excludedCodes = new Set(["XAG", "XAU", "XDR", "XPD", "XPT"]);
+  const currencies = currencyRows
+      .map((row) => ({
+        code: String(row?.iso_code ?? "").trim().toUpperCase(),
+        name: String(row?.name ?? "").trim(),
+        symbol: String(row?.symbol ?? "").trim(),
+        isoNumeric: String(row?.iso_numeric ?? "").trim(),
+      }))
+      .filter((item) =>
+        /^[A-Z]{3}$/.test(item.code) &&
+        item.isoNumeric &&
+        rates[item.code] &&
+        !excludedCodes.has(item.code),
+      )
+      .map(({code, name, symbol}) => ({
+        code,
+        name: name || code,
+        symbol: symbol || code,
+      }))
+      .sort((a, b) => a.code.localeCompare(b.code));
+
+  if (!currencies.some((item) => item.code === "USD")) {
+    currencies.push({
+      code: "USD",
+      name: "United States Dollar",
+      symbol: "$",
+    });
+    currencies.sort((a, b) => a.code.localeCompare(b.code));
+  }
+
+  return {
+    baseCurrency: "USD",
+    asOf,
+    rates,
+    currencies,
+  };
+}
+
 exports.searchPlaces = onCall(
   {
     region: "us-central1",
@@ -520,6 +765,9 @@ function normalizeGeoapifyResult(item) {
     [];
   const resultType = properties.result_type ?? properties.type ?? null;
   const country = properties.country ?? null;
+  const countryCode = String(properties.country_code ?? "")
+      .trim()
+      .toUpperCase() || null;
   const locality = properties.name ??
     properties.city ??
     properties.county ??
@@ -535,6 +783,7 @@ function normalizeGeoapifyResult(item) {
     longitude: properties.lon ?? coordinates[0] ?? 0,
     placeId: properties.place_id ?? formatted,
     country,
+    countryCode,
     resultType,
     distanceMeters: properties.distance ?? null,
     categories: Array.isArray(properties.categories) ?
@@ -838,6 +1087,131 @@ exports.runTripAutomationReminders = onSchedule(
     });
   },
 );
+
+exports.notifyGroupChatMembers = onDocumentCreated(
+    "chat_groups/{chatId}/messages/{messageId}",
+    async (event) => {
+      const message = event.data?.data();
+      if (!message) return;
+
+      const db = admin.firestore();
+      const chatId = String(event.params.chatId);
+      const chatSnapshot = await db.collection("chat_groups").doc(chatId).get();
+      if (!chatSnapshot.exists) return;
+
+      const chat = chatSnapshot.data() || {};
+      const senderId = String(message.senderId || "");
+      const memberIds = Array.isArray(chat.memberIds)
+        ? chat.memberIds.map(String).filter((id) => id && id !== senderId)
+        : [];
+      if (!memberIds.length) return;
+
+      const now = Date.now();
+      const tokens = [];
+      const tokenRefs = [];
+      for (const memberId of memberIds) {
+        const membershipRef = db
+            .collection("travel_users")
+            .doc(memberId)
+            .collection("chatMemberships")
+            .doc(chatId);
+        const membershipSnapshot = await membershipRef.get();
+        const membership = membershipSnapshot.data() || {};
+        const mutedUntil = membership.mutedUntil?.toDate?.();
+        if (
+          membership.status !== "active" ||
+          membership.mutedForever === true ||
+          (mutedUntil instanceof Date && mutedUntil.getTime() > now)
+        ) {
+          continue;
+        }
+
+        const tokenSnapshot = await db
+            .collection("travel_users")
+            .doc(memberId)
+            .collection("notificationTokens")
+            .where("enabled", "==", true)
+            .get();
+        for (const tokenDoc of tokenSnapshot.docs) {
+          const token = tokenDoc.data().token;
+          if (typeof token !== "string" || !token.trim()) continue;
+          tokens.push(token);
+          tokenRefs.push(tokenDoc.ref);
+        }
+      }
+      if (!tokens.length) return;
+
+      const title = String(chat.title || "Group chat");
+      const sender = String(message.senderNameSnapshot || "Someone");
+      const body = `${sender}: ${chatMessagePreview(message)}`;
+      for (let start = 0; start < tokens.length; start += 500) {
+        const chunk = tokens.slice(start, start + 500);
+        const response = await admin.messaging().sendEachForMulticast({
+          tokens: chunk,
+          notification: {title, body},
+          data: {
+            title,
+            body,
+            chatId,
+            type: "group_chat",
+            tag: `group-chat-${chatId}`,
+          },
+          webpush: {
+            notification: {
+              title,
+              body,
+              icon: "/icons/Icon-192.png",
+              tag: `group-chat-${chatId}`,
+            },
+            fcmOptions: {
+              link: `/chat/${chatId}`,
+            },
+          },
+          android: {
+            priority: "high",
+            notification: {
+              tag: `group-chat-${chatId}`,
+            },
+          },
+        });
+
+        const deletes = [];
+        response.responses.forEach((result, offset) => {
+          if (!result.error) return;
+          const code = result.error.code;
+          if (
+            code === "messaging/registration-token-not-registered" ||
+            code === "messaging/invalid-registration-token"
+          ) {
+            deletes.push(tokenRefs[start + offset].delete());
+          }
+        });
+        await Promise.all(deletes);
+      }
+    },
+);
+
+function chatMessagePreview(message) {
+  const text = String(message.text || "").trim();
+  if (text) {
+    return text.length <= 120 ? text : `${text.slice(0, 117)}...`;
+  }
+  const attachment = Array.isArray(message.attachments)
+    ? message.attachments[0]
+    : null;
+  switch (String(attachment?.type || "")) {
+    case "image":
+      return "Photo";
+    case "gif":
+      return "GIF";
+    case "video":
+      return "Video";
+    case "pdf":
+      return `PDF: ${String(attachment?.name || "document")}`;
+    default:
+      return `File: ${String(attachment?.name || "attachment")}`;
+  }
+}
 
 const aiChecklistMarker = "[AI] ";
 const aiGuardianCategory = "AI Trip Guardian";

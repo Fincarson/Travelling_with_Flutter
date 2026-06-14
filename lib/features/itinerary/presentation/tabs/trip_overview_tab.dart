@@ -53,8 +53,9 @@ class TripOverviewTab extends StatelessWidget {
             ),
             StatCard(
               title: 'Budget',
-              value: '${trip.currency} $actual',
-              detail: 'of ${trip.currency} ${trip.budget}',
+              value: _displayMoney(context, actual, trip.currency),
+              detail:
+                  'of ${_displayMoney(context, trip.budget, trip.currency)}',
             ),
           ],
         ),
@@ -82,7 +83,7 @@ class TripOverviewTab extends StatelessWidget {
         const SectionHeader(title: 'Bookings'),
         const SizedBox(height: 10),
         for (final booking in trip.bookings.take(2))
-          BookingTile(booking: booking),
+          BookingTile(booking: booking, currency: trip.currency),
         const SizedBox(height: 12),
         SectionHeader(
           title: trip.status == TripStatus.ongoing
@@ -100,7 +101,8 @@ class TripOverviewTab extends StatelessWidget {
               ),
             ),
           ),
-        for (final item in previewItems) ScheduleTile(item: item),
+        for (final item in previewItems)
+          ScheduleTile(item: item, currency: trip.currency),
       ],
     );
   }

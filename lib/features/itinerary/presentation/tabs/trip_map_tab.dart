@@ -33,7 +33,8 @@ class TripMapTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        for (final item in trip.items.take(6)) ScheduleTile(item: item),
+        for (final item in trip.items.take(6))
+          ScheduleTile(item: item, currency: trip.currency),
       ],
     );
   }

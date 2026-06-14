@@ -6,6 +6,22 @@ enum GroupChatMemberStatus { active, invited, left }
 
 enum GroupChatInviteStatus { pending, accepted, rejected, expired }
 
+class PendingChatAttachment {
+  const PendingChatAttachment({
+    required this.name,
+    required this.mimeType,
+    required this.type,
+    required this.bytes,
+  });
+
+  final String name;
+  final String mimeType;
+  final String type;
+  final Uint8List bytes;
+
+  int get sizeBytes => bytes.lengthInBytes;
+}
+
 class GroupChat {
   const GroupChat({
     required this.id,
@@ -13,10 +29,12 @@ class GroupChat {
     required this.ownerId,
     required this.memberIds,
     required this.roles,
+    this.description = '',
     this.linkedTripId,
     this.type = 'group',
     this.lastMessageText = '',
     this.lastMessageAt,
+    this.createdAt,
   });
 
   final String id;
@@ -24,10 +42,12 @@ class GroupChat {
   final String ownerId;
   final List<String> memberIds;
   final Map<String, String> roles;
+  final String description;
   final String? linkedTripId;
   final String type;
   final String lastMessageText;
   final Timestamp? lastMessageAt;
+  final Timestamp? createdAt;
 
   static GroupChat fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final map = doc.data() ?? const <String, dynamic>{};
@@ -43,10 +63,12 @@ class GroupChat {
           (key, value) => MapEntry(key.toString(), value.toString()),
         ),
       ),
+      description: (map['description'] as String?) ?? '',
       linkedTripId: map['linkedTripId'] as String?,
       type: (map['type'] as String?) ?? 'group',
       lastMessageText: (map['lastMessageText'] as String?) ?? '',
       lastMessageAt: map['lastMessageAt'] as Timestamp?,
+      createdAt: map['createdAt'] as Timestamp?,
     );
   }
 }
@@ -59,6 +81,8 @@ class GroupChatMembership {
     required this.titleSnapshot,
     this.lastMessageText = '',
     this.lastMessageAt,
+    this.mutedUntil,
+    this.mutedForever = false,
   });
 
   final String chatId;
@@ -67,8 +91,15 @@ class GroupChatMembership {
   final String titleSnapshot;
   final String lastMessageText;
   final Timestamp? lastMessageAt;
+  final Timestamp? mutedUntil;
+  final bool mutedForever;
 
   bool get isActive => status == GroupChatMemberStatus.active.name;
+  bool get isMuted {
+    if (mutedForever) return true;
+    final until = mutedUntil?.toDate();
+    return until != null && until.isAfter(DateTime.now());
+  }
 
   static GroupChatMembership fromDoc(
     DocumentSnapshot<Map<String, dynamic>> doc,
@@ -81,6 +112,42 @@ class GroupChatMembership {
       titleSnapshot: (map['titleSnapshot'] as String?) ?? 'New chat',
       lastMessageText: (map['lastMessageText'] as String?) ?? '',
       lastMessageAt: map['lastMessageAt'] as Timestamp?,
+      mutedUntil: map['mutedUntil'] as Timestamp?,
+      mutedForever: (map['mutedForever'] as bool?) ?? false,
+    );
+  }
+}
+
+class GroupChatMember {
+  const GroupChatMember({
+    required this.uid,
+    required this.role,
+    required this.status,
+    required this.displayNameSnapshot,
+    this.photoUrlSnapshot,
+    this.joinedAt,
+  });
+
+  final String uid;
+  final String role;
+  final String status;
+  final String displayNameSnapshot;
+  final String? photoUrlSnapshot;
+  final Timestamp? joinedAt;
+
+  bool get isActive => status == GroupChatMemberStatus.active.name;
+  bool get isOwner => role == GroupChatRole.owner.name;
+
+  static GroupChatMember fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final map = doc.data() ?? const <String, dynamic>{};
+    return GroupChatMember(
+      uid: doc.id,
+      role: (map['role'] as String?) ?? GroupChatRole.member.name,
+      status: (map['status'] as String?) ?? GroupChatMemberStatus.active.name,
+      displayNameSnapshot:
+          (map['displayNameSnapshot'] as String?) ?? 'Explorer',
+      photoUrlSnapshot: map['photoUrlSnapshot'] as String?,
+      joinedAt: map['joinedAt'] as Timestamp?,
     );
   }
 }
