@@ -6,6 +6,7 @@ class ChatListScreen extends StatefulWidget {
     required this.user,
     this.onRoomOpenChanged,
     this.onOpenChat,
+    this.onAppBarActionsChanged,
     super.key,
   });
 
@@ -13,6 +14,7 @@ class ChatListScreen extends StatefulWidget {
   final UserProfile user;
   final ValueChanged<bool>? onRoomOpenChanged;
   final ValueChanged<String>? onOpenChat;
+  final ValueChanged<ChatListAppBarActions?>? onAppBarActionsChanged;
 
   @override
   State<ChatListScreen> createState() => _ChatListScreenState();
@@ -28,6 +30,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   void initState() {
     super.initState();
     unawaited(_syncPublicUser());
+    _publishAppBarActions();
   }
 
   @override
@@ -37,6 +40,27 @@ class _ChatListScreenState extends State<ChatListScreen> {
         oldWidget.account.uid != widget.account.uid) {
       unawaited(_syncPublicUser());
     }
+    if (oldWidget.onAppBarActionsChanged != widget.onAppBarActionsChanged) {
+      _publishAppBarActions();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.onAppBarActionsChanged?.call(null);
+    super.dispose();
+  }
+
+  void _publishAppBarActions() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.onAppBarActionsChanged?.call(
+        ChatListAppBarActions(
+          onReviewInvite: _reviewInviteCode,
+          onCreateChat: _showCreateChatSheet,
+        ),
+      );
+    });
   }
 
   Future<void> _syncPublicUser() async {
@@ -76,35 +100,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
     return ScreenScaffold(
       bottomPadding: 92,
       child: ListView(
-        padding: _responsivePagePadding(context, top: 28, bottom: 112),
+        padding: _responsivePagePadding(context, top: 12, bottom: 112),
         children: [
-          Row(
-            children: [
-              const Spacer(),
-              IconButton.filled(
-                tooltip: appText(context, 'Accept invite'),
-                style: IconButton.styleFrom(
-                  backgroundColor: Theme.of(
-                    context,
-                  ).colorScheme.surfaceContainerHigh,
-                  foregroundColor: Theme.of(context).colorScheme.onSurface,
-                ),
-                onPressed: _reviewInviteCode,
-                icon: const Icon(Icons.link_rounded),
-              ),
-              const SizedBox(width: 8),
-              IconButton.filled(
-                tooltip: appText(context, 'Create chat'),
-                style: IconButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                ),
-                onPressed: _showCreateChatSheet,
-                icon: const Icon(Icons.add_rounded),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
           if (_error != null) ...[
             FormNotice(message: _error!),
             const SizedBox(height: 12),
@@ -471,6 +468,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
     });
     widget.onRoomOpenChanged?.call(false);
   }
+}
+
+class ChatListAppBarActions {
+  const ChatListAppBarActions({
+    required this.onReviewInvite,
+    required this.onCreateChat,
+  });
+
+  final VoidCallback onReviewInvite;
+  final VoidCallback onCreateChat;
 }
 
 class RoutedGroupChatRoomScreen extends StatefulWidget {

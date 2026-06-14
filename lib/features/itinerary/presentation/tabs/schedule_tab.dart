@@ -412,7 +412,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
       padding: _responsivePagePadding(context, top: 16),
       children: [
         PrimaryButton(
-          label: 'Add schedule stop',
+          label: 'Add destination',
           icon: Icons.add_rounded,
           onPressed: () => _addScheduleStop(context),
         ),

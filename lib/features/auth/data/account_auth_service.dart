@@ -232,8 +232,12 @@ class AccountAuthService {
     final trimmedName = name.trim();
     if (trimmedName.isNotEmpty) {
       await credential.user?.updateDisplayName(trimmedName);
+      await credential.user?.reload();
     }
-    await _markOnboardingPendingForNewAccount(credential);
+    await _markOnboardingPendingForNewAccount(
+      credential,
+      displayName: trimmedName,
+    );
   }
 
   Future<void> sendPasswordReset(String email) {
@@ -626,16 +630,31 @@ class AccountAuthService {
   }
 
   static Future<void> _markOnboardingPendingForNewAccount(
-    UserCredential credential,
-  ) async {
+    UserCredential credential, {
+    String? displayName,
+  }) async {
     if (credential.additionalUserInfo?.isNewUser != true) return;
-    final uid = credential.user?.uid;
+    final user = credential.user ?? FirebaseAuth.instance.currentUser;
+    final uid = user?.uid;
     if (uid == null || uid.isEmpty) return;
 
-    await FirebaseFirestore.instance.collection('travel_users').doc(uid).set({
+    final trimmedName = (displayName ?? user?.displayName ?? '').trim();
+    final trimmedEmail = (user?.email ?? '').trim();
+    final photoUrl = user?.photoURL;
+    final profileData = <String, dynamic>{
       'settings': {'onboardingRequired': true, 'onboardingCompleted': false},
       'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
+    if (trimmedName.isNotEmpty) profileData['name'] = trimmedName;
+    if (trimmedEmail.isNotEmpty) profileData['email'] = trimmedEmail;
+    if (photoUrl != null && photoUrl.trim().isNotEmpty) {
+      profileData['photoUrl'] = photoUrl.trim();
+    }
+
+    await FirebaseFirestore.instance
+        .collection('travel_users')
+        .doc(uid)
+        .set(profileData, SetOptions(merge: true));
   }
 }
 

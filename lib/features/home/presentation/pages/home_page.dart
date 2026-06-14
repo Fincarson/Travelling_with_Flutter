@@ -41,49 +41,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return ScreenScaffold(
       bottomPadding: 92,
       child: ListView(
-        padding: _responsivePagePadding(context, top: 24, bottom: 112),
+        padding: _responsivePagePadding(context, top: 12, bottom: 112),
         children: [
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    LabelText(appText(context, 'Welcome Back')),
-                    Text(
-                      '${widget.user.name.isEmpty ? 'Explorer' : widget.user.name}!',
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w900),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox.square(
-                dimension: 50,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Positioned.fill(
-                      child: IconButton.filled(
-                        tooltip: appText(context, 'Notifications'),
-                        style: IconButton.styleFrom(
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHigh,
-                          foregroundColor: Theme.of(
-                            context,
-                          ).colorScheme.onSurface,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                        ),
-                        onPressed: widget.onOpenNotifications,
-                        icon: const Icon(Icons.notifications_none_rounded),
-                      ),
-                    ),
-                    if (widget.user.notificationsEnabled)
-                      const Positioned(right: 10, top: 10, child: Dot()),
-                  ],
+              LabelText(appText(context, 'Welcome Back')),
+              Text(
+                '${widget.user.name.isEmpty ? 'Explorer' : widget.user.name}!',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
                 ),
               ),
             ],
@@ -98,12 +65,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             },
           ),
           const SizedBox(height: 10),
-          if (widget.user.notificationsEnabled) const AlertRail(),
+          if (widget.user.notificationsEnabled &&
+              widget.user.hasImportantAlerts)
+            const AlertRail(),
           const SizedBox(height: 28),
           if (trip == null) ...[
             _EmptyTripCard(onCreate: widget.onCreate),
           ] else ...[
-            LabelText(appText(context, 'Current trip')),
+            LabelText(appText(context, 'Current trip')),  // TODO make responsive: show current/past/upcoming trip
             const SizedBox(height: 8),
             CurrentTripCard(
               trip: trip,
