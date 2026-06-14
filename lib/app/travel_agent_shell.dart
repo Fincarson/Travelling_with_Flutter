@@ -23,6 +23,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   final _placesService = GeoapifyPlacesService();
   final _currencyExchangeService = CurrencyExchangeService();
   final _profilePhotoService = ProfilePhotoService();
+  final _chatListKey = GlobalKey<_ChatListScreenState>();
   late final _pushTokenService = PushTokenService(FirebaseFirestore.instance);
   static const _localProfilePrefix = 'travel_agent.profile.';
   static const _lastCurrencyCountryPrefix =
@@ -524,11 +525,13 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Future<void> _createTrip(Trip trip) async {
+    final router = GoRouter.of(context);
     final saved = await _saveTripOnline(trip);
     if (!saved || !mounted) return;
+    setState(() => _selectedTrip = trip);
     await _refreshTripsFromBackend(selectTripId: trip.id);
     if (!mounted || !context.mounted) return;
-    context.go(_tripLocation(trip.id));
+    router.go(_tripLocation(trip.id));
   }
 
   Future<void> _startTrip(Trip trip) async {
@@ -942,6 +945,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
 
   Widget _buildChatListScreen(BuildContext context) {
     return ChatListScreen(
+      key: _chatListKey,
       account: widget.account,
       user: _user,
       onRoomOpenChanged: _setChatRoomOpen,
@@ -968,6 +972,26 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     if (!mounted) return;
     if (_chatListAppBarActions == actions) return;
     setState(() => _chatListAppBarActions = actions);
+  }
+
+  void _reviewChatInviteFromHeader() {
+    final action = _chatListAppBarActions?.onReviewInvite;
+    if (action != null) {
+      action();
+      return;
+    }
+    final state = _chatListKey.currentState;
+    if (state != null) unawaited(state._reviewInviteCode());
+  }
+
+  void _createChatFromHeader() {
+    final action = _chatListAppBarActions?.onCreateChat;
+    if (action != null) {
+      action();
+      return;
+    }
+    final state = _chatListKey.currentState;
+    if (state != null) unawaited(state._showCreateChatSheet());
   }
 
   Widget _buildSettingsScreen(BuildContext context) {

@@ -10,7 +10,7 @@ class Trip {
     required this.endDate,
     required this.budget,
     required this.spent,
-    required this.groupType,
+    required this.numOfTravelers,
     required this.status,
     required this.images,
     required this.items,
@@ -36,7 +36,7 @@ class Trip {
   final String endDate;
   final int budget;
   final int spent;
-  final String groupType;
+  final int numOfTravelers;
   final TripStatus status;
   final List<String> images;
   final List<ScheduleItem> items;
@@ -60,7 +60,7 @@ class Trip {
     String? destination,
     String? startDate,
     String? endDate,
-    String? groupType,
+    int? numOfTravelers,
     String? currency,
     List<String>? images,
     List<ScheduleItem>? items,
@@ -84,7 +84,7 @@ class Trip {
     endDate: endDate ?? this.endDate,
     budget: budget ?? this.budget,
     spent: spent ?? this.spent,
-    groupType: groupType ?? this.groupType,
+    numOfTravelers: numOfTravelers ?? this.numOfTravelers,
     status: status ?? this.status,
     images: images ?? this.images,
     items: items ?? this.items,
@@ -116,7 +116,7 @@ class Trip {
     'endDate': endDate,
     'budget': budget,
     'spent': spent,
-    'groupType': groupType,
+    'numOfTravelers': numOfTravelers,
     'currency': currency,
     'status': status.name,
     'images': images,
@@ -148,7 +148,7 @@ class Trip {
       endDate: (map['endDate'] as String?) ?? '',
       budget: (map['budget'] as num?)?.toInt() ?? 0,
       spent: (map['spent'] as num?)?.toInt() ?? 0,
-      groupType: (map['groupType'] as String?) ?? 'Solo',
+      numOfTravelers: _numOfTravelersFromMap(map),
       currency: (map['currency'] as String?) ?? 'USD',
       status: TripStatus.values.firstWhere(
         (status) => status.name == map['status'],
@@ -210,7 +210,7 @@ class Trip {
       endDate: (map['endDate'] as String?) ?? '',
       budget: (map['budget'] as num?)?.toInt() ?? 0,
       spent: (map['spent'] as num?)?.toInt() ?? 0,
-      groupType: (map['groupType'] as String?) ?? 'Solo',
+      numOfTravelers: _numOfTravelersFromMap(map),
       currency: (map['currency'] as String?) ?? 'USD',
       status: TripStatus.values.firstWhere(
         (status) => status.name == map['status'],
@@ -234,6 +234,17 @@ class Trip {
       budgetCategories: budgetCategories,
     );
   }
+}
+
+int _numOfTravelersFromMap(Map<String, dynamic> map) {
+  final value = (map['numOfTravelers'] as num?)?.toInt();
+  if (value == null) return 1;
+  return value.clamp(1, 99).toInt();
+}
+
+String _travelerCountLabel(int count) {
+  final safeCount = count.clamp(1, 99).toInt();
+  return safeCount == 1 ? '1 traveler' : '$safeCount travelers';
 }
 
 class TripMemory {
@@ -801,7 +812,7 @@ int _tripActualSpend(Trip trip) {
   if (trip.budgetCategories.isNotEmpty) {
     return trip.budgetCategories.fold<int>(
       0,
-      (total, category) => total + category.actual,
+      (total, category) => total + category.effectiveActual,
     );
   }
   return trip.spent;
@@ -853,7 +864,10 @@ _BudgetGuardianInsight _budgetGuardianInsight(
   final planned = trip.budget > 0
       ? trip.budget
       : categories.fold<int>(0, (total, item) => total + item.planned);
-  final actual = categories.fold<int>(0, (total, item) => total + item.actual);
+  final actual = categories.fold<int>(
+    0,
+    (total, item) => total + item.effectiveActual,
+  );
   final progress = switch (runtime.phase) {
     _TripRuntimePhase.beforeStart || _TripRuntimePhase.unknown => 0.0,
     _TripRuntimePhase.afterTrip => 1.0,
@@ -900,9 +914,9 @@ _BudgetGuardianInsight _budgetGuardianInsight(
 
   if (worstCategory != null &&
       worstCategory.planned > 0 &&
-      worstCategory.actual / worstCategory.planned > .85) {
-    final categoryPercent = (worstCategory.actual / worstCategory.planned * 100)
-        .round();
+      worstCategory.effectiveActual / worstCategory.planned > .85) {
+    final categoryPercent =
+        (worstCategory.effectiveActual / worstCategory.planned * 100).round();
     return _BudgetGuardianInsight(
       severity: _BudgetGuardianSeverity.watch,
       icon: Icons.savings_rounded,
@@ -935,7 +949,11 @@ _BudgetGuardianInsight _budgetGuardianInsight(
 BudgetCategory? _highestBudgetRiskCategory(List<BudgetCategory> categories) {
   final usable = categories.where((item) => item.planned > 0).toList();
   if (usable.isEmpty) return null;
-  usable.sort((a, b) => (b.actual / b.planned).compareTo(a.actual / a.planned));
+  usable.sort(
+    (a, b) => (b.effectiveActual / b.planned).compareTo(
+      a.effectiveActual / a.planned,
+    ),
+  );
   return usable.first;
 }
 
@@ -1018,32 +1036,102 @@ class BudgetCategory {
     required this.category,
     required this.planned,
     required this.actual,
+    this.spendings = const [],
   });
 
   final String id;
   final String category;
   final int planned;
   final int actual;
+  final List<BudgetSpending> spendings;
 
-  BudgetCategory copyWith({int? planned, int? actual}) => BudgetCategory(
+  int get effectiveActual => spendings.isEmpty
+      ? actual
+      : spendings.fold<int>(0, (total, spending) => total + spending.amount);
+
+  BudgetCategory copyWith({
+    int? planned,
+    int? actual,
+    List<BudgetSpending>? spendings,
+  }) => BudgetCategory(
     id: id,
     category: category,
     planned: planned ?? this.planned,
     actual: actual ?? this.actual,
+    spendings: spendings ?? this.spendings,
   );
 
   Map<String, dynamic> toMap() => {
     'id': id,
     'category': category,
     'planned': planned,
-    'actual': actual,
+    'actual': effectiveActual,
+    'spendings': spendings.map((spending) => spending.toMap()).toList(),
   };
 
-  static BudgetCategory fromMap(Map<String, dynamic> map) => BudgetCategory(
-    id: (map['id'] as String?) ?? 'category',
-    category: (map['category'] as String?) ?? 'Category',
-    planned: (map['planned'] as num?)?.toInt() ?? 0,
-    actual: (map['actual'] as num?)?.toInt() ?? 0,
+  static BudgetCategory fromMap(Map<String, dynamic> map) {
+    final spendings = ((map['spendings'] as List<dynamic>?) ?? const [])
+        .whereType<Map>()
+        .map((item) => BudgetSpending.fromMap(Map<String, dynamic>.from(item)))
+        .toList();
+    final actual = (map['actual'] as num?)?.toInt() ?? 0;
+    return BudgetCategory(
+      id: (map['id'] as String?) ?? 'category',
+      category: (map['category'] as String?) ?? 'Category',
+      planned: (map['planned'] as num?)?.toInt() ?? 0,
+      actual: spendings.isEmpty
+          ? actual
+          : spendings.fold<int>(
+              0,
+              (total, spending) => total + spending.amount,
+            ),
+      spendings: spendings,
+    );
+  }
+}
+
+class BudgetSpending {
+  const BudgetSpending({
+    required this.id,
+    required this.title,
+    required this.amount,
+    this.date = '',
+    this.note = '',
+  });
+
+  final String id;
+  final String title;
+  final int amount;
+  final String date;
+  final String note;
+
+  BudgetSpending copyWith({
+    String? title,
+    int? amount,
+    String? date,
+    String? note,
+  }) => BudgetSpending(
+    id: id,
+    title: title ?? this.title,
+    amount: amount ?? this.amount,
+    date: date ?? this.date,
+    note: note ?? this.note,
+  );
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'title': title,
+    'amount': amount,
+    'date': date,
+    'note': note,
+  };
+
+  static BudgetSpending fromMap(Map<String, dynamic> map) => BudgetSpending(
+    id: (map['id'] as String?) ?? 'spending',
+    title: (map['title'] as String?) ?? 'Spending',
+    amount: (map['amount'] as num?)?.toInt() ?? 0,
+    date: (map['date'] as String?) ?? '',
+    note: (map['note'] as String?) ?? '',
   );
 }
 
@@ -1064,20 +1152,57 @@ class ChecklistCategory {
 }
 
 const _aiChecklistMarker = '[AI] ';
+const _checkedChecklistMarker = '[DONE] ';
+
+String _stripChecklistMarker(String item, String marker) {
+  final trimmed = item.trimLeft();
+  if (!trimmed.startsWith(marker)) return item;
+  return trimmed.substring(marker.length).trimLeft();
+}
+
+String _stripChecklistDoneMarker(String item) =>
+    _stripChecklistMarker(item, _checkedChecklistMarker);
+
+bool _isChecklistItemChecked(String item) =>
+    item.trimLeft().startsWith(_checkedChecklistMarker);
 
 bool _isAiChecklistItem(String item) =>
-    item.trimLeft().startsWith(_aiChecklistMarker);
+    _stripChecklistDoneMarker(item).trimLeft().startsWith(_aiChecklistMarker);
 
 String _checklistDisplayText(String item) {
-  final trimmed = item.trimLeft();
-  if (!trimmed.startsWith(_aiChecklistMarker)) return item;
-  return trimmed.substring(_aiChecklistMarker.length).trimLeft();
+  var text = item.trimLeft();
+  var changed = true;
+  while (changed) {
+    changed = false;
+    if (text.startsWith(_checkedChecklistMarker)) {
+      text = text.substring(_checkedChecklistMarker.length).trimLeft();
+      changed = true;
+    }
+    if (text.startsWith(_aiChecklistMarker)) {
+      text = text.substring(_aiChecklistMarker.length).trimLeft();
+      changed = true;
+    }
+  }
+  return text;
 }
 
 String _aiChecklistItem(String item) {
   final display = _checklistDisplayText(item).trim();
   if (display.isEmpty) return _aiChecklistMarker.trimRight();
   return '$_aiChecklistMarker$display';
+}
+
+String _checklistItemWithCheckedState(String item, bool checked) {
+  final withoutDone = _stripChecklistDoneMarker(item);
+  return checked ? '$_checkedChecklistMarker$withoutDone' : withoutDone;
+}
+
+String _checklistItemWithDisplayText(String item, String displayText) {
+  final display = displayText.trim();
+  final checked = _isChecklistItemChecked(item);
+  final ai = _isAiChecklistItem(item);
+  final base = ai ? _aiChecklistItem(display) : display;
+  return _checklistItemWithCheckedState(base, checked);
 }
 
 String _checklistCompareText(String item) => _checklistDisplayText(

@@ -528,7 +528,7 @@ class BudgetScreen extends StatelessWidget {
         : trip.budgetCategories;
     final actual = categories.fold<int>(
       0,
-      (total, item) => total + item.actual,
+      (total, item) => total + item.effectiveActual,
     );
     return SimpleToolScreen(
       title: 'Budget',
@@ -565,7 +565,7 @@ class BudgetScreen extends StatelessWidget {
           BudgetBar(
             name: category.category,
             planned: category.planned,
-            actual: category.actual,
+            actual: category.effectiveActual,
             currency: trip.currency,
             color: _budgetColor(category.id),
           ),

@@ -356,7 +356,12 @@ class CreateTripDraftCard extends StatelessWidget {
                     ? 'TBD'
                     : '${draft.currency ?? 'USD'} ${_formatAmountText(draft.budget!)}',
               ),
-              DraftStat(label: 'Party', value: draft.groupType ?? 'TBD'),
+              DraftStat(
+                label: 'Travelers',
+                value: draft.numOfTravelers == null
+                    ? 'TBD'
+                    : _travelerCountLabel(draft.numOfTravelers!),
+              ),
             ],
           ),
           if (draft.preferences.isNotEmpty) ...[

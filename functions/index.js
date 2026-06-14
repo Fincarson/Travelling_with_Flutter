@@ -30,6 +30,12 @@ function openAiApiKey() {
   return String(process.env.OPENAI_API_KEY ?? "").trim();
 }
 
+function safeTravelerCount(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(99, Math.max(1, parsed));
+}
+
 const travelAssistantInstructions = [
   "You are a concise travel planning assistant inside a mobile app.",
   "Help with itinerary order, budget tradeoffs, packing, food, transit,",
@@ -46,7 +52,7 @@ const tripPlanInstructions = [
   "For each distinctive tag, include at least one matching schedule item, venue area, event search, food stop, accessibility choice, or practical constraint.",
   "For example, anime should trigger anime convention/event-calendar research when dates match, or anime districts, stores, themed cafes, arcades, museums, or pop-culture stops when no convention is current.",
   "Halal food should trigger halal restaurants or Muslim-friendly food areas. Wheelchair access should trigger accessible transit and step-free venues.",
-  "Keep activities suitable for the destination, dates, budget, group, and tags.",
+  "Keep activities suitable for the destination, dates, budget, number of travelers, and tags.",
   "Use appContext.localDate and appContext.timeZoneOffset as today's context.",
   "Use startLocation as the trip origin when provided. If startLocation is missing, use appContext.location when available.",
   "If startLocation has an address, use that address as the origin reference; do not show raw coordinates in user-facing itinerary text.",
@@ -77,8 +83,8 @@ const createTripInstructions = [
   "When asking for dates, include a 'Pick exact dates' option with value '__pick_dates__'.",
   "Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset as the source of truth for today, tomorrow, next weekend, and relative dates.",
   "Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.",
-  "Required final fields: destination, startDate, endDate, budget, groupType.",
-  "Dates must be ISO yyyy-MM-dd. groupType must be Solo, Friends, Family, or Tour.",
+  "Required final fields: destination, startDate, endDate, budget, numOfTravelers.",
+  "Dates must be ISO yyyy-MM-dd. numOfTravelers must be an integer from 1 to 99.",
   "If the user names a currency, set currency to its three-letter ISO 4217 code.",
 ].join(" ");
 
@@ -228,7 +234,7 @@ const createTripReplyFormat = {
           endDate: {type: ["string", "null"]},
           budget: {type: ["string", "null"]},
           currency: {type: ["string", "null"]},
-          groupType: {type: ["string", "null"]},
+          numOfTravelers: {type: ["integer", "null"]},
           preferences: {
             type: "array",
             items: {type: "string"},
@@ -240,7 +246,7 @@ const createTripReplyFormat = {
           "endDate",
           "budget",
           "currency",
-          "groupType",
+          "numOfTravelers",
           "preferences",
         ],
       },
@@ -942,7 +948,7 @@ exports.generateTripPlan = onCall(
         currency: String(data.currency ?? "USD"),
         profileLanguage: String(data.profileLanguage ?? "en"),
         outputLanguage: aiLanguageName(data.profileLanguage, data.outputLanguage),
-        groupType: String(data.groupType ?? "Solo"),
+        numOfTravelers: safeTravelerCount(data.numOfTravelers),
         preferences: Array.isArray(data.preferences) ? data.preferences : [],
         flight: {
           airline: String(data.airline ?? ""),
@@ -991,7 +997,7 @@ exports.generateScheduleStop = onCall(
         endDate: String(data.endDate ?? ""),
         currency: String(data.currency ?? "USD"),
         budget: Number.parseInt(data.budget, 10) || 0,
-        groupType: String(data.groupType ?? "Solo"),
+        numOfTravelers: safeTravelerCount(data.numOfTravelers),
         preferences: Array.isArray(data.preferences) ? data.preferences : [],
         targetDay,
         request: requestText || "Suggest a useful trip stop.",
