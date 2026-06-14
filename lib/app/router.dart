@@ -202,6 +202,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
   Widget build(BuildContext context) {
     final performance = PerformanceScope.settingsOf(context);
     final title = _mainPageTitle(widget.location);
+    final headerAction = _headerAction(context, widget.location);
     _slideController.duration = performance.transitionDuration;
 
     return Stack(
@@ -239,7 +240,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
                               onPressed: () => context.go('/profile/settings'),
                               icon: const Icon(Icons.settings_rounded),
                             )
-                          : null,
+                          : headerAction,
                     ),
                   Expanded(
                     child: widget.appState._performanceBoundary(
@@ -259,6 +260,56 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
           ),
       ],
     );
+  }
+
+  Widget? _headerAction(BuildContext context, String location) {
+    if (location == '/') {
+      return SizedBox.square(
+        dimension: _MainPageHeader.actionSize,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned.fill(
+              child: IconButton(
+                tooltip: appText(context, 'Notifications'),
+                onPressed: () {
+                  context.go('/notifications');
+                  if (!widget.appState._user.notificationsEnabled) {
+                    unawaited(
+                      widget.appState._enableNotificationsFromDashboard(),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.notifications_none_rounded),
+              ),
+            ),
+            if (widget.appState._user.notificationsEnabled)
+              const Positioned(right: 8, top: 8, child: Dot()),
+          ],
+        ),
+      );
+    }
+
+    if (location == '/chat' && !widget.appState._isChatRoomOpen) {
+      final actions = widget.appState._chatListAppBarActions;
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: appText(context, 'Accept invite'),
+            onPressed: actions?.onReviewInvite,
+            icon: const Icon(Icons.link_rounded),
+          ),
+          IconButton.filled(
+            tooltip: appText(context, 'Create chat'),
+            onPressed: actions?.onCreateChat,
+            icon: const Icon(Icons.add_rounded),
+          ),
+        ],
+      );
+    }
+
+    return null;
   }
 
   bool _showsBottomNav(String location) {
@@ -424,6 +475,10 @@ String? _parentLocation(String location) {
 class _MainPageHeader extends StatelessWidget {
   const _MainPageHeader({required this.title, this.leading, this.action});
 
+  static const height = 40.0;
+  static const verticalPadding = 8.0;
+  static const actionSize = 40.0;
+
   final String title;
   final Widget? leading;
   final Widget? action;
@@ -439,27 +494,28 @@ class _MainPageHeader extends StatelessWidget {
           width: double.infinity,
           padding: EdgeInsets.fromLTRB(
             _responsiveHorizontalPadding(context),
-            14,
+            verticalPadding,
             _responsiveHorizontalPadding(context),
-            12,
+            verticalPadding,
           ),
           color: pageColor,
           child: SizedBox(
-            height: 48,
+            height: height,
             child: Stack(
               alignment: Alignment.center,
               children: [
                 Positioned.fill(
-                  left: 58,
-                  right: 58,
+                  left: 92,
+                  right: 92,
                   child: Center(
                     child: Text(
                       appText(context, title),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w900),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ),
                 ),

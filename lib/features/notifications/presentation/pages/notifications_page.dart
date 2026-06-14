@@ -500,31 +500,34 @@ class _NotificationFilters extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 10),
-                      SwitchListTile.adaptive(
-                        key: const ValueKey('show-archived-toggle'),
-                        contentPadding: EdgeInsets.zero,
-                        value: showArchived,
-                        onChanged: onShowArchivedChanged,
-                        secondary: const Icon(
-                          Icons.inventory_2_outlined,
-                          color: _primary,
-                        ),
-                        title: Text(
-                          appText(context, 'Show archived notifications'),
-                          style: const TextStyle(
+                      Material(
+                        color: Colors.transparent,
+                        child: SwitchListTile.adaptive(
+                          key: const ValueKey('show-archived-toggle'),
+                          contentPadding: EdgeInsets.zero,
+                          value: showArchived,
+                          onChanged: onShowArchivedChanged,
+                          secondary: const Icon(
+                            Icons.inventory_2_outlined,
                             color: _primary,
-                            fontWeight: FontWeight.w800,
                           ),
-                        ),
-                        subtitle: Text(
-                          appText(
-                            context,
-                            'Include archived items in this notification list.',
+                          title: Text(
+                            appText(context, 'Show archived notifications'),
+                            style: const TextStyle(
+                              color: _primary,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
-                          style: const TextStyle(
-                            color: _secondary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                          subtitle: Text(
+                            appText(
+                              context,
+                              'Include archived items in this notification list.',
+                            ),
+                            style: const TextStyle(
+                              color: _secondary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       ),

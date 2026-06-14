@@ -33,6 +33,7 @@ class UserProfile {
   final List<String> interests;
   final String language;
   final bool notificationsEnabled;
+  final bool hasImportantAlerts = false;  // TODO later: implement this based on user alerts
   final String displayCurrencyCode;
   final CurrencyUpdateMode currencyUpdateMode;
   final int currencySettingsVersion;

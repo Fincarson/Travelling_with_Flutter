@@ -45,6 +45,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   final Set<String> _archivedNotificationIds = {};
   final Set<String> _automationInFlight = {};
   final Set<String> _automationCheckedKeys = {};
+  ChatListAppBarActions? _chatListAppBarActions;
   Trip? _selectedTrip;
   Trip? _activeTrip;
   String? _pendingTripAiPrompt;
@@ -493,9 +494,9 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   Future<void> _createTrip(Trip trip) async {
     final saved = await _saveTripOnline(trip);
     if (!saved || !mounted) return;
-    await _refreshTripsFromBackend();
+    await _refreshTripsFromBackend(selectTripId: trip.id);
     if (!mounted || !context.mounted) return;
-    context.replace(_tripLocation(trip.id));
+    context.go(_tripLocation(trip.id));
   }
 
   Future<void> _startTrip(Trip trip) async {
@@ -917,6 +918,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       user: _user,
       onRoomOpenChanged: _setChatRoomOpen,
       onOpenChat: (chatId) => context.go('/chat/$chatId'),
+      onAppBarActionsChanged: _setChatListAppBarActions,
     );
   }
 
@@ -931,6 +933,12 @@ class _TravelAgentAppState extends State<TravelAgentApp>
 
   Widget _buildProfileScreen(BuildContext context) {
     return ProfileScreen(account: widget.account, user: _user);
+  }
+
+  void _setChatListAppBarActions(ChatListAppBarActions? actions) {
+    if (!mounted) return;
+    if (_chatListAppBarActions == actions) return;
+    setState(() => _chatListAppBarActions = actions);
   }
 
   Widget _buildSettingsScreen(BuildContext context) {
@@ -1053,6 +1061,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
               account: widget.account,
               user: _user,
               onRoomOpenChanged: _setChatRoomOpen,
+              onAppBarActionsChanged: _setChatListAppBarActions,
             ),
             performance,
           ),
