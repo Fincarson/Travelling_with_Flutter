@@ -812,7 +812,7 @@ int _tripActualSpend(Trip trip) {
   if (trip.budgetCategories.isNotEmpty) {
     return trip.budgetCategories.fold<int>(
       0,
-      (total, category) => total + category.actual,
+      (total, category) => total + category.effectiveActual,
     );
   }
   return trip.spent;
@@ -864,7 +864,10 @@ _BudgetGuardianInsight _budgetGuardianInsight(
   final planned = trip.budget > 0
       ? trip.budget
       : categories.fold<int>(0, (total, item) => total + item.planned);
-  final actual = categories.fold<int>(0, (total, item) => total + item.actual);
+  final actual = categories.fold<int>(
+    0,
+    (total, item) => total + item.effectiveActual,
+  );
   final progress = switch (runtime.phase) {
     _TripRuntimePhase.beforeStart || _TripRuntimePhase.unknown => 0.0,
     _TripRuntimePhase.afterTrip => 1.0,
@@ -911,9 +914,9 @@ _BudgetGuardianInsight _budgetGuardianInsight(
 
   if (worstCategory != null &&
       worstCategory.planned > 0 &&
-      worstCategory.actual / worstCategory.planned > .85) {
-    final categoryPercent = (worstCategory.actual / worstCategory.planned * 100)
-        .round();
+      worstCategory.effectiveActual / worstCategory.planned > .85) {
+    final categoryPercent =
+        (worstCategory.effectiveActual / worstCategory.planned * 100).round();
     return _BudgetGuardianInsight(
       severity: _BudgetGuardianSeverity.watch,
       icon: Icons.savings_rounded,
@@ -946,7 +949,11 @@ _BudgetGuardianInsight _budgetGuardianInsight(
 BudgetCategory? _highestBudgetRiskCategory(List<BudgetCategory> categories) {
   final usable = categories.where((item) => item.planned > 0).toList();
   if (usable.isEmpty) return null;
-  usable.sort((a, b) => (b.actual / b.planned).compareTo(a.actual / a.planned));
+  usable.sort(
+    (a, b) => (b.effectiveActual / b.planned).compareTo(
+      a.effectiveActual / a.planned,
+    ),
+  );
   return usable.first;
 }
 
@@ -1029,32 +1036,102 @@ class BudgetCategory {
     required this.category,
     required this.planned,
     required this.actual,
+    this.spendings = const [],
   });
 
   final String id;
   final String category;
   final int planned;
   final int actual;
+  final List<BudgetSpending> spendings;
 
-  BudgetCategory copyWith({int? planned, int? actual}) => BudgetCategory(
+  int get effectiveActual => spendings.isEmpty
+      ? actual
+      : spendings.fold<int>(0, (total, spending) => total + spending.amount);
+
+  BudgetCategory copyWith({
+    int? planned,
+    int? actual,
+    List<BudgetSpending>? spendings,
+  }) => BudgetCategory(
     id: id,
     category: category,
     planned: planned ?? this.planned,
     actual: actual ?? this.actual,
+    spendings: spendings ?? this.spendings,
   );
 
   Map<String, dynamic> toMap() => {
     'id': id,
     'category': category,
     'planned': planned,
-    'actual': actual,
+    'actual': effectiveActual,
+    'spendings': spendings.map((spending) => spending.toMap()).toList(),
   };
 
-  static BudgetCategory fromMap(Map<String, dynamic> map) => BudgetCategory(
-    id: (map['id'] as String?) ?? 'category',
-    category: (map['category'] as String?) ?? 'Category',
-    planned: (map['planned'] as num?)?.toInt() ?? 0,
-    actual: (map['actual'] as num?)?.toInt() ?? 0,
+  static BudgetCategory fromMap(Map<String, dynamic> map) {
+    final spendings = ((map['spendings'] as List<dynamic>?) ?? const [])
+        .whereType<Map>()
+        .map((item) => BudgetSpending.fromMap(Map<String, dynamic>.from(item)))
+        .toList();
+    final actual = (map['actual'] as num?)?.toInt() ?? 0;
+    return BudgetCategory(
+      id: (map['id'] as String?) ?? 'category',
+      category: (map['category'] as String?) ?? 'Category',
+      planned: (map['planned'] as num?)?.toInt() ?? 0,
+      actual: spendings.isEmpty
+          ? actual
+          : spendings.fold<int>(
+              0,
+              (total, spending) => total + spending.amount,
+            ),
+      spendings: spendings,
+    );
+  }
+}
+
+class BudgetSpending {
+  const BudgetSpending({
+    required this.id,
+    required this.title,
+    required this.amount,
+    this.date = '',
+    this.note = '',
+  });
+
+  final String id;
+  final String title;
+  final int amount;
+  final String date;
+  final String note;
+
+  BudgetSpending copyWith({
+    String? title,
+    int? amount,
+    String? date,
+    String? note,
+  }) => BudgetSpending(
+    id: id,
+    title: title ?? this.title,
+    amount: amount ?? this.amount,
+    date: date ?? this.date,
+    note: note ?? this.note,
+  );
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'title': title,
+    'amount': amount,
+    'date': date,
+    'note': note,
+  };
+
+  static BudgetSpending fromMap(Map<String, dynamic> map) => BudgetSpending(
+    id: (map['id'] as String?) ?? 'spending',
+    title: (map['title'] as String?) ?? 'Spending',
+    amount: (map['amount'] as num?)?.toInt() ?? 0,
+    date: (map['date'] as String?) ?? '',
+    note: (map['note'] as String?) ?? '',
   );
 }
 

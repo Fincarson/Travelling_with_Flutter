@@ -475,7 +475,10 @@ class TravelDataRepository {
         'id': category.id,
         'category': category.category,
         'planned': category.planned,
-        'actual': category.actual,
+        'actual': category.effectiveActual,
+        'spendings': category.spendings
+            .map((spending) => spending.toMap())
+            .toList(),
         'order': index,
         'updatedAt': FieldValue.serverTimestamp(),
       });

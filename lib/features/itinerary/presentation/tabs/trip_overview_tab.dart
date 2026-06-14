@@ -17,7 +17,7 @@ class TripOverviewTab extends StatelessWidget {
         : trip.budgetCategories;
     final actual = categories.fold<int>(
       0,
-      (total, item) => total + item.actual,
+      (total, item) => total + item.effectiveActual,
     );
     final runtime = _tripRuntimePlan(trip);
     final budgetInsight = _budgetGuardianInsight(trip, categories: categories);
@@ -123,10 +123,12 @@ class _BudgetGuardianPanel extends StatelessWidget {
     };
     final riskyCategories =
         insight.categories
-            .where((item) => item.planned > 0 && item.actual > 0)
+            .where((item) => item.planned > 0 && item.effectiveActual > 0)
             .toList()
           ..sort(
-            (a, b) => (b.actual / b.planned).compareTo(a.actual / a.planned),
+            (a, b) => (b.effectiveActual / b.planned).compareTo(
+              a.effectiveActual / a.planned,
+            ),
           );
 
     return GlassPanel(
@@ -186,7 +188,7 @@ class _BudgetGuardianPanel extends StatelessWidget {
                 for (final category in riskyCategories.take(3))
                   SmallPill(
                     label:
-                        '${category.category} ${(category.actual / category.planned * 100).round()}%',
+                        '${category.category} ${(category.effectiveActual / category.planned * 100).round()}%',
                   ),
               ],
             ),

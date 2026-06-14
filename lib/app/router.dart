@@ -291,18 +291,17 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     }
 
     if (location == '/chat' && !widget.appState._isChatRoomOpen) {
-      final actions = widget.appState._chatListAppBarActions;
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
             tooltip: appText(context, 'Accept invite'),
-            onPressed: actions?.onReviewInvite,
+            onPressed: widget.appState._reviewChatInviteFromHeader,
             icon: const Icon(Icons.link_rounded),
           ),
           IconButton.filled(
             tooltip: appText(context, 'Create chat'),
-            onPressed: actions?.onCreateChat,
+            onPressed: widget.appState._createChatFromHeader,
             icon: const Icon(Icons.add_rounded),
           ),
         ],

@@ -852,18 +852,18 @@ class ScheduleTile extends StatelessWidget {
                 ],
               ),
             ),
-            Flexible(
-              fit: FlexFit.loose,
-              child: Text(
-                item.cost == 0
-                    ? appText(context, 'Free')
-                    : _displayMoney(context, item.cost, currency),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.end,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
+            // Flexible(
+            //   fit: FlexFit.loose,
+            //   child: Text(
+            //     item.cost == 0
+            //         ? appText(context, 'Free')
+            //         : _displayMoney(context, item.cost, currency),
+            //     maxLines: 2,
+            //     overflow: TextOverflow.ellipsis,
+            //     textAlign: TextAlign.end,
+            //     style: const TextStyle(fontWeight: FontWeight.w900),
+            //   ),
+            // ),
             if (onDelete != null) ...[
               const SizedBox(width: 8),
               IconButton(
