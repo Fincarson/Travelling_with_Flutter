@@ -348,12 +348,26 @@ class TripMemory {
 }
 
 class ScheduleItem {
-  const ScheduleItem(this.day, this.time, this.activity, this.type, this.cost);
+  const ScheduleItem(
+    this.day,
+    this.time,
+    this.activity,
+    this.type,
+    this.cost, {
+    this.address,
+    this.latitude,
+    this.longitude,
+    this.imageUrl,
+  });
   final int day;
   final String time;
   final String activity;
   final IconData type;
   final int cost;
+  final String? address;
+  final double? latitude;
+  final double? longitude;
+  final String? imageUrl;
 
   Map<String, dynamic> toMap() => {
     'day': day,
@@ -361,6 +375,10 @@ class ScheduleItem {
     'activity': activity,
     'type': _iconToMap(type),
     'cost': cost,
+    'address': address,
+    'latitude': latitude,
+    'longitude': longitude,
+    'imageUrl': imageUrl,
   };
 
   static ScheduleItem fromMap(Map<String, dynamic> map) => ScheduleItem(
@@ -369,6 +387,10 @@ class ScheduleItem {
     (map['activity'] as String?) ?? 'Activity',
     _iconFromMap(map['type']),
     (map['cost'] as num?)?.toInt() ?? 0,
+    address: map['address'] as String?,
+    latitude: (map['latitude'] as num?)?.toDouble(),
+    longitude: (map['longitude'] as num?)?.toDouble(),
+    imageUrl: map['imageUrl'] as String?,
   );
 }
 
@@ -789,12 +811,27 @@ int? _firstEmptyScheduleDay(Trip trip, int? dateRangeDays) {
   final seen = <String>{};
   final items = [...trip.items]..sort(_compareRuntimeScheduleItems);
   for (final item in items) {
+    if (_isContextScheduleItem(item)) continue;
     final minutes = _parseActivityTimeMinutes(item.time);
     if (minutes == null) continue;
     final key = '${item.day}-$minutes';
     if (!seen.add(key)) return (day: item.day, time: item.time);
   }
   return null;
+}
+
+bool _isContextScheduleItem(ScheduleItem item) {
+  final activity = item.activity.toLowerCase();
+  if (item.type == Icons.cloud_rounded) return true;
+  return activity.contains('weather check') ||
+      activity.contains('rain chance') ||
+      activity.contains('rain expected') ||
+      activity.contains('pack umbrella') ||
+      activity.contains('indoor backup') ||
+      activity.startsWith('weather ') ||
+      activity.startsWith('ai weather ') ||
+      activity.startsWith('reminder:') ||
+      activity.startsWith('note:');
 }
 
 int _tripActualSpend(Trip trip) {

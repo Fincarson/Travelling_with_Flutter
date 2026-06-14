@@ -7,7 +7,6 @@ class TripDetailScreen extends StatelessWidget {
     required this.onOpenChat,
     required this.onOpenBudget,
     required this.onOpenPacking,
-    required this.onOpenMap,
     required this.onUpdateTrip,
     this.initialTabIndex = 0,
     this.initialAiPrompt,
@@ -18,7 +17,6 @@ class TripDetailScreen extends StatelessWidget {
   final VoidCallback onOpenChat;
   final VoidCallback onOpenBudget;
   final VoidCallback onOpenPacking;
-  final VoidCallback onOpenMap;
   final ValueChanged<Trip> onUpdateTrip;
   final int initialTabIndex;
   final String? initialAiPrompt;
@@ -29,7 +27,6 @@ class TripDetailScreen extends StatelessWidget {
       trip: trip,
       onBack: onBack,
       onOpenChat: onOpenChat,
-      onOpenMap: onOpenMap,
       onUpdateTrip: onUpdateTrip,
       initialTabIndex: initialTabIndex,
       initialAiPrompt: initialAiPrompt,
@@ -42,7 +39,6 @@ class _EditableTripDetailScreen extends StatefulWidget {
     required this.trip,
     required this.onBack,
     required this.onOpenChat,
-    required this.onOpenMap,
     required this.onUpdateTrip,
     required this.initialTabIndex,
     this.initialAiPrompt,
@@ -51,7 +47,6 @@ class _EditableTripDetailScreen extends StatefulWidget {
   final Trip trip;
   final VoidCallback onBack;
   final VoidCallback onOpenChat;
-  final VoidCallback onOpenMap;
   final ValueChanged<Trip> onUpdateTrip;
   final int initialTabIndex;
   final String? initialAiPrompt;
@@ -155,7 +150,7 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
       _TripDetailSection(
         label: 'Map',
         icon: Icons.map_rounded,
-        child: TripMapTab(trip: _trip, onOpenMap: widget.onOpenMap),
+        child: TripMapTab(trip: _trip),
       ),
       _TripDetailSection(
         label: 'Checklist',

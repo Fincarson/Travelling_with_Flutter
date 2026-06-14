@@ -51,6 +51,8 @@ class CreateTripDraft {
     'preferences': preferences,
   };
 
+  Map<String, dynamic> toMap() => toAiMap();
+
   static CreateTripDraft fromAiMap(
     Map<String, dynamic> map, {
     required CreateTripDraft fallback,
@@ -68,6 +70,10 @@ class CreateTripDraft {
           .toList(),
     );
   }
+
+  static CreateTripDraft fromMap(Map<String, dynamic> map) {
+    return CreateTripDraft.fromAiMap(map, fallback: const CreateTripDraft());
+  }
 }
 
 class CreateTripChatMessage {
@@ -80,6 +86,20 @@ class CreateTripChatMessage {
   final bool fromUser;
   final String text;
   final CreateTripChoiceWidget? widget;
+
+  Map<String, dynamic> toMap() => {
+    'fromUser': fromUser,
+    'text': text,
+    'widget': widget?.toMap(),
+  };
+
+  static CreateTripChatMessage fromMap(Map<String, dynamic> map) {
+    return CreateTripChatMessage(
+      fromUser: map['fromUser'] == true,
+      text: (map['text'] as String?) ?? '',
+      widget: CreateTripChoiceWidget.fromMap(map['widget']),
+    );
+  }
 }
 
 class CreateTripAiResponse {
@@ -116,6 +136,11 @@ class CreateTripChoiceWidget {
   final String title;
   final List<CreateTripChoiceOption> options;
 
+  Map<String, dynamic> toMap() => {
+    'title': title,
+    'options': options.map((option) => option.toMap()).toList(),
+  };
+
   static CreateTripChoiceWidget? fromMap(Object? value) {
     if (value is! Map) return null;
     final map = Map<String, dynamic>.from(value);
@@ -145,6 +170,12 @@ class CreateTripChoiceOption {
   final String label;
   final String value;
   final String description;
+
+  Map<String, dynamic> toMap() => {
+    'label': label,
+    'value': value,
+    'description': description,
+  };
 
   static CreateTripChoiceOption? fromMap(Map<dynamic, dynamic> map) {
     final label = _nonEmptyString(map['label']);

@@ -41,7 +41,7 @@ class PushTokenService {
         );
       }
 
-      final vapidKey = FirebasePushConfig.webVapidKey.trim();
+      final vapidKey = await FirebasePushConfig.loadWebVapidKey();
       if (kIsWeb && vapidKey.isEmpty) {
         return const PushTokenSyncResult(
           PushTokenSyncStatus.missingVapidKey,
@@ -78,6 +78,13 @@ class PushTokenService {
         return const PushTokenSyncResult(
           PushTokenSyncStatus.unsupported,
           'This browser is not accepting web push from the app right now.',
+        );
+      }
+      if (errorText.contains('notallowederror') ||
+          errorText.contains('permission denied')) {
+        return const PushTokenSyncResult(
+          PushTokenSyncStatus.denied,
+          'Browser notifications are blocked. Allow notifications in site settings, then press the bell again.',
         );
       }
       return PushTokenSyncResult(

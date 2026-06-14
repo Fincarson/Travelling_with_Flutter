@@ -90,6 +90,38 @@ class GeoapifyPlacesService {
     return _placeSuggestionsFromResults(results);
   }
 
+  Future<PlaceSuggestion?> searchItineraryStop({
+    required String query,
+    required String destination,
+    double? latitude,
+    double? longitude,
+  }) async {
+    final trimmed = query.trim();
+    if (trimmed.length < 3) return null;
+
+    try {
+      final places = LocalApiKeys.hasGeoapifyApiKey
+          ? await _searchItineraryStopDirectly(
+              query: trimmed,
+              destination: destination,
+              latitude: latitude,
+              longitude: longitude,
+            )
+          : await _searchItineraryStopWithFunction(
+              query: trimmed,
+              destination: destination,
+              latitude: latitude,
+              longitude: longitude,
+            );
+      if (places.isNotEmpty) return places.first;
+    } catch (_) {}
+
+    return _searchItineraryStopWithNominatim(
+      query: trimmed,
+      destination: destination,
+    );
+  }
+
   Future<List<PlaceSuggestion>> _searchDestinationsDirectly(
     String query,
   ) async {
@@ -215,6 +247,84 @@ class GeoapifyPlacesService {
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     final features = (body['features'] as List<dynamic>?) ?? const [];
     return _placeSuggestionsFromResults(features);
+  }
+
+  Future<List<PlaceSuggestion>> _searchItineraryStopWithFunction({
+    required String query,
+    required String destination,
+    double? latitude,
+    double? longitude,
+  }) async {
+    final callable = _functions.httpsCallable('searchItineraryStop');
+    final response = await callable.call<Map<String, dynamic>>({
+      'query': query,
+      'destination': destination,
+      'latitude': latitude,
+      'longitude': longitude,
+    });
+    final results = (response.data['results'] as List<dynamic>?) ?? const [];
+    return _placeSuggestionsFromResults(results);
+  }
+
+  Future<List<PlaceSuggestion>> _searchItineraryStopDirectly({
+    required String query,
+    required String destination,
+    double? latitude,
+    double? longitude,
+  }) async {
+    final params = {
+      'text': destination.trim().isEmpty ? query : '$query, $destination',
+      'format': 'json',
+      'limit': '4',
+      'apiKey': LocalApiKeys.geoapifyApiKey,
+      if (latitude != null && longitude != null)
+        'bias': 'proximity:$longitude,$latitude',
+    };
+    final url = Uri.https('api.geoapify.com', '/v1/geocode/search', params);
+    final response = await http.get(url);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Stop lookup is unavailable.');
+    }
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final results = (body['results'] as List<dynamic>?) ?? const [];
+    return _placeSuggestionsFromResults(results);
+  }
+
+  Future<PlaceSuggestion?> _searchItineraryStopWithNominatim({
+    required String query,
+    required String destination,
+  }) async {
+    final text = destination.trim().isEmpty ? query : '$query, $destination';
+    final url = Uri.https('nominatim.openstreetmap.org', '/search', {
+      'q': text,
+      'format': 'jsonv2',
+      'addressdetails': '1',
+      'limit': '1',
+    });
+    final response = await http.get(
+      url,
+      headers: const {
+        'User-Agent': 'TravellingWithFlutter/1.0 itinerary-map',
+        'Accept': 'application/json',
+      },
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) return null;
+
+    final results = jsonDecode(response.body);
+    if (results is! List || results.isEmpty || results.first is! Map) {
+      return null;
+    }
+    final item = Map<String, dynamic>.from(results.first as Map);
+    final displayName = (item['display_name'] as String?)?.trim();
+    if (displayName == null || displayName.isEmpty) return null;
+    return PlaceSuggestion(
+      name: displayName.split(',').first.trim(),
+      formatted: displayName,
+      latitude: double.tryParse((item['lat'] as String?) ?? '') ?? 0,
+      longitude: double.tryParse((item['lon'] as String?) ?? '') ?? 0,
+      placeId: 'osm-${item['osm_type'] ?? 'place'}-${item['osm_id'] ?? text}',
+      resultType: item['type'] as String?,
+    );
   }
 
   List<PlaceSuggestion> _placeSuggestionsFromResults(List<dynamic> results) {

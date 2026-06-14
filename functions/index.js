@@ -1,13 +1,15 @@
 /* global process */
 
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
+const {onDocumentCreated} = require("firebase-functions/v2/firestore");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 
 admin.initializeApp();
 
-const openAiModel = "gpt-5.5";
+const openAiChatModel = "gpt-5.4-mini";
+const openAiItineraryModel = "gpt-5.5";
 const openAiTimeoutMs = 30000;
 
 function geoapifyApiKey() {
@@ -46,12 +48,16 @@ const tripPlanInstructions = [
   "Every day must include realistic place-to-place movement between separated stops, such as walk, metro, taxi, train, airport transfer, or buffer time before the next venue.",
   "Do not list attractions back-to-back as if travel time is zero. Leave realistic gaps for transit, walking, queues, family pacing, meals, check-in, check-out, airport security, and baggage.",
   "If exact public transport schedules or flight times are uncertain, say to confirm the exact operator/time instead of presenting the time as guaranteed.",
+  "If flight details include departure or landing time/place, treat those as fixed user-provided constraints and build airport transfers and sightseeing around them.",
   "For international trips, do not end the itinerary at sightseeing. Add pack-up, airport or station transfer, departure, arrival, and return-home steps when the trip ends.",
   "For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.",
   "When moving to a different city or district, or when returning home, include pack-up/preparation wording before the transport.",
   "Choose transport by distance: local transit/taxi for nearby trips, train/bus/high-speed rail for regional trips, and flights only for genuinely long-distance trips.",
   "Never suggest a plane for short regional travel such as Hsinchu to Taipei.",
   "Use current-known attraction names, transportation options, ticket prices, and local food costs.",
+  "Use specific real place names or clearly named local areas. Do not use generic stop titles like \"signature landmark visit\", \"historic district walk\", \"scenic viewpoint stop\", or \"local scene stop\" unless the title also includes the actual venue or district name.",
+  "When the destination name has multiple comma-separated parts, keep enough administrative context to avoid choosing a different city with the same name.",
+  "For mappable sightseeing, food, shopping, museum, cafe, beach, hiking, and temple stops, include address, latitude, longitude, and imageUrl when known; use null only for non-place reminders, uncertain transport, or unknown coordinates.",
   "When live data may vary, mark times, prices, and operator details as approximate and tell the user to confirm before departure.",
   "Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.",
 ].join(" ");
@@ -157,8 +163,22 @@ const tripPlanFormat = {
               ],
             },
             cost: {type: "integer"},
+            address: {type: ["string", "null"]},
+            latitude: {type: ["number", "null"]},
+            longitude: {type: ["number", "null"]},
+            imageUrl: {type: ["string", "null"]},
           },
-          required: ["day", "time", "activity", "type", "cost"],
+          required: [
+            "day",
+            "time",
+            "activity",
+            "type",
+            "cost",
+            "address",
+            "latitude",
+            "longitude",
+            "imageUrl",
+          ],
         },
       },
       bookings: {
@@ -537,6 +557,50 @@ exports.searchNearbyPlaces = onCall(
   },
 );
 
+exports.searchItineraryStop = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const query = String(request.data?.query ?? "").trim();
+    const destination = String(request.data?.destination ?? "").trim();
+    const latitude = Number(request.data?.latitude);
+    const longitude = Number(request.data?.longitude);
+    if (query.length < 3) {
+      return {results: []};
+    }
+
+    const apiKey = geoapifyApiKey();
+    if (!apiKey) {
+      logger.error("Geoapify itinerary stop lookup is not configured");
+      throw new HttpsError(
+        "failed-precondition",
+        "Itinerary stop lookup is not configured.",
+      );
+    }
+
+    try {
+      const results = await fetchGeoapifyStopSearch({
+        query,
+        destination,
+        latitude,
+        longitude,
+        apiKey,
+      });
+      return {
+        results: rankGeoapifyResults(results, query).slice(0, 4),
+      };
+    } catch (error) {
+      logger.error("Geoapify itinerary stop lookup failed", {
+        query,
+        destination,
+        message: error?.message,
+      });
+      throw new HttpsError("unavailable", "Itinerary stop lookup is unavailable.");
+    }
+  },
+);
+
 async function fetchGeoapifyAutocomplete({query, type, apiKey}) {
   const url = new URL("https://api.geoapify.com/v1/geocode/autocomplete");
   url.searchParams.set("text", query);
@@ -578,6 +642,36 @@ async function fetchGeoapifyReverse({latitude, longitude, apiKey}) {
   return Array.isArray(body.results) && body.results.length
     ? body.results[0]
     : null;
+}
+
+async function fetchGeoapifyStopSearch({
+  query,
+  destination,
+  latitude,
+  longitude,
+  apiKey,
+}) {
+  const url = new URL("https://api.geoapify.com/v1/geocode/search");
+  const text = destination ? `${query}, ${destination}` : query;
+  url.searchParams.set("text", text);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("limit", "4");
+  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    url.searchParams.set("bias", `proximity:${longitude},${latitude}`);
+  }
+  url.searchParams.set("apiKey", apiKey);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Geoapify stop search failed with ${response.status}: ` +
+      detail.slice(0, 300),
+    );
+  }
+
+  const body = await response.json();
+  return Array.isArray(body.results) ? body.results : [];
 }
 
 async function fetchGeoapifyPlaces({
@@ -705,6 +799,348 @@ function normalizedPlaceName(value) {
     .replace(/[^a-z0-9]+/g, "");
 }
 
+function validateTripPlanRequest(data) {
+  const place = data.place ?? {};
+  const destination = String(place.name ?? "").trim();
+  const startDate = String(data.startDate ?? "").trim();
+  const endDate = String(data.endDate ?? "").trim();
+  const budget = Number.parseInt(data.budget, 10);
+
+  if (!destination || !startDate || !endDate || !Number.isFinite(budget)) {
+    throw new HttpsError("invalid-argument", "Trip details are required.");
+  }
+}
+
+async function generateTripPlanFromRequest(data, options = {}) {
+  validateTripPlanRequest(data);
+  const place = data.place ?? {};
+  const destination = String(place.name ?? "").trim();
+  const startDate = String(data.startDate ?? "").trim();
+  const endDate = String(data.endDate ?? "").trim();
+  const budget = Number.parseInt(data.budget, 10);
+  const languageInstructions = outputLanguageInstructions(
+    data.profileLanguage,
+    data.outputLanguage,
+  );
+
+  const plan = await createStructuredResponse({
+    instructions: `${tripPlanInstructions} ${languageInstructions}`,
+    input: {
+      destination,
+      formattedAddress: String(place.formatted ?? destination),
+      destinationLocation: {
+        latitude: Number(place.latitude ?? 0),
+        longitude: Number(place.longitude ?? 0),
+      },
+      startDate,
+      endDate,
+      budget,
+      currency: String(data.currency ?? "USD"),
+      profileLanguage: String(data.profileLanguage ?? "en"),
+      outputLanguage: aiLanguageName(data.profileLanguage, data.outputLanguage),
+      groupType: String(data.groupType ?? "Solo"),
+      preferences: Array.isArray(data.preferences) ? data.preferences : [],
+      flight: {
+        airline: String(data.airline ?? ""),
+        flightNumber: String(data.flightCode ?? ""),
+        departureTime: String(data.flightDepartureTime ?? ""),
+        departurePlace: String(data.flightDeparturePlace ?? ""),
+        landingTime: String(data.flightLandingTime ?? ""),
+        landingPlace: String(data.flightLandingPlace ?? ""),
+      },
+      startLocation: data.startLocation ?? null,
+      appContext: data.appContext ?? null,
+    },
+    format: tripPlanFormat,
+    logContext: "OpenAI itinerary generation failed",
+    publicMessage: "AI itinerary generation failed.",
+    timeoutMs: options.timeoutMs,
+  });
+  return enrichTripPlanPlaces(plan, {
+    destination,
+    latitude: Number(place.latitude ?? 0),
+    longitude: Number(place.longitude ?? 0),
+  });
+}
+
+function sanitizedTripPreviewRequest(data) {
+  const place = data.place ?? {};
+  return {
+    place: {
+      name: String(place.name ?? "").trim(),
+      formatted: String(place.formatted ?? place.name ?? "").trim(),
+      latitude: Number(place.latitude ?? 0),
+      longitude: Number(place.longitude ?? 0),
+      placeId: String(place.placeId ?? place.formatted ?? place.name ?? ""),
+      country: place.country ? String(place.country) : null,
+    },
+    startDate: String(data.startDate ?? "").trim(),
+    endDate: String(data.endDate ?? "").trim(),
+    budget: Number.parseInt(data.budget, 10),
+    groupType: String(data.groupType ?? "Solo"),
+    preferences: Array.isArray(data.preferences) ?
+      data.preferences.map((item) => String(item)).slice(0, 20) :
+      [],
+    currency: String(data.currency ?? "USD"),
+    profileLanguage: String(data.profileLanguage ?? "en"),
+    outputLanguage: String(data.outputLanguage ?? ""),
+    airline: String(data.airline ?? ""),
+    flightCode: String(data.flightCode ?? ""),
+    flightDepartureTime: String(data.flightDepartureTime ?? ""),
+    flightDeparturePlace: String(data.flightDeparturePlace ?? ""),
+    flightLandingTime: String(data.flightLandingTime ?? ""),
+    flightLandingPlace: String(data.flightLandingPlace ?? ""),
+    startLocation: data.startLocation ?? null,
+    appContext: data.appContext ?? null,
+    fallbackImages: Array.isArray(data.fallbackImages) ?
+      data.fallbackImages
+        .map((item) => String(item))
+        .filter((item) => item.startsWith("https://"))
+        .slice(0, 8) :
+      [],
+  };
+}
+
+async function enrichTripPlanPlaces(plan, destinationContext) {
+  const apiKey = geoapifyApiKey();
+  if (!apiKey || !Array.isArray(plan.items)) return plan;
+
+  const enrichedItems = [];
+  for (const item of plan.items) {
+    const enriched = {...item};
+    if (shouldEnrichScheduleItem(item)) {
+      try {
+        const query = scheduleItemPlaceQuery(item);
+        const results = await fetchGeoapifyStopSearch({
+          query,
+          destination: destinationContext.destination,
+          latitude: destinationContext.latitude,
+          longitude: destinationContext.longitude,
+          apiKey,
+        });
+        const place = rankGeoapifyResults(results, query)[0];
+        if (place && shouldAcceptEnrichedPlace(item, place, destinationContext)) {
+          enriched.address = place.formatted;
+          enriched.latitude = place.latitude;
+          enriched.longitude = place.longitude;
+        }
+        const image = await firstPreviewImageForQueries([
+          `${query} ${destinationContext.destination}`,
+          query,
+          destinationContext.destination,
+        ]);
+        if (image) enriched.imageUrl = image;
+      } catch (error) {
+        logger.warn("Schedule item enrichment failed", {
+          activity: item.activity,
+          message: error?.message,
+        });
+      }
+    }
+    enrichedItems.push(enriched);
+  }
+  return {...plan, items: enrichedItems};
+}
+
+function shouldEnrichScheduleItem(item) {
+  const activity = String(item?.activity ?? "").trim().toLowerCase();
+  if (activity.length < 3) return false;
+  if (isGenericScheduleActivity(activity)) return false;
+  if (activity.includes("weather check") || activity.includes("rain chance")) {
+    return false;
+  }
+  if (
+    activity.includes("rain expected") ||
+    activity.includes("pack umbrella") ||
+    activity.includes("raincoat") ||
+    activity.includes("protect tickets") ||
+    activity.includes("indoor backup") ||
+    activity.startsWith("weather ") ||
+    activity.startsWith("ai weather ") ||
+    activity.startsWith("reminder:") ||
+    activity.startsWith("note:") ||
+    activity.startsWith("pack ") ||
+    activity.startsWith("prepare ") ||
+    activity.startsWith("bring ")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isGenericScheduleActivity(activity) {
+  return activity.includes("signature landmark") ||
+    activity.includes("transit-friendly district route") ||
+    activity.includes("scenic walk, riverside, or viewpoint") ||
+    activity.includes("find the best local scene") ||
+    activity.includes("nearby cafe or market stop") ||
+    activity.includes("known landmark or historic area") ||
+    activity.includes("local lunch area") ||
+    activity.includes("dinner near the evening area") ||
+    activity.includes("easy evening viewpoint") ||
+    activity.includes("shopping street or neighborhood browse") ||
+    activity.includes("food market or local specialty lunch") ||
+    activity.includes("golden-hour park, bridge, or plaza");
+}
+
+function shouldAcceptEnrichedPlace(item, place, destinationContext) {
+  const destinationLat = Number(destinationContext.latitude);
+  const destinationLng = Number(destinationContext.longitude);
+  const placeLat = Number(place.latitude);
+  const placeLng = Number(place.longitude);
+  if (
+    !Number.isFinite(destinationLat) ||
+    !Number.isFinite(destinationLng) ||
+    !Number.isFinite(placeLat) ||
+    !Number.isFinite(placeLng) ||
+    destinationLat === 0 ||
+    destinationLng === 0 ||
+    placeLat === 0 ||
+    placeLng === 0
+  ) {
+    return true;
+  }
+  const distance = distanceKm(destinationLat, destinationLng, placeLat, placeLng);
+  if (distance <= 80) return true;
+  return isLongDistanceScheduleItem(item);
+}
+
+function isLongDistanceScheduleItem(item) {
+  const activity = String(item?.activity ?? "").toLowerCase();
+  const type = String(item?.type ?? "").toLowerCase();
+  return type === "flight" ||
+    activity.includes("flight ") ||
+    activity.includes("fly ") ||
+    activity.includes("airport") ||
+    activity.includes("intercity") ||
+    activity.includes("long-haul") ||
+    activity.includes("return home") ||
+    activity.includes("go home");
+}
+
+function scheduleItemPlaceQuery(item) {
+  return String(item?.activity ?? "")
+    .replace(/\b(move|transfer|walk|visit|stop|check)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function distanceKm(lat1, lng1, lat2, lng2) {
+  const radiusKm = 6371;
+  const dLat = degreesToRadians(lat2 - lat1);
+  const dLng = degreesToRadians(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(degreesToRadians(lat1)) *
+      Math.cos(degreesToRadians(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return radiusKm * c;
+}
+
+function degreesToRadians(degrees) {
+  return degrees * Math.PI / 180;
+}
+
+async function previewImagesForJob(requestData, plan) {
+  const fallbackImages = Array.isArray(requestData.fallbackImages) ?
+    requestData.fallbackImages :
+    [];
+  const itemImages = Array.isArray(plan?.items) ?
+    plan.items
+      .map((item) => item.imageUrl)
+      .filter((image) => typeof image === "string" && image.startsWith("https://")) :
+    [];
+  const itemQueries = Array.isArray(plan?.items) ?
+    plan.items
+      .filter(shouldEnrichScheduleItem)
+      .map((item) => `${scheduleItemPlaceQuery(item)} ${requestData.place?.name}`)
+      .slice(0, 6) :
+    [];
+  const searchedImages = [];
+  for (const query of itemQueries) {
+    searchedImages.push(...await fetchWikimediaPreviewImages(query));
+  }
+  if (!searchedImages.length) {
+    searchedImages.push(
+      ...await fetchWikimediaPreviewImages(requestData.place?.name),
+    );
+  }
+  const seen = new Set();
+  return [...itemImages, ...searchedImages, ...fallbackImages]
+    .filter((image) => typeof image === "string" && image.startsWith("https://"))
+    .filter((image) => {
+      if (seen.has(image)) return false;
+      seen.add(image);
+      return true;
+    })
+    .slice(0, 8);
+}
+
+async function firstPreviewImageForQueries(queries) {
+  for (const query of queries) {
+    const images = await fetchWikimediaPreviewImages(query);
+    if (images.length) return images[0];
+  }
+  return null;
+}
+
+async function fetchWikimediaPreviewImages(destination) {
+  const query = `${String(destination ?? "").trim()} travel landmark`.trim();
+  if (!query) return [];
+
+  const url = new URL("https://commons.wikimedia.org/w/api.php");
+  url.searchParams.set("action", "query");
+  url.searchParams.set("generator", "search");
+  url.searchParams.set("gsrsearch", query);
+  url.searchParams.set("gsrnamespace", "6");
+  url.searchParams.set("gsrlimit", "8");
+  url.searchParams.set("prop", "imageinfo");
+  url.searchParams.set("iiprop", "url");
+  url.searchParams.set("iiurlwidth", "900");
+  url.searchParams.set("format", "json");
+  url.searchParams.set("origin", "*");
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "TravellingWithFlutter/1.0 trip-preview-jobs",
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return [];
+    const body = await response.json();
+    const pages = body?.query?.pages ?? {};
+    return Object.values(pages)
+      .flatMap((page) => Array.isArray(page.imageinfo) ? page.imageinfo : [])
+      .map((info) => info.thumburl ?? info.url)
+      .filter(isPreviewImageUrl)
+      .slice(0, 8);
+  } catch (error) {
+    logger.warn("Preview image search failed", {
+      destination,
+      message: error?.message,
+    });
+    return [];
+  }
+}
+
+function isPreviewImageUrl(value) {
+  const lower = String(value ?? "").toLowerCase();
+  return lower.startsWith("https://") &&
+    (lower.includes(".jpg") ||
+      lower.includes(".jpeg") ||
+      lower.includes(".png") ||
+      lower.includes(".webp"));
+}
+
+function publicTripPreviewError(error) {
+  if (error instanceof HttpsError) return error.message;
+  return "AI could not finish the itinerary preview. Please try again.";
+}
+
 exports.chatWithAssistant = onCall(
   {
     region: "us-central1",
@@ -720,7 +1156,7 @@ exports.chatWithAssistant = onCall(
 
     const response = await fetchOpenAiResponses({
       payload: {
-        model: openAiModel,
+        model: openAiChatModel,
         instructions: travelAssistantInstructions,
         input: JSON.stringify({
           message,
@@ -755,54 +1191,101 @@ exports.chatWithAssistant = onCall(
 exports.generateTripPlan = onCall(
   {
     region: "us-central1",
+    timeoutSeconds: 120,
+    memory: "512MiB",
   },
   async (request) => {
-    const data = request.data ?? {};
-    const place = data.place ?? {};
-    const destination = String(place.name ?? "").trim();
-    const startDate = String(data.startDate ?? "").trim();
-    const endDate = String(data.endDate ?? "").trim();
-    const budget = Number.parseInt(data.budget, 10);
+    const plan = await generateTripPlanFromRequest(request.data ?? {}, {
+      timeoutMs: 90000,
+    });
+    return {plan};
+  },
+);
 
-    if (!destination || !startDate || !endDate || !Number.isFinite(budget)) {
-      throw new HttpsError("invalid-argument", "Trip details are required.");
+exports.createTripPreviewJob = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const userId = request.auth?.uid;
+    if (!userId) {
+      throw new HttpsError("unauthenticated", "Sign in to create a preview.");
     }
 
-    const languageInstructions = outputLanguageInstructions(
-      data.profileLanguage,
-      data.outputLanguage,
-    );
+    validateTripPlanRequest(request.data ?? {});
+    const jobRef = admin
+      .firestore()
+      .collection("travel_users")
+      .doc(userId)
+      .collection("tripPreviewJobs")
+      .doc();
 
-    const plan = await createStructuredResponse({
-      instructions: `${tripPlanInstructions} ${languageInstructions}`,
-      input: {
-        destination,
-        formattedAddress: String(place.formatted ?? destination),
-        destinationLocation: {
-          latitude: Number(place.latitude ?? 0),
-          longitude: Number(place.longitude ?? 0),
-        },
-        startDate,
-        endDate,
-        budget,
-        currency: String(data.currency ?? "USD"),
-        profileLanguage: String(data.profileLanguage ?? "en"),
-        outputLanguage: aiLanguageName(data.profileLanguage, data.outputLanguage),
-        groupType: String(data.groupType ?? "Solo"),
-        preferences: Array.isArray(data.preferences) ? data.preferences : [],
-        flight: {
-          airline: String(data.airline ?? ""),
-          confirmation: String(data.flightConfirmation ?? ""),
-        },
-        startLocation: data.startLocation ?? null,
-        appContext: data.appContext ?? null,
-      },
-      format: tripPlanFormat,
-      logContext: "OpenAI itinerary generation failed",
-      publicMessage: "AI itinerary generation failed.",
+    await jobRef.set({
+      ownerId: userId,
+      status: "queued",
+      request: sanitizedTripPreviewRequest(request.data ?? {}),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    return {plan};
+    return {jobId: jobRef.id};
+  },
+);
+
+exports.runTripPreviewJob = onDocumentCreated(
+  {
+    region: "us-central1",
+    document: "travel_users/{userId}/tripPreviewJobs/{jobId}",
+    timeoutSeconds: 120,
+    memory: "512MiB",
+  },
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) return;
+
+    const data = snapshot.data() ?? {};
+    if (data.status !== "queued") return;
+
+    const userId = event.params.userId;
+    const jobId = event.params.jobId;
+    const jobRef = admin
+      .firestore()
+      .collection("travel_users")
+      .doc(userId)
+      .collection("tripPreviewJobs")
+      .doc(jobId);
+
+    await jobRef.set({
+      status: "running",
+      startedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, {merge: true});
+
+    try {
+      const requestData = data.request ?? {};
+      const plan = await generateTripPlanFromRequest(requestData, {
+        timeoutMs: 90000,
+      });
+      const images = await previewImagesForJob(requestData, plan);
+      await jobRef.set({
+        status: "ready",
+        result: {plan, images},
+        finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, {merge: true});
+    } catch (error) {
+      logger.error("Trip preview job failed", {
+        userId,
+        jobId,
+        message: error?.message,
+      });
+      await jobRef.set({
+        status: "failed",
+        errorMessage: publicTripPreviewError(error),
+        finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, {merge: true});
+    }
   },
 );
 
@@ -999,6 +1482,7 @@ exports.createTripReply = onCall(
     );
 
     const reply = await createStructuredResponse({
+      model: openAiChatModel,
       instructions: `${createTripInstructions} ${languageInstructions}`,
       input: {
         latestMessage: message,
@@ -1015,14 +1499,6 @@ exports.createTripReply = onCall(
         appContext: request.data?.appContext ?? null,
       },
       format: createTripReplyFormat,
-      tools: [
-        {
-          type: "web_search",
-          search_context_size: "low",
-          external_web_access: true,
-        },
-      ],
-      toolChoice: "auto",
       logContext: "OpenAI create trip chat failed",
       publicMessage: "AI create trip chat failed.",
     });
@@ -1450,6 +1926,7 @@ function dateKey(date) {
 }
 
 async function createStructuredResponse({
+  model = openAiItineraryModel,
   instructions,
   input,
   format,
@@ -1457,9 +1934,10 @@ async function createStructuredResponse({
   toolChoice,
   logContext,
   publicMessage,
+  timeoutMs,
 }) {
   const payload = {
-    model: openAiModel,
+    model,
     instructions,
     input: JSON.stringify(input),
     store: false,
@@ -1480,6 +1958,7 @@ async function createStructuredResponse({
     payload,
     logContext,
     publicMessage,
+    timeoutMs,
   });
 
   if (!response.ok) {
@@ -1495,7 +1974,12 @@ async function createStructuredResponse({
   return decodeJsonObject(outputText(body));
 }
 
-async function fetchOpenAiResponses({payload, logContext, publicMessage}) {
+async function fetchOpenAiResponses({
+  payload,
+  logContext,
+  publicMessage,
+  timeoutMs = openAiTimeoutMs,
+}) {
   try {
     return await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -1503,14 +1987,14 @@ async function fetchOpenAiResponses({payload, logContext, publicMessage}) {
         "Authorization": `Bearer ${openAiApiKey()}`,
         "Content-Type": "application/json",
       },
-      signal: AbortSignal.timeout(openAiTimeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify(payload),
     });
   } catch (error) {
     const timedOut = error?.name === "AbortError" ||
       error?.name === "TimeoutError";
     logger.error(logContext, {
-      timeoutMs: openAiTimeoutMs,
+      timeoutMs,
       message: error?.message,
     });
     throw new HttpsError(

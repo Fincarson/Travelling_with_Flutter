@@ -9,10 +9,7 @@ class DashboardScreen extends StatefulWidget {
     required this.onOpenTrip,
     required this.onStartTrip,
     required this.onAskAi,
-    required this.onOpenMap,
-    required this.onOpenInfo,
-    required this.onOpenTranslate,
-    required this.onEnableNotifications,
+    required this.onOpenNotifications,
     super.key,
   });
   final UserProfile user;
@@ -22,10 +19,7 @@ class DashboardScreen extends StatefulWidget {
   final ValueChanged<Trip> onOpenTrip;
   final ValueChanged<Trip> onStartTrip;
   final ValueChanged<String> onAskAi;
-  final VoidCallback onOpenMap;
-  final VoidCallback onOpenInfo;
-  final VoidCallback onOpenTranslate;
-  final VoidCallback onEnableNotifications;
+  final VoidCallback onOpenNotifications;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -73,7 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             borderRadius: BorderRadius.circular(18),
                           ),
                         ),
-                        onPressed: widget.onEnableNotifications,
+                        onPressed: widget.onOpenNotifications,
                         icon: const Icon(Icons.notifications_none_rounded),
                       ),
                     ),
@@ -94,7 +88,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             },
           ),
           const SizedBox(height: 10),
-          if (widget.user.notificationsEnabled) const AlertRail(),
+          AlertRail(trip: trip),
           const SizedBox(height: 28),
           if (trip == null) ...[
             _EmptyTripCard(onCreate: widget.onCreate),
@@ -107,31 +101,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onStart: trip.status == TripStatus.ongoing
                   ? null
                   : () => widget.onStartTrip(trip),
-            ),
-            const SizedBox(height: 22),
-            ResponsiveActionWrap(
-              children: [
-                QuickAction(
-                  icon: Icons.info_outline_rounded,
-                  label: 'Info',
-                  onTap: widget.onOpenInfo,
-                ),
-                QuickAction(
-                  icon: Icons.map_rounded,
-                  label: 'Map',
-                  onTap: widget.onOpenMap,
-                ),
-                QuickAction(
-                  icon: Icons.translate_rounded,
-                  label: 'Translate',
-                  onTap: widget.onOpenTranslate,
-                ),
-                QuickAction(
-                  icon: Icons.auto_awesome_rounded,
-                  label: 'AI',
-                  onTap: () => widget.onAskAi(_dailyTripPrompt(trip)),
-                ),
-              ],
             ),
           ],
           const SizedBox(height: 28),
@@ -153,20 +122,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
-}
-
-String _dailyTripPrompt(Trip trip) {
-  if (trip.status != TripStatus.ongoing) {
-    return 'Help me prepare to start my ${trip.destination} trip.';
-  }
-  final runtime = _tripRuntimePlan(trip);
-  final next = runtime.nextItem;
-  final base =
-      'I am currently running my ${trip.destination} trip. Today is day ${runtime.currentDay} of ${runtime.totalDays}.';
-  if (next == null) {
-    return '$base Help me plan the rest of today based on my schedule, current time, and location if available.';
-  }
-  return '$base My next scheduled activity is "${next.activity}" at ${next.time}. Help me run today smoothly using current time and location if available.';
 }
 
 class _EmptyTripCard extends StatelessWidget {
@@ -203,6 +158,192 @@ class _EmptyTripCard extends StatelessWidget {
             label: 'Create schedule',
             icon: Icons.add_rounded,
             onPressed: onCreate,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationCenterSheet extends StatelessWidget {
+  const _NotificationCenterSheet({
+    required this.notificationsEnabled,
+    required this.trip,
+    required this.upcomingTripCount,
+    required this.onEnableNotifications,
+    required this.onOpenTrip,
+  });
+
+  final bool notificationsEnabled;
+  final Trip? trip;
+  final int upcomingTripCount;
+  final VoidCallback onEnableNotifications;
+  final VoidCallback? onOpenTrip;
+
+  @override
+  Widget build(BuildContext context) {
+    final updates = [
+      ..._generalAgentFallbackUpdates(),
+      if (trip != null) ..._dailyAgentUpdates(trip!),
+    ];
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(28),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 52,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD8DEE4),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const IconBadge(
+                      icon: Icons.notifications_active_rounded,
+                      size: 48,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const LabelText('Notification center'),
+                          const SizedBox(height: 3),
+                          Text(
+                            notificationsEnabled
+                                ? 'Daily agent notifications are ready.'
+                                : 'Notifications are off for this browser.',
+                            style: const TextStyle(
+                              color: _primary,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    SmallPill(
+                      label: notificationsEnabled ? 'Enabled' : 'Needs setup',
+                    ),
+                    SmallPill(label: '$upcomingTripCount active/upcoming'),
+                    if (trip != null) SmallPill(label: trip!.destination),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                for (final update in updates.take(4)) ...[
+                  _NotificationUpdateTile(update: update),
+                  const SizedBox(height: 8),
+                ],
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: onOpenTrip,
+                        icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                        label: Text(appText(context, 'Open trip')),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: onEnableNotifications,
+                        icon: Icon(
+                          notificationsEnabled
+                              ? Icons.sync_rounded
+                              : Icons.notifications_active_rounded,
+                          size: 18,
+                        ),
+                        label: Text(
+                          appText(
+                            context,
+                            notificationsEnabled ? 'Refresh' : 'Enable',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationUpdateTile extends StatelessWidget {
+  const _NotificationUpdateTile({required this.update});
+
+  final _DailyAgentUpdate update;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8FA),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          IconBadge(icon: update.icon, size: 40),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, update.title),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _primary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  appText(context, update.detail),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),

@@ -7,10 +7,12 @@ class TravelAssistantService {
 
   static const _chatTimeout = Duration(seconds: 20);
   static const _createTripReplyTimeout = Duration(seconds: 35);
-  static const _tripPlanTimeout = Duration(seconds: 35);
+  static const _tripPlanTimeout = Duration(seconds: 100);
   static const _scheduleStopTimeout = Duration(seconds: 18);
   static const _dayPlanEditTimeout = Duration(seconds: 28);
   static const _transportRecommendationsTimeout = Duration(seconds: 35);
+  static const _fastChatModel = 'gpt-5.4-mini';
+  static const _smartItineraryModel = 'gpt-5.5';
 
   final FirebaseFunctions _functions;
   final _deviceContext = AppDeviceContextService();
@@ -48,7 +50,7 @@ class TravelAssistantService {
             'Content-Type': 'application/json',
           },
           body: jsonEncode({
-            'model': 'gpt-5.5',
+            'model': _fastChatModel,
             'instructions':
                 'You are a concise travel planning assistant inside a mobile app. '
                 'Help with schedule order, budget tradeoffs, packing, food, '
@@ -101,7 +103,11 @@ class TravelAssistantService {
     AppDeviceContext? appContext,
     TripStartLocation? startLocation,
     String airline = '',
-    String flightConfirmation = '',
+    String flightCode = '',
+    String flightDepartureTime = '',
+    String flightDeparturePlace = '',
+    String flightLandingTime = '',
+    String flightLandingPlace = '',
   }) async {
     final resolvedAppContext =
         appContext ?? await _deviceContext.load(requestLocation: true);
@@ -129,7 +135,11 @@ class TravelAssistantService {
             'profileLanguage': profileLanguage,
             'outputLanguage': outputLanguage,
             'airline': airline,
-            'flightConfirmation': flightConfirmation,
+            'flightCode': flightCode,
+            'flightDepartureTime': flightDepartureTime,
+            'flightDeparturePlace': flightDeparturePlace,
+            'flightLandingTime': flightLandingTime,
+            'flightLandingPlace': flightLandingPlace,
             'startLocation': tripStartLocation?.toAiMap(),
             'appContext': resolvedAppContext.toAiMap(),
           })
@@ -156,7 +166,7 @@ class TravelAssistantService {
             'Content-Type': 'application/json',
           },
           body: jsonEncode({
-            'model': 'gpt-5.5',
+            'model': _smartItineraryModel,
             'instructions': [
               'Generate a practical travel schedule as strict JSON only.',
               'Use current attraction names for the destination.',
@@ -176,12 +186,16 @@ class TravelAssistantService {
               'Every day must include realistic place-to-place movement between separated stops, such as walk, metro, taxi, train, airport transfer, or buffer time before the next venue.',
               'Do not list attractions back-to-back as if travel time is zero. Leave realistic gaps for transit, walking, queues, family pacing, meals, check-in, check-out, airport security, and baggage.',
               'If exact public transport schedules or flight times are uncertain, say to confirm the exact operator/time instead of presenting the time as guaranteed.',
+              'If flight details include departure or landing time/place, treat those as fixed user-provided constraints and build airport transfers and sightseeing around them.',
               'For international trips, do not end the itinerary at sightseeing. Add pack-up, airport or station transfer, departure, arrival, and return-home steps when the trip ends.',
               'For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.',
               'When moving to a different city or district, or when returning home, include pack-up/preparation wording before the transport.',
               'Choose transport by distance: local transit/taxi for nearby trips, train/bus/high-speed rail for regional trips, and flights only for genuinely long-distance trips.',
               'Never suggest a plane for short regional travel such as Hsinchu to Taipei.',
               'Use current-known attraction names, transportation options, ticket prices, and local food costs.',
+              'Use specific real place names or clearly named local areas. Do not use generic stop titles like "signature landmark visit", "historic district walk", "scenic viewpoint stop", or "local scene stop" unless the title also includes the actual venue or district name.',
+              'When the destination name has multiple comma-separated parts, keep enough administrative context to avoid choosing a different city with the same name.',
+              'For mappable sightseeing, food, shopping, museum, cafe, beach, hiking, and temple stops, include address, latitude, longitude, and imageUrl when you can; use null only for non-place reminders, uncertain transport, or unknown coordinates.',
               'When live data may vary, mark times, prices, and operator details as approximate and tell the user to confirm before departure.',
               'Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.',
               'Write all user-facing itinerary text in $outputLanguage.',
@@ -205,7 +219,11 @@ class TravelAssistantService {
               'preferences': preferences,
               'flight': {
                 'airline': airline,
-                'confirmation': flightConfirmation,
+                'flightNumber': flightCode,
+                'departureTime': flightDepartureTime,
+                'departurePlace': flightDeparturePlace,
+                'landingTime': flightLandingTime,
+                'landingPlace': flightLandingPlace,
               },
               'startLocation': tripStartLocation?.toAiMap(),
               'appContext': resolvedAppContext.toAiMap(),
@@ -217,6 +235,10 @@ class TravelAssistantService {
                     'activity': 'Activity name',
                     'type': 'place|food|walk|museum|beach|shopping|train',
                     'cost': 25,
+                    'address': 'Venue address or null',
+                    'latitude': -6.9175,
+                    'longitude': 107.6191,
+                    'imageUrl': 'https://example.com/photo.jpg or null',
                   },
                 ],
                 'bookings': [
@@ -314,7 +336,7 @@ class TravelAssistantService {
             'Content-Type': 'application/json',
           },
           body: jsonEncode({
-            'model': 'gpt-5.5',
+            'model': _smartItineraryModel,
             'instructions': [
               'Generate exactly one practical schedule stop as strict JSON only.',
               'Fit it into the requested trip day without duplicating existing stops.',
@@ -389,7 +411,7 @@ class TravelAssistantService {
             'Content-Type': 'application/json',
           },
           body: jsonEncode({
-            'model': 'gpt-5.5',
+            'model': _smartItineraryModel,
             'instructions': [
               'You are editing one day of a travel itinerary inside a mobile app.',
               'First judge whether the requested place can realistically fit into the target day.',
@@ -468,7 +490,7 @@ class TravelAssistantService {
             'Content-Type': 'application/json',
           },
           body: jsonEncode({
-            'model': 'gpt-5.5',
+            'model': _smartItineraryModel,
             'instructions': [
               'Find practical transportation options for a travel app booking workspace.',
               'Use web search data from multiple booking or travel information sources when available, such as airline sites, rail operators, bus operators, Traveloka, Klook, Skyscanner, Google Flights snippets, Rome2Rio-style route data, or local transit providers.',
@@ -552,7 +574,7 @@ class TravelAssistantService {
             'Content-Type': 'application/json',
           },
           body: jsonEncode({
-            'model': 'gpt-5.5',
+            'model': _fastChatModel,
             'instructions': [
               'You are the Create Trip assistant inside a mobile travel app.',
               'Actually interpret the user message and update the trip draft.',
@@ -595,14 +617,6 @@ class TravelAssistantService {
               'appContext': appContext.toAiMap(),
             }),
             'store': false,
-            'tools': [
-              {
-                'type': 'web_search',
-                'search_context_size': 'low',
-                'external_web_access': true,
-              },
-            ],
-            'tool_choice': 'auto',
             'reasoning': {'effort': 'low'},
             'text': {
               'verbosity': 'low',
@@ -633,6 +647,10 @@ ScheduleItem _scheduleItemFromAiMap(
     item.activity.trim().isEmpty ? 'Suggested stop' : item.activity,
     item.type,
     item.cost < 0 ? 0 : item.cost,
+    address: item.address,
+    latitude: item.latitude,
+    longitude: item.longitude,
+    imageUrl: item.imageUrl,
   );
 }
 
@@ -642,6 +660,10 @@ Map<String, dynamic> _scheduleItemToAiMap(ScheduleItem item) => {
   'activity': item.activity,
   'type': _iconName(item.type),
   'cost': item.cost,
+  'address': item.address,
+  'latitude': item.latitude,
+  'longitude': item.longitude,
+  'imageUrl': item.imageUrl,
 };
 
 class DayPlanEditResult {
@@ -815,8 +837,30 @@ Map<String, dynamic> _tripPlanTextFormat() => {
               ],
             },
             'cost': {'type': 'integer'},
+            'address': {
+              'type': ['string', 'null'],
+            },
+            'latitude': {
+              'type': ['number', 'null'],
+            },
+            'longitude': {
+              'type': ['number', 'null'],
+            },
+            'imageUrl': {
+              'type': ['string', 'null'],
+            },
           },
-          'required': ['day', 'time', 'activity', 'type', 'cost'],
+          'required': [
+            'day',
+            'time',
+            'activity',
+            'type',
+            'cost',
+            'address',
+            'latitude',
+            'longitude',
+            'imageUrl',
+          ],
         },
       },
       'bookings': {
@@ -1075,6 +1119,12 @@ class GeneratedTripPlan {
   final List<Booking> bookings;
   final List<ChecklistCategory> checklist;
 
+  Map<String, dynamic> toMap() => {
+    'items': items.map((item) => item.toMap()).toList(),
+    'bookings': bookings.map((booking) => booking.toMap()).toList(),
+    'checklist': checklist.map((category) => category.toMap()).toList(),
+  };
+
   static GeneratedTripPlan fromMap(Map<String, dynamic> map) {
     final items = ((map['items'] as List<dynamic>?) ?? const [])
         .whereType<Map>()
@@ -1086,6 +1136,10 @@ class GeneratedTripPlan {
             (data['activity'] as String?) ?? 'Explore local highlights',
             _iconByName(data['type'] as String?),
             (data['cost'] as num?)?.toInt() ?? 0,
+            address: data['address'] as String?,
+            latitude: (data['latitude'] as num?)?.toDouble(),
+            longitude: (data['longitude'] as num?)?.toDouble(),
+            imageUrl: data['imageUrl'] as String?,
           );
         })
         .take(60)

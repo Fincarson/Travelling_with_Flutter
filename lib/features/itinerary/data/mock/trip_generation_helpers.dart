@@ -11,7 +11,7 @@ GeneratedTripPlan _fallbackTripPlan({
   TripStartLocation? startLocation,
 }) {
   final dayCount = _tripDayCount(startDate, endDate);
-  final placeName = place.name.split(',').first;
+  final placeName = _destinationShortLabel(place);
   final wantsFood = preferences.any(
     (item) => item.toLowerCase().contains('food'),
   );
@@ -177,9 +177,7 @@ GeneratedTripPlan _planWithTripTransport(
   final preferenceItems = _planWithPreferenceStops(
     items,
     preferences: preferences,
-    destination: place.name.split(',').first.trim().isEmpty
-        ? place.name
-        : place.name.split(',').first.trim(),
+    destination: _destinationShortLabel(place),
     dayCount: dateDayCount,
     currency: currency,
   );
@@ -467,7 +465,7 @@ List<ScheduleItem> _ensureDailyScheduleCoverage(
 }) {
   if (dayCount <= 1) return items..sort(_compareRuntimeScheduleItems);
 
-  final destination = place.name.split(',').first.trim();
+  final destination = _destinationShortLabel(place);
   final next = [...items];
   for (var day = 1; day <= dayCount; day++) {
     final dayItems = next.where((item) => item.day == day).toList();
@@ -559,7 +557,7 @@ List<ScheduleItem> _dailyCoverageTemplates({
       ScheduleItem(
         day,
         '09:30 AM',
-        'Signature $destination landmark visit with time for photos',
+        'Known landmark or historic area in $destination with time for photos',
         Icons.place_rounded,
         activityCost,
       ),
@@ -718,7 +716,7 @@ ScheduleItem? _originTransportItem({
   return ScheduleItem(
     1,
     _minutesToTimeLabel(startMinutes),
-    profile.activity(place.name.split(',').first),
+    profile.activity(_destinationShortLabel(place)),
     profile.icon,
     profile.cost,
   );
@@ -773,7 +771,7 @@ ScheduleItem? _returnTransportItem({
   return ScheduleItem(
     finalDay,
     _minutesToTimeLabel(startMinutes),
-    profile.returnActivity(place.name.split(',').first),
+    profile.returnActivity(_destinationShortLabel(place)),
     profile.icon,
     profile.cost,
   );
@@ -797,7 +795,7 @@ ScheduleItem _fallbackReturnTransportItem({
     22 * 60,
     math.max(12 * 60, (latestStopMinutes ?? 16 * 60) + 90),
   );
-  final destination = place.name.split(',').first.trim();
+  final destination = _destinationShortLabel(place);
   return ScheduleItem(
     finalDay,
     _minutesToTimeLabel(startMinutes),
@@ -1008,6 +1006,22 @@ double _distanceKm(double lat1, double lng1, double lat2, double lng2) {
 }
 
 double _degreesToRadians(double degrees) => degrees * math.pi / 180;
+
+String _destinationShortLabel(PlaceSuggestion place) {
+  final parts = place.name
+      .split(',')
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) return place.name.trim();
+  if (parts.length == 1) return parts.first;
+  final country = place.country?.trim().toLowerCase();
+  final second = parts[1].toLowerCase();
+  if (country != null && country.isNotEmpty && second == country) {
+    return parts.first;
+  }
+  return '${parts[0]}, ${parts[1]}';
+}
 
 int _tripDayCount(DateTime startDate, DateTime endDate) {
   final start = DateTime(startDate.year, startDate.month, startDate.day);

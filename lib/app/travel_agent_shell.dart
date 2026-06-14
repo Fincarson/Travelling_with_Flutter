@@ -622,12 +622,7 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
               onOpenTrip: _openTrip,
               onStartTrip: _startTrip,
               onAskAi: _openTripAssistant,
-              onOpenInfo: () => setState(() => _screen = _Screen.info),
-              onOpenTranslate: () =>
-                  setState(() => _screen = _Screen.translate),
-              onOpenMap: () => setState(() => _screen = _Screen.map),
-              onEnableNotifications: () =>
-                  unawaited(_enableNotificationsFromDashboard()),
+              onOpenNotifications: _openNotificationCenter,
             ),
             performance,
           ),
@@ -689,15 +684,12 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           onOpenTrip: _openTrip,
           onStartTrip: _startTrip,
           onAskAi: _openTripAssistant,
-          onOpenInfo: () => setState(() => _screen = _Screen.info),
-          onOpenTranslate: () => setState(() => _screen = _Screen.translate),
-          onOpenMap: () => setState(() => _screen = _Screen.map),
-          onEnableNotifications: () =>
-              unawaited(_enableNotificationsFromDashboard()),
+          onOpenNotifications: _openNotificationCenter,
         );
       case _Screen.create:
         return CreateTripScreen(
           key: const ValueKey('create'),
+          accountId: widget.account.uid,
           profileLanguage: _user.language,
           savedTrips: _trips,
           onBack: () => setState(() {
@@ -735,7 +727,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           }),
           onOpenBudget: () => setState(() => _screen = _Screen.budget),
           onOpenPacking: () => setState(() => _screen = _Screen.packing),
-          onOpenMap: () => setState(() => _screen = _Screen.map),
           onUpdateTrip: _updateTrip,
           initialTabIndex: _tripDetailInitialTab,
           initialAiPrompt: _pendingTripAiPrompt,
@@ -777,28 +768,6 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           key: const ValueKey('performance'),
           onBack: () => setState(() => _screen = _Screen.profile),
           onSettingsChanged: _savePerformanceSettings,
-        );
-      case _Screen.map:
-        final trip = _selectedTrip;
-        if (trip == null) {
-          return _NoTripSelectedScreen(
-            key: const ValueKey('no-trip-map'),
-            title: 'Map',
-            onBack: () => setState(() => _screen = _Screen.dashboard),
-            onCreate: () => setState(() {
-              _screen = _Screen.create;
-              _tab = _NavTab.add;
-            }),
-          );
-        }
-        return MapScreen(
-          key: const ValueKey('map'),
-          trip: trip,
-          onBack: () => setState(
-            () => _screen = _selectedTrip == null
-                ? _Screen.dashboard
-                : _Screen.tripDetail,
-          ),
         );
       case _Screen.info:
         return InfoScreen(
@@ -913,6 +882,34 @@ class _TravelAgentAppState extends State<TravelAgentApp> {
           ),
         );
     }
+  }
+
+  void _openNotificationCenter() {
+    final trip =
+        _visibleActiveTrip ??
+        (_visibleTrips.isEmpty ? null : _visibleTrips.first);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => _NotificationCenterSheet(
+        notificationsEnabled: _user.notificationsEnabled,
+        trip: trip,
+        upcomingTripCount: _visibleTrips
+            .where((trip) => trip.status != TripStatus.past)
+            .length,
+        onEnableNotifications: () {
+          Navigator.of(sheetContext).pop();
+          unawaited(_enableNotificationsFromDashboard());
+        },
+        onOpenTrip: trip == null
+            ? null
+            : () {
+                Navigator.of(sheetContext).pop();
+                _openTrip(trip);
+              },
+      ),
+    );
   }
 
   void _queueTripAutomation(List<Trip> trips) {
@@ -1053,7 +1050,6 @@ enum _Screen {
   chatList,
   profile,
   performance,
-  map,
   info,
   translate,
   budget,
