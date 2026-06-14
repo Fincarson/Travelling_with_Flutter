@@ -1152,20 +1152,57 @@ class ChecklistCategory {
 }
 
 const _aiChecklistMarker = '[AI] ';
+const _checkedChecklistMarker = '[DONE] ';
+
+String _stripChecklistMarker(String item, String marker) {
+  final trimmed = item.trimLeft();
+  if (!trimmed.startsWith(marker)) return item;
+  return trimmed.substring(marker.length).trimLeft();
+}
+
+String _stripChecklistDoneMarker(String item) =>
+    _stripChecklistMarker(item, _checkedChecklistMarker);
+
+bool _isChecklistItemChecked(String item) =>
+    item.trimLeft().startsWith(_checkedChecklistMarker);
 
 bool _isAiChecklistItem(String item) =>
-    item.trimLeft().startsWith(_aiChecklistMarker);
+    _stripChecklistDoneMarker(item).trimLeft().startsWith(_aiChecklistMarker);
 
 String _checklistDisplayText(String item) {
-  final trimmed = item.trimLeft();
-  if (!trimmed.startsWith(_aiChecklistMarker)) return item;
-  return trimmed.substring(_aiChecklistMarker.length).trimLeft();
+  var text = item.trimLeft();
+  var changed = true;
+  while (changed) {
+    changed = false;
+    if (text.startsWith(_checkedChecklistMarker)) {
+      text = text.substring(_checkedChecklistMarker.length).trimLeft();
+      changed = true;
+    }
+    if (text.startsWith(_aiChecklistMarker)) {
+      text = text.substring(_aiChecklistMarker.length).trimLeft();
+      changed = true;
+    }
+  }
+  return text;
 }
 
 String _aiChecklistItem(String item) {
   final display = _checklistDisplayText(item).trim();
   if (display.isEmpty) return _aiChecklistMarker.trimRight();
   return '$_aiChecklistMarker$display';
+}
+
+String _checklistItemWithCheckedState(String item, bool checked) {
+  final withoutDone = _stripChecklistDoneMarker(item);
+  return checked ? '$_checkedChecklistMarker$withoutDone' : withoutDone;
+}
+
+String _checklistItemWithDisplayText(String item, String displayText) {
+  final display = displayText.trim();
+  final checked = _isChecklistItemChecked(item);
+  final ai = _isAiChecklistItem(item);
+  final base = ai ? _aiChecklistItem(display) : display;
+  return _checklistItemWithCheckedState(base, checked);
 }
 
 String _checklistCompareText(String item) => _checklistDisplayText(

@@ -199,9 +199,9 @@ class _TripDetailSliverAppBar extends StatelessWidget {
       stretch: true,
       forceElevated: forceElevated,
       expandedHeight: expandedHeight,
-      backgroundColor: _primary,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       surfaceTintColor: Colors.transparent,
-      foregroundColor: Colors.white,
+      foregroundColor: _primary,
       automaticallyImplyLeading: false,
       leading: Padding(
         padding: const EdgeInsets.only(left: 8),
@@ -209,17 +209,7 @@ class _TripDetailSliverAppBar extends StatelessWidget {
           tooltip: appText(context, 'Back'),
           onPressed: onBack,
           icon: const Icon(Icons.arrow_back_rounded),
-          color: Colors.white,
-        ),
-      ),
-      title: Text(
-        trip.destination,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 0,
+          color: _primary,
         ),
       ),
       flexibleSpace: _TripDetailFlexibleBanner(trip: trip),
@@ -247,33 +237,50 @@ class _TripDetailFlexibleBanner extends StatelessWidget {
           constraints.maxHeight - bannerBottom,
         );
         final contentOpacity = ((contentHeight - 126) / 120).clamp(0.0, 1.0);
+        final collapsedOpacity = (1.0 - ((contentHeight - 72) / 72)).clamp(
+          0.0,
+          1.0,
+        );
+        final imageOpacity = ((contentHeight - 72) / 120).clamp(0.0, 1.0);
+        final background = Theme.of(context).scaffoldBackgroundColor;
 
         return Stack(
           fit: StackFit.expand,
           children: [
             Positioned.fill(
               bottom: bannerBottom,
-              child: Image.network(
-                trip.images.first,
-                fit: BoxFit.cover,
-                filterQuality: PerformanceScope.maybeSettingsOf(
-                  context,
-                ).filterQuality,
-                errorBuilder: (_, __, ___) => const ColoredBox(color: _primary),
+              child: ColoredBox(color: background),
+            ),
+            Positioned.fill(
+              bottom: bannerBottom,
+              child: Opacity(
+                opacity: imageOpacity,
+                child: Image.network(
+                  trip.images.first,
+                  fit: BoxFit.cover,
+                  filterQuality: PerformanceScope.maybeSettingsOf(
+                    context,
+                  ).filterQuality,
+                  errorBuilder: (_, __, ___) =>
+                      const ColoredBox(color: _primary),
+                ),
               ),
             ),
             Positioned.fill(
               bottom: bannerBottom,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      _primary.withValues(alpha: .86),
-                      _primary.withValues(alpha: .45),
-                      _primary.withValues(alpha: .9),
-                    ],
+              child: Opacity(
+                opacity: imageOpacity,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        _primary.withValues(alpha: .86),
+                        _primary.withValues(alpha: .45),
+                        _primary.withValues(alpha: .9),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -287,6 +294,29 @@ class _TripDetailFlexibleBanner extends StatelessWidget {
                 child: IgnorePointer(
                   ignoring: contentOpacity == 0,
                   child: _TripHeaderBannerContent(trip: trip),
+                ),
+              ),
+            ),
+            Positioned(
+              left: kToolbarHeight + 12,
+              right: 16,
+              top: MediaQuery.paddingOf(context).top,
+              height: kToolbarHeight,
+              child: Opacity(
+                opacity: collapsedOpacity,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    trip.destination,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _primary,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -335,7 +365,11 @@ class _TripHeaderBannerContent extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            Icon(Icons.person_rounded, color: Colors.white.withValues(alpha: .82), size: 20),
+            Icon(
+              Icons.person_rounded,
+              color: Colors.white.withValues(alpha: .82),
+              size: 20,
+            ),
             Flexible(
               child: Text(
                 trip.numOfTravelers.toString(),

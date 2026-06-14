@@ -39,17 +39,24 @@ class _BudgetTabState extends State<BudgetTab> {
 
         const SizedBox(height: 14),
 
-        _BudgetCurrencySelector(
-            value: displayCurrency,
-            originalCurrency: trip.currency,
-            localCurrency:
-                currencyScope?.displayCurrencyCode ??
-                AppCurrency.fallbackCurrencyCode,
-            currencies:
-                currencyScope?.currencies ??
-                CurrencyExchangeData.fallback.currencies,
-            onChanged: (value) => setState(() => _selectedCurrencyCode = value),
+        Align(
+          alignment: Alignment.centerRight,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
+            child: _BudgetCurrencySelector(
+              value: displayCurrency,
+              originalCurrency: trip.currency,
+              localCurrency:
+                  currencyScope?.displayCurrencyCode ??
+                  AppCurrency.fallbackCurrencyCode,
+              currencies:
+                  currencyScope?.currencies ??
+                  CurrencyExchangeData.fallback.currencies,
+              onChanged: (value) =>
+                  setState(() => _selectedCurrencyCode = value),
+            ),
           ),
+        ),
 
         const SizedBox(height: 14),
         for (final category in categories)
@@ -202,39 +209,35 @@ class _BudgetSummaryPanel extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 8),
-              Text(
-                '${_budgetMoney(context, actual, sourceCurrency: trip.currency, displayCurrency: displayCurrency)} of '
-                '${_budgetMoney(context, trip.budget, sourceCurrency: trip.currency, displayCurrency: displayCurrency)}',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              SizedBox(
+                width: double.infinity,
+                child: Text(
+                  '${_budgetMoney(context, actual, sourceCurrency: trip.currency, displayCurrency: displayCurrency)} of '
+                  '${_budgetMoney(context, trip.budget, sourceCurrency: trip.currency, displayCurrency: displayCurrency)}',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                ),
               ),
-              const SizedBox(height: 12),
-              _BudgetLegend(
-                sourceCurrency: trip.currency,
-                displayCurrency: displayCurrency,
-                segments: segments,
+              const SizedBox(height: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  chart,
+                  SizedBox(width: compact ? 14 : 22),
+                  Expanded(
+                    child: _BudgetLegend(
+                      sourceCurrency: trip.currency,
+                      displayCurrency: displayCurrency,
+                      segments: segments,
+                    ),
+                  ),
+                ],
               ),
             ],
           );
-          if (compact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(child: chart),
-                const SizedBox(height: 16),
-                details,
-              ],
-            );
-          }
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              chart,
-              const SizedBox(width: 22),
-              Expanded(child: details),
-            ],
-          );
+          return details;
         },
       ),
     );
@@ -319,6 +322,7 @@ class _BudgetCurrencySelector extends StatelessWidget {
     return DropdownButtonFormField<String>(
       initialValue: value,
       isExpanded: true,
+      menuMaxHeight: 320,
       decoration: InputDecoration(
         labelText: appText(context, 'Currency'),
         isDense: true,
