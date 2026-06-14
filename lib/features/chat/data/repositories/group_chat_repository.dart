@@ -251,12 +251,12 @@ class GroupChatRepository {
     if (attachment.sizeBytes > ChatAttachmentService.maximumUploadBytes) {
       throw StateError('The selected file must be smaller than 50 MB.');
     }
-    final chat = await loadChat(chatId);
-    if (chat == null) throw StateError('Chat not found.');
+    final chat = await _requireActiveChatMember(chatId, accountId);
 
     final messageRef = _chatDoc(chatId).collection('messages').doc();
     final safeName = _safeStorageName(attachment.name);
-    final storagePath = 'chat_attachments/$chatId/${messageRef.id}/$safeName';
+    final storagePath =
+        'chat_attachments/$chatId/$accountId/${messageRef.id}/$safeName';
     final storageRef = _storage.ref(storagePath);
     var uploaded = false;
     try {
@@ -294,20 +294,13 @@ class GroupChatRepository {
         'createdAt': now,
         'editedAt': null,
       });
-      batch.set(_chatDoc(chatId), {
-        'lastMessageText': preview,
-        'lastMessageAt': now,
-        'updatedAt': now,
-      }, SetOptions(merge: true));
-      for (final memberId in chat.memberIds) {
-        batch.set(_membershipsRef(memberId).doc(chatId), {
-          'chatId': chatId,
-          'titleSnapshot': chat.title,
-          'lastMessageText': preview,
-          'lastMessageAt': now,
-          'updatedAt': now,
-        }, SetOptions(merge: true));
-      }
+      _setChatActivitySnapshots(
+        batch: batch,
+        chat: chat,
+        chatId: chatId,
+        preview: preview,
+        timestamp: now,
+      );
       await batch.commit();
     } catch (_) {
       if (uploaded) {
@@ -316,6 +309,51 @@ class GroupChatRepository {
         } catch (_) {}
       }
       rethrow;
+    }
+  }
+
+  Future<GroupChat> _requireActiveChatMember(
+    String chatId,
+    String accountId,
+  ) async {
+    final authenticatedUser = FirebaseAuth.instance.currentUser;
+    if (authenticatedUser == null || authenticatedUser.uid != accountId) {
+      throw StateError('Your sign-in session expired. Sign in again.');
+    }
+    final results = await Future.wait<DocumentSnapshot<Map<String, dynamic>>>([
+      _chatDoc(chatId).get(),
+      _chatDoc(chatId).collection('members').doc(accountId).get(),
+    ]);
+    final chatSnapshot = results[0];
+    final memberSnapshot = results[1];
+    if (!chatSnapshot.exists ||
+        !memberSnapshot.exists ||
+        memberSnapshot.data()?['status'] != GroupChatMemberStatus.active.name) {
+      throw StateError('You no longer have access to this chat.');
+    }
+    return GroupChat.fromDoc(chatSnapshot);
+  }
+
+  void _setChatActivitySnapshots({
+    required WriteBatch batch,
+    required GroupChat chat,
+    required String chatId,
+    required String preview,
+    required FieldValue timestamp,
+  }) {
+    batch.set(_chatDoc(chatId), {
+      'lastMessageText': preview,
+      'lastMessageAt': timestamp,
+      'updatedAt': timestamp,
+    }, SetOptions(merge: true));
+    for (final memberId in chat.memberIds) {
+      batch.set(_membershipsRef(memberId).doc(chatId), {
+        'chatId': chatId,
+        'titleSnapshot': chat.title,
+        'lastMessageText': preview,
+        'lastMessageAt': timestamp,
+        'updatedAt': timestamp,
+      }, SetOptions(merge: true));
     }
   }
 

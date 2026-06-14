@@ -1511,8 +1511,24 @@ class _PendingInvites extends StatelessWidget {
 }
 
 String _chatErrorMessage(Object error) {
-  if (error is FirebaseException && error.code == 'permission-denied') {
-    return 'Firebase blocked this action. Refresh the app and try again.';
+  if (error is FirebaseException) {
+    return switch (error.code) {
+      'permission-denied' || 'unauthorized'
+          when error.plugin == 'firebase_storage' =>
+        'Firebase Storage denied the file upload. Reopen the chat and try again.',
+      'permission-denied' || 'unauthorized' =>
+        'Firebase denied the chat update. Refresh the chat and try again.',
+      'object-not-found' => 'The uploaded file could not be found.',
+      'canceled' => 'The upload was canceled.',
+      'retry-limit-exceeded' =>
+        'The upload timed out. Check your connection and try again.',
+      'network-request-failed' || 'unavailable' =>
+        'The network is unavailable. Check your connection and try again.',
+      _ =>
+        error.message?.trim().isNotEmpty == true
+            ? error.message!.trim()
+            : 'Firebase could not complete this action.',
+    };
   }
   return error
       .toString()

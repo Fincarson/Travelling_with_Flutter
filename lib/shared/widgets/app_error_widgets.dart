@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../core/errors/app_error.dart';
 import '../../core/localization/app_text.dart';
-import '../../core/performance/app_performance.dart';
 
 class UnexpectedErrorView extends StatelessWidget {
   const UnexpectedErrorView({
@@ -60,10 +59,6 @@ class _UnexpectedErrorPanelState extends State<_UnexpectedErrorPanel> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final performance = PerformanceScope.maybeSettingsOf(context);
-    final duration = performance.animationsEnabled
-        ? performance.transitionDuration
-        : Duration.zero;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -128,36 +123,29 @@ class _UnexpectedErrorPanelState extends State<_UnexpectedErrorPanel> {
             ),
           ),
         ),
-        AnimatedSize(
-          duration: duration,
-          curve: Curves.easeOut,
-          child: !_showDetails
-              ? const SizedBox.shrink()
-              : Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(top: 6),
-                  padding: const EdgeInsets.all(14),
-                  constraints: BoxConstraints(
-                    maxHeight: widget.compact ? 180 : 300,
-                  ),
-                  decoration: BoxDecoration(
-                    color: colors.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: colors.outlineVariant),
-                  ),
-                  child: SingleChildScrollView(
-                    child: SelectableText(
-                      widget.error.details,
-                      style: TextStyle(
-                        color: colors.onSurface,
-                        fontFamily: 'monospace',
-                        fontSize: 11,
-                        height: 1.35,
-                      ),
-                    ),
-                  ),
+        if (_showDetails)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.all(14),
+            constraints: BoxConstraints(maxHeight: widget.compact ? 180 : 300),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: colors.outlineVariant),
+            ),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                widget.error.details,
+                style: TextStyle(
+                  color: colors.onSurface,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  height: 1.35,
                 ),
-        ),
+              ),
+            ),
+          ),
       ],
     );
   }

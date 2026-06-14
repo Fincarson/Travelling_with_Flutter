@@ -151,6 +151,15 @@ service cloud.firestore {
         request.resource.data.roles[request.auth.uid] == 'owner';
     }
 
+    function isOwnedChatBootstrapAfter(chatId, userId) {
+      return signedIn() &&
+        request.auth.uid == userId &&
+        existsAfter(chatPath(chatId)) &&
+        chatDataAfter(chatId).ownerId == userId &&
+        userId in chatDataAfter(chatId).memberIds &&
+        chatDataAfter(chatId).roles[userId] == 'owner';
+    }
+
     function chatLastMessageFieldsOnly() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
         'lastMessageText',
@@ -467,6 +476,11 @@ service cloud.firestore {
           validUserChatMembership(chatId) &&
           (
             (
+              isOwnedChatBootstrapAfter(chatId, userId) &&
+              request.resource.data.role == 'owner' &&
+              request.resource.data.status == 'active'
+            ) ||
+            (
               request.auth.uid == userId &&
               (
                 isChatActiveMemberAfter(chatId, userId) ||
@@ -633,8 +647,9 @@ service cloud.firestore {
         allow create: if signedIn() &&
           (
             (
-              userId == chatDataAfter(chatId).ownerId &&
-              request.resource.data.role == 'owner'
+              isOwnedChatBootstrapAfter(chatId, userId) &&
+              request.resource.data.role == 'owner' &&
+              request.resource.data.status == 'active'
             ) ||
             (
               userId != chatDataAfter(chatId).ownerId &&
@@ -645,7 +660,10 @@ service cloud.firestore {
           (
             (
               request.auth.uid == userId &&
-              isChatActiveMemberAfter(chatId, userId)
+              (
+                isOwnedChatBootstrapAfter(chatId, userId) ||
+                isChatActiveMemberAfter(chatId, userId)
+              )
             ) ||
             (
               canInviteToChat(chatId) &&
