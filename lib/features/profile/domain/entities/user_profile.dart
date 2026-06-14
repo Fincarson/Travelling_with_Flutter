@@ -9,6 +9,9 @@ class UserProfile {
     this.photoUrl,
     this.language = 'en',
     this.notificationsEnabled = true,
+    this.displayCurrencyCode = AppCurrency.fallbackCurrencyCode,
+    this.currencyUpdateMode = CurrencyUpdateMode.automatic,
+    this.currencySettingsVersion = 1,
     this.themeMode = 'Light',
     this.onboardingRequired = false,
     this.onboardingCompleted = true,
@@ -30,6 +33,9 @@ class UserProfile {
   final List<String> interests;
   final String language;
   final bool notificationsEnabled;
+  final String displayCurrencyCode;
+  final CurrencyUpdateMode currencyUpdateMode;
+  final int currencySettingsVersion;
   final String themeMode;
   final bool onboardingRequired;
   final bool onboardingCompleted;
@@ -43,6 +49,9 @@ class UserProfile {
     List<String>? interests,
     String? language,
     bool? notificationsEnabled,
+    String? displayCurrencyCode,
+    CurrencyUpdateMode? currencyUpdateMode,
+    int? currencySettingsVersion,
     String? themeMode,
     bool? onboardingRequired,
     bool? onboardingCompleted,
@@ -56,6 +65,10 @@ class UserProfile {
       interests: interests ?? this.interests,
       language: language ?? this.language,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
+      displayCurrencyCode: displayCurrencyCode ?? this.displayCurrencyCode,
+      currencyUpdateMode: currencyUpdateMode ?? this.currencyUpdateMode,
+      currencySettingsVersion:
+          currencySettingsVersion ?? this.currencySettingsVersion,
       themeMode: themeMode ?? this.themeMode,
       onboardingRequired: onboardingRequired ?? this.onboardingRequired,
       onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
@@ -72,6 +85,9 @@ class UserProfile {
     'settings': {
       'language': language,
       'notificationsEnabled': notificationsEnabled,
+      'displayCurrencyCode': displayCurrencyCode,
+      'currencyUpdateMode': currencyUpdateMode.name,
+      'currencySettingsVersion': currencySettingsVersion,
       'themeMode': themeMode,
       'onboardingRequired': onboardingRequired,
       'onboardingCompleted': onboardingCompleted,
@@ -89,6 +105,9 @@ class UserProfile {
     'settings': {
       'language': language,
       'notificationsEnabled': notificationsEnabled,
+      'displayCurrencyCode': displayCurrencyCode,
+      'currencyUpdateMode': currencyUpdateMode.name,
+      'currencySettingsVersion': currencySettingsVersion,
       'themeMode': themeMode,
       'onboardingRequired': onboardingRequired,
       'onboardingCompleted': onboardingCompleted,
@@ -110,6 +129,16 @@ class UserProfile {
           .toList(),
       language: (settings['language'] as String?) ?? 'en',
       notificationsEnabled: (settings['notificationsEnabled'] as bool?) ?? true,
+      displayCurrencyCode:
+          ((settings['displayCurrencyCode'] as String?) ??
+                  AppCurrency.fallbackCurrencyCode)
+              .trim()
+              .toUpperCase(),
+      currencyUpdateMode: CurrencyUpdateMode.fromName(
+        settings['currencyUpdateMode'],
+      ),
+      currencySettingsVersion:
+          (settings['currencySettingsVersion'] as num?)?.toInt() ?? 0,
       themeMode: (settings['themeMode'] as String?) ?? 'Light',
       onboardingRequired: (settings['onboardingRequired'] as bool?) ?? false,
       onboardingCompleted: (settings['onboardingCompleted'] as bool?) ?? true,
@@ -123,81 +152,7 @@ class UserProfile {
 }
 
 String _languageLabel(String language) {
-  return switch (language) {
-    'id' => 'Indonesian',
-    'zh' || 'zh_Hant_TW' || 'zh-TW' => 'Chinese (Taiwan / Traditional)',
-    'ja' => 'Japanese',
-    'ko' => 'Korean',
-    'es' => 'Spanish',
-    'fr' => 'French',
-    'de' => 'German',
-    'it' => 'Italian',
-    'pt' => 'Portuguese',
-    'th' => 'Thai',
-    'vi' => 'Vietnamese',
-    'ar' => 'Arabic',
-    _ => 'English (US)',
-  };
-}
-
-String _profileText(String language, String key) {
-  const values = {
-    'en': {
-      'welcome': 'Welcome Back',
-      'currentTrip': 'Current trip',
-      'language': 'Language',
-      'notifications': 'Notifications',
-      'theme': 'Theme',
-      'interests': 'Travel interests',
-      'account': 'Account',
-      'saveProfile': 'Save profile',
-      'signOut': 'Sign out',
-      'deleteAccount': 'Delete account',
-      'deleteQuestion': 'Delete account?',
-      'deleteMessage':
-          'This deletes your sign-in account, profile, and saved trips. This cannot be undone.',
-      'cancel': 'Cancel',
-      'delete': 'Delete',
-      'close': 'Close',
-      'saveInterests': 'Save interests',
-      'customInterest': 'Add custom interest',
-      'interestBlocked': 'That interest is not allowed.',
-      'on': 'On',
-      'off': 'Off',
-    },
-    'zh': {
-      'welcome': '歡迎回來',
-      'currentTrip': '目前旅程',
-      'language': '語言',
-      'notifications': '通知',
-      'theme': '主題',
-      'interests': '旅行興趣',
-      'account': '帳戶',
-      'saveProfile': '儲存個人資料',
-      'signOut': '登出',
-      'deleteAccount': '刪除帳戶',
-      'deleteQuestion': '刪除帳戶？',
-      'deleteMessage': '這會刪除你的登入帳戶、個人資料和已儲存旅程，且無法復原。',
-      'cancel': '取消',
-      'delete': '刪除',
-      'close': '關閉',
-      'saveInterests': '儲存興趣',
-      'customInterest': '新增自訂興趣',
-      'interestBlocked': '不允許使用這個興趣。',
-      'on': '開啟',
-      'off': '關閉',
-    },
-  };
-  final normalized = language.startsWith('zh') ? 'zh' : language;
-  if (!values.containsKey(normalized)) return values['en']![key] ?? key;
-  return values[normalized]?[key] ?? values['en']![key] ?? key;
-}
-
-String _localizedSettingValue(String language, String key) {
-  if (language == 'en' || language.startsWith('zh')) {
-    return _profileText(language, key);
-  }
-  return _profileText('en', key);
+  return appLanguageForCode(language).displayName;
 }
 
 String? _cleanInterest(String value) {

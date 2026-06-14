@@ -8,6 +8,7 @@ class PlaceSuggestion {
     required this.longitude,
     required this.placeId,
     this.country,
+    this.countryCode,
     this.resultType,
     this.distanceMeters,
     this.categories = const [],
@@ -19,6 +20,7 @@ class PlaceSuggestion {
   final double longitude;
   final String placeId;
   final String? country;
+  final String? countryCode;
   final String? resultType;
   final int? distanceMeters;
   final List<String> categories;
@@ -36,6 +38,9 @@ class PlaceSuggestion {
         properties['result_type'] as String? ??
         properties['type'] as String?;
     final country = properties['country'] as String?;
+    final countryCode =
+        properties['countryCode'] as String? ??
+        properties['country_code'] as String?;
     final locality =
         properties['name'] as String? ??
         properties['city'] as String? ??
@@ -67,6 +72,7 @@ class PlaceSuggestion {
           (properties['place_id'] as String?) ??
           formatted,
       country: country,
+      countryCode: countryCode?.toUpperCase(),
       resultType: resultType,
       distanceMeters: (properties['distance'] as num?)?.round(),
       categories: ((properties['categories'] as List<dynamic>?) ?? const [])

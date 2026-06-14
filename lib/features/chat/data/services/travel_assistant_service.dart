@@ -6,9 +6,10 @@ class TravelAssistantService {
           functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
 
   static const _chatTimeout = Duration(seconds: 20);
-  static const _createTripReplyTimeout = Duration(seconds: 18);
-  static const _tripPlanTimeout = Duration(seconds: 55);
+  static const _createTripReplyTimeout = Duration(seconds: 35);
+  static const _tripPlanTimeout = Duration(seconds: 35);
   static const _scheduleStopTimeout = Duration(seconds: 18);
+  static const _dayPlanEditTimeout = Duration(seconds: 28);
 
   final FirebaseFunctions _functions;
   final _deviceContext = AppDeviceContextService();
@@ -96,13 +97,15 @@ class TravelAssistantService {
     required List<String> preferences,
     required String currency,
     required String profileLanguage,
+    AppDeviceContext? appContext,
     TripStartLocation? startLocation,
     String airline = '',
     String flightConfirmation = '',
   }) async {
-    final appContext = await _deviceContext.load(requestLocation: true);
+    final resolvedAppContext =
+        appContext ?? await _deviceContext.load(requestLocation: true);
     final tripStartLocation =
-        startLocation ?? TripStartLocation.fromContext(appContext);
+        startLocation ?? TripStartLocation.fromContext(resolvedAppContext);
     final outputLanguage = _aiLanguageName(profileLanguage);
     if (!LocalApiKeys.hasOpenAiApiKey) {
       final callable = _functions.httpsCallable('generateTripPlan');
@@ -127,7 +130,7 @@ class TravelAssistantService {
             'airline': airline,
             'flightConfirmation': flightConfirmation,
             'startLocation': tripStartLocation?.toAiMap(),
-            'appContext': appContext.toAiMap(),
+            'appContext': resolvedAppContext.toAiMap(),
           })
           .timeout(_tripPlanTimeout);
       final data = response.data['plan'] is Map
@@ -169,11 +172,16 @@ class TravelAssistantService {
               'For trips of 3 or more days, include at least 2 useful schedule items per day and 3 on full sightseeing days.',
               'Day 1 must start with realistic transportation from the trip origin to the destination before destination activities.',
               'The final trip day must include realistic return transportation home after the destination activities.',
+              'Every day must include realistic place-to-place movement between separated stops, such as walk, metro, taxi, train, airport transfer, or buffer time before the next venue.',
+              'Do not list attractions back-to-back as if travel time is zero. Leave realistic gaps for transit, walking, queues, family pacing, meals, check-in, check-out, airport security, and baggage.',
+              'If exact public transport schedules or flight times are uncertain, say to confirm the exact operator/time instead of presenting the time as guaranteed.',
+              'For international trips, do not end the itinerary at sightseeing. Add pack-up, airport or station transfer, departure, arrival, and return-home steps when the trip ends.',
               'For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.',
               'When moving to a different city or district, or when returning home, include pack-up/preparation wording before the transport.',
               'Choose transport by distance: local transit/taxi for nearby trips, train/bus/high-speed rail for regional trips, and flights only for genuinely long-distance trips.',
               'Never suggest a plane for short regional travel such as Hsinchu to Taipei.',
-              'Use web search data for current attraction names, transportation options, ticket prices, and local food costs.',
+              'Use current-known attraction names, transportation options, ticket prices, and local food costs.',
+              'When live data may vary, mark times, prices, and operator details as approximate and tell the user to confirm before departure.',
               'Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.',
               'Write all user-facing itinerary text in $outputLanguage.',
               'Do not infer language from currency; currency only controls money.',
@@ -199,7 +207,7 @@ class TravelAssistantService {
                 'confirmation': flightConfirmation,
               },
               'startLocation': tripStartLocation?.toAiMap(),
-              'appContext': appContext.toAiMap(),
+              'appContext': resolvedAppContext.toAiMap(),
               'schema': {
                 'items': [
                   {
@@ -229,14 +237,6 @@ class TravelAssistantService {
               },
             }),
             'store': false,
-            'tools': [
-              {
-                'type': 'web_search',
-                'search_context_size': 'low',
-                'external_web_access': true,
-              },
-            ],
-            'tool_choice': 'required',
             'reasoning': {'effort': 'low'},
             'text': {'verbosity': 'low', 'format': _tripPlanTextFormat()},
           }),
@@ -335,6 +335,89 @@ class TravelAssistantService {
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     return _scheduleItemFromAiMap(
+      _decodeJsonObject(_responseOutputText(body)),
+      fallbackDay: day,
+    );
+  }
+
+  Future<DayPlanEditResult> generateDayPlanEdit({
+    required Trip trip,
+    required int day,
+    required String placeRequest,
+  }) async {
+    final trimmed = placeRequest.trim();
+    if (trimmed.isEmpty) {
+      throw Exception('Place is required.');
+    }
+    final appContext = await _deviceContext.load(requestLocation: false);
+    final input = {
+      'destination': trip.destination,
+      'startDate': trip.startDate,
+      'endDate': trip.endDate,
+      'currency': trip.currency,
+      'budget': trip.budget,
+      'groupType': trip.groupType,
+      'preferences': trip.preferences,
+      'targetDay': day,
+      'placeRequest': trimmed,
+      'targetDaySchedule': trip.items
+          .where((item) => item.day == day)
+          .map(_scheduleItemToAiMap)
+          .toList(),
+      'fullSchedule': trip.items.map(_scheduleItemToAiMap).toList(),
+      'appContext': appContext.toAiMap(),
+    };
+
+    if (!LocalApiKeys.hasOpenAiApiKey) {
+      final callable = _functions.httpsCallable('generateDayPlanEdit');
+      final response = await callable
+          .call<Map<String, dynamic>>(input)
+          .timeout(_dayPlanEditTimeout);
+      final data = response.data['result'] is Map
+          ? Map<String, dynamic>.from(response.data['result'] as Map)
+          : response.data;
+      return DayPlanEditResult.fromMap(data, fallbackDay: day);
+    }
+
+    final response = await http
+        .post(
+          Uri.https('api.openai.com', '/v1/responses'),
+          headers: {
+            'Authorization': 'Bearer ${LocalApiKeys.openAiApiKey}',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': 'gpt-5.5',
+            'instructions': [
+              'Edit one day of a travel itinerary and return strict JSON only.',
+              'Judge whether the requested place realistically fits the day.',
+              'Consider route distance, schedule density, opening hours, and travel time.',
+              'If it does not fit, set feasible=false and preserve the existing day.',
+              'If it fits, return the complete revised day in practical time order.',
+              'Return no markdown or explanation outside the JSON fields.',
+            ].join(' '),
+            'input': jsonEncode(input),
+            'store': false,
+            'tools': [
+              {
+                'type': 'web_search',
+                'search_context_size': 'low',
+                'external_web_access': true,
+              },
+            ],
+            'tool_choice': 'required',
+            'reasoning': {'effort': 'low'},
+            'text': {'verbosity': 'low', 'format': _dayPlanEditTextFormat()},
+          }),
+        )
+        .timeout(_dayPlanEditTimeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('AI day edit failed.');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return DayPlanEditResult.fromMap(
       _decodeJsonObject(_responseOutputText(body)),
       fallbackDay: day,
     );
@@ -455,6 +538,54 @@ ScheduleItem _scheduleItemFromAiMap(
     item.type,
     item.cost < 0 ? 0 : item.cost,
   );
+}
+
+Map<String, dynamic> _scheduleItemToAiMap(ScheduleItem item) => {
+  'day': item.day,
+  'time': item.time,
+  'activity': item.activity,
+  'type': _iconName(item.type),
+  'cost': item.cost,
+};
+
+class DayPlanEditResult {
+  const DayPlanEditResult({
+    required this.feasible,
+    required this.warning,
+    required this.items,
+  });
+
+  final bool feasible;
+  final String warning;
+  final List<ScheduleItem> items;
+
+  static DayPlanEditResult fromMap(
+    Map<String, dynamic> map, {
+    required int fallbackDay,
+  }) {
+    final items = ((map['items'] as List<dynamic>?) ?? const [])
+        .whereType<Map>()
+        .map((item) {
+          final parsed = _scheduleItemFromAiMap(
+            Map<String, dynamic>.from(item),
+            fallbackDay: fallbackDay,
+          );
+          return ScheduleItem(
+            fallbackDay,
+            parsed.time,
+            parsed.activity,
+            parsed.type,
+            parsed.cost,
+          );
+        })
+        .take(8)
+        .toList();
+    return DayPlanEditResult(
+      feasible: map['feasible'] == true,
+      warning: (map['warning'] as String?)?.trim() ?? '',
+      items: items,
+    );
+  }
 }
 
 String _aiLanguageName(String profileLanguage) {
@@ -676,6 +807,54 @@ Map<String, dynamic> _createTripReplyTextFormat() => {
       },
     },
     'required': ['message', 'draft', 'widget'],
+  },
+};
+
+Map<String, dynamic> _dayPlanEditTextFormat() => {
+  'type': 'json_schema',
+  'name': 'day_plan_edit',
+  'strict': true,
+  'schema': {
+    'type': 'object',
+    'additionalProperties': false,
+    'properties': {
+      'feasible': {'type': 'boolean'},
+      'warning': {'type': 'string'},
+      'items': {
+        'type': 'array',
+        'maxItems': 8,
+        'items': {
+          'type': 'object',
+          'additionalProperties': false,
+          'properties': {
+            'day': {'type': 'integer'},
+            'time': {'type': 'string'},
+            'activity': {'type': 'string'},
+            'type': {
+              'type': 'string',
+              'enum': [
+                'place',
+                'food',
+                'restaurant',
+                'walk',
+                'museum',
+                'beach',
+                'shopping',
+                'train',
+                'flight',
+                'hotel',
+                'cafe',
+                'hiking',
+                'temple',
+              ],
+            },
+            'cost': {'type': 'integer'},
+          },
+          'required': ['day', 'time', 'activity', 'type', 'cost'],
+        },
+      },
+    },
+    'required': ['feasible', 'warning', 'items'],
   },
 };
 

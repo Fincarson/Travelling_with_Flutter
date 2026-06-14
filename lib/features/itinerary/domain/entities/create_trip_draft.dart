@@ -174,6 +174,7 @@ String? _normalCurrencyCode(Object? value) {
   if (text == 'usd' || text == 'dollar' || text == 'dollars') return 'USD';
   if (text == 'jpy' || text == 'yen') return 'JPY';
   if (text == 'eur' || text == 'euro' || text == 'euros') return 'EUR';
+  if (RegExp(r'^[a-z]{3}$').hasMatch(text)) return text.toUpperCase();
   return null;
 }
 

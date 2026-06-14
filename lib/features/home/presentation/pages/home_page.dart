@@ -49,7 +49,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    LabelText(_profileText(widget.user.language, 'welcome')),
+                    LabelText(appText(context, 'Welcome Back')),
                     Text(
                       '${widget.user.name.isEmpty ? 'Explorer' : widget.user.name}!',
                       style: Theme.of(context).textTheme.headlineSmall
@@ -58,20 +58,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ),
-              Stack(
-                children: [
-                  IconSquare(
-                    icon: Icons.notifications_none_rounded,
-                    tooltip: 'Notifications',
-                    onTap: widget.onOpenNotifications,
-                  ),
-                  if (widget.user.notificationsEnabled)
-                    const Positioned(
-                      right: 10,
-                      top: 10,
-                      child: IgnorePointer(child: Dot()),
+              SizedBox.square(
+                dimension: 50,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned.fill(
+                      child: IconButton.filled(
+                        tooltip: appText(context, 'Notifications'),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHigh,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onSurface,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                        ),
+                        onPressed: widget.onOpenNotifications,
+                        icon: const Icon(Icons.notifications_none_rounded),
+                      ),
                     ),
-                ],
+                    if (widget.user.notificationsEnabled)
+                      const Positioned(right: 10, top: 10, child: Dot()),
+                  ],
+                ),
               ),
             ],
           ),
@@ -90,7 +103,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (trip == null) ...[
             _EmptyTripCard(onCreate: widget.onCreate),
           ] else ...[
-            LabelText(_profileText(widget.user.language, 'currentTrip')),
+            LabelText(appText(context, 'Current trip')),
             const SizedBox(height: 8),
             CurrentTripCard(
               trip: trip,

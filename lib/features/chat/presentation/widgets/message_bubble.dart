@@ -12,6 +12,7 @@ class GroupMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     final maxBubbleWidth = math.min(
       360.0,
       MediaQuery.sizeOf(context).width * 0.72,
@@ -46,8 +47,8 @@ class GroupMessageBubble extends StatelessWidget {
                         message.senderNameSnapshot,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _secondary,
+                        style: TextStyle(
+                          color: colors.onSurfaceVariant,
                           fontSize: 11,
                           fontWeight: FontWeight.w900,
                         ),
@@ -56,7 +57,9 @@ class GroupMessageBubble extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: isMine ? _primary : Colors.white,
+                      color: isMine
+                          ? colors.primary
+                          : colors.surfaceContainerHigh,
                       borderRadius: BorderRadius.only(
                         topLeft: const Radius.circular(20),
                         topRight: const Radius.circular(20),
@@ -65,24 +68,21 @@ class GroupMessageBubble extends StatelessWidget {
                       ),
                       border: isMine
                           ? null
-                          : Border.all(color: const Color(0xFFEFF3F6)),
+                          : Border.all(color: colors.outlineVariant),
                     ),
-                    child: Text(
-                      message.text,
-                      softWrap: true,
-                      style: TextStyle(
-                        color: isMine ? Colors.white : _primary,
-                        fontWeight: FontWeight.w700,
-                        height: 1.35,
-                      ),
+                    child: ChatMessageContent(
+                      message: message,
+                      foregroundColor: isMine
+                          ? colors.onPrimary
+                          : colors.onSurface,
                     ),
                   ),
                   Padding(
                     padding: const EdgeInsets.only(top: 4, left: 4, right: 4),
                     child: Text(
                       _chatTimeLabel(message.createdAt),
-                      style: const TextStyle(
-                        color: _secondary,
+                      style: TextStyle(
+                        color: colors.onSurfaceVariant,
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
                       ),
@@ -138,13 +138,14 @@ class _ChatAvatarFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return DecoratedBox(
-      decoration: BoxDecoration(color: _accent.withValues(alpha: .35)),
+      decoration: BoxDecoration(color: colors.primaryContainer),
       child: Center(
         child: Text(
           _avatarInitial(name),
-          style: const TextStyle(
-            color: _primary,
+          style: TextStyle(
+            color: colors.onPrimaryContainer,
             fontSize: 13,
             fontWeight: FontWeight.w900,
           ),
@@ -172,6 +173,7 @@ class GroupChatPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     final subtitle = membership.lastMessageText.trim().isEmpty
         ? appText(context, 'No messages yet')
         : membership.lastMessageText;
@@ -205,8 +207,8 @@ class GroupChatPreview extends StatelessWidget {
                         const SizedBox(width: 8),
                         Text(
                           _chatTimeLabel(membership.lastMessageAt),
-                          style: const TextStyle(
-                            color: _secondary,
+                          style: TextStyle(
+                            color: colors.onSurfaceVariant,
                             fontSize: 11,
                             fontWeight: FontWeight.w800,
                           ),
@@ -218,8 +220,8 @@ class GroupChatPreview extends StatelessWidget {
                       subtitle,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: _secondary,
+                      style: TextStyle(
+                        color: colors.onSurfaceVariant,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -249,6 +251,7 @@ class ChatPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: GestureDetector(
@@ -275,8 +278,8 @@ class ChatPreview extends StatelessWidget {
                       appText(context, text),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: _secondary,
+                      style: TextStyle(
+                        color: colors.onSurfaceVariant,
                         fontWeight: FontWeight.w700,
                       ),
                     ),

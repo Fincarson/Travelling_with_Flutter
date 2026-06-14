@@ -81,29 +81,45 @@ class ChecklistTab extends StatelessWidget {
                     ],
                   ),
                   for (final item in category.items)
-                    CheckboxListTile(
-                      dense: true,
-                      value: false,
-                      onChanged: (_) {},
-                      title: Text(appText(context, item)),
-                      secondary: IconButton(
-                        icon: const Icon(Icons.delete_outline_rounded),
-                        onPressed: () {
-                          final next = trip.checklist
-                              .map(
-                                (candidate) => candidate == category
-                                    ? ChecklistCategory(
-                                        candidate.category,
-                                        candidate.items
-                                            .where((value) => value != item)
-                                            .toList(),
-                                      )
-                                    : candidate,
-                              )
-                              .toList();
-                          onSave(trip.copyWith(checklist: next));
-                        },
-                      ),
+                    Builder(
+                      builder: (context) {
+                        final isAiAdded = _isAiChecklistItem(item);
+                        return CheckboxListTile(
+                          dense: true,
+                          value: false,
+                          onChanged: (_) {},
+                          title: Text(
+                            appText(context, _checklistDisplayText(item)),
+                            style: TextStyle(
+                              color: isAiAdded ? const Color(0xFFB7791F) : null,
+                              fontWeight: isAiAdded
+                                  ? FontWeight.w900
+                                  : FontWeight.w600,
+                              backgroundColor: isAiAdded
+                                  ? const Color(0xFFFFF3BF)
+                                  : null,
+                            ),
+                          ),
+                          secondary: IconButton(
+                            icon: const Icon(Icons.delete_outline_rounded),
+                            onPressed: () {
+                              final next = trip.checklist
+                                  .map(
+                                    (candidate) => candidate == category
+                                        ? ChecklistCategory(
+                                            candidate.category,
+                                            candidate.items
+                                                .where((value) => value != item)
+                                                .toList(),
+                                          )
+                                        : candidate,
+                                  )
+                                  .toList();
+                              onSave(trip.copyWith(checklist: next));
+                            },
+                          ),
+                        );
+                      },
                     ),
                 ],
               ),

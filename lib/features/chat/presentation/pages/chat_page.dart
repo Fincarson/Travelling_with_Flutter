@@ -39,12 +39,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    widget.onRoomOpenChanged?.call(false);
-    super.dispose();
-  }
-
   Future<void> _syncPublicUser() async {
     try {
       await _repository.upsertPublicUser(
@@ -86,19 +80,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
         children: [
           Row(
             children: [
-              Expanded(
-                child: Text(
-                  appText(context, 'Chat'),
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
+              const Spacer(),
               IconButton.filled(
                 tooltip: appText(context, 'Accept invite'),
                 style: IconButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: _primary,
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHigh,
+                  foregroundColor: Theme.of(context).colorScheme.onSurface,
                 ),
                 onPressed: _reviewInviteCode,
                 icon: const Icon(Icons.link_rounded),
@@ -107,8 +96,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
               IconButton.filled(
                 tooltip: appText(context, 'Create chat'),
                 style: IconButton.styleFrom(
-                  backgroundColor: _primary,
-                  foregroundColor: Colors.white,
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
                 ),
                 onPressed: _showCreateChatSheet,
                 icon: const Icon(Icons.add_rounded),
@@ -153,8 +142,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       const SizedBox(height: 6),
                       Text(
                         appText(context, 'Create a group to start messaging.'),
-                        style: const TextStyle(
-                          color: _secondary,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -490,7 +479,6 @@ class RoutedGroupChatRoomScreen extends StatefulWidget {
     required this.account,
     required this.user,
     required this.onBack,
-    this.onRoomOpenChanged,
     super.key,
   });
 
@@ -498,7 +486,6 @@ class RoutedGroupChatRoomScreen extends StatefulWidget {
   final AuthenticatedAccount account;
   final UserProfile user;
   final VoidCallback onBack;
-  final ValueChanged<bool>? onRoomOpenChanged;
 
   @override
   State<RoutedGroupChatRoomScreen> createState() =>
@@ -512,7 +499,6 @@ class _RoutedGroupChatRoomScreenState extends State<RoutedGroupChatRoomScreen> {
   @override
   void initState() {
     super.initState();
-    widget.onRoomOpenChanged?.call(true);
     _room = _loadRoom();
   }
 
@@ -523,12 +509,6 @@ class _RoutedGroupChatRoomScreenState extends State<RoutedGroupChatRoomScreen> {
         oldWidget.account.uid != widget.account.uid) {
       _room = _loadRoom();
     }
-  }
-
-  @override
-  void dispose() {
-    widget.onRoomOpenChanged?.call(false);
-    super.dispose();
   }
 
   Future<_LoadedGroupChatRoom> _loadRoom() async {
@@ -625,13 +605,28 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   final _input = TextEditingController();
   final _inputFocusNode = FocusNode();
   final _scrollController = ScrollController();
+  final _attachmentService = ChatAttachmentService();
+  late String _chatTitle;
+  late GroupChatMembership _membership;
   var _isSending = false;
+  var _isSendingAttachment = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _chatTitle = widget.chat.title;
+    _membership = widget.membership;
     _inputFocusNode.addListener(_refreshComposer);
+  }
+
+  @override
+  void didUpdateWidget(covariant GroupChatRoomScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.chat.id != widget.chat.id) {
+      _chatTitle = widget.chat.title;
+      _membership = widget.membership;
+    }
   }
 
   @override
@@ -655,10 +650,10 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
           Padding(
             padding: _responsivePagePadding(context, top: 18, bottom: 8),
             child: TopBar(
-              title: widget.chat.title,
+              title: _chatTitle,
               onBack: widget.onBack,
-              action: Icons.person_add_alt_1_rounded,
-              onAction: _showInviteSheet,
+              action: Icons.more_vert_rounded,
+              onAction: _showGroupMenu,
             ),
           ),
           if (_error != null)
@@ -672,6 +667,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
               builder: (context, snapshot) {
                 final messages = snapshot.data ?? const <GroupChatMessage>[];
                 WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
                   if (!_scrollController.hasClients) return;
                   _scrollController.animateTo(
                     _scrollController.position.maxScrollExtent,
@@ -697,8 +693,10 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                             Expanded(
                               child: Text(
                                 appText(context, 'Start the conversation.'),
-                                style: const TextStyle(
-                                  color: _secondary,
+                                style: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
@@ -730,6 +728,19 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
             ),
             child: Row(
               children: [
+                IconButton.filledTonal(
+                  tooltip: appText(context, 'Attach'),
+                  onPressed: _isSending || _isSendingAttachment
+                      ? null
+                      : _showAttachmentMenu,
+                  icon: _isSendingAttachment
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.add_rounded),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
                     controller: _input,
@@ -742,7 +753,9 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                           ? null
                           : appText(context, 'Message'),
                       hintStyle: TextStyle(
-                        color: _secondary.withValues(alpha: .55),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurfaceVariant.withValues(alpha: .72),
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -752,17 +765,17 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                 const SizedBox(width: 10),
                 IconButton.filled(
                   style: IconButton.styleFrom(
-                    backgroundColor: _primary,
-                    foregroundColor: Colors.white,
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
                     fixedSize: const Size(54, 54),
                   ),
                   onPressed: _isSending ? null : _sendMessage,
                   icon: _isSending
-                      ? const SizedBox.square(
+                      ? SizedBox.square(
                           dimension: 18,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: Theme.of(context).colorScheme.onPrimary,
                           ),
                         )
                       : const Icon(Icons.send_rounded),
@@ -796,6 +809,348 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
       setState(() => _error = _chatErrorMessage(error));
     } finally {
       if (mounted) setState(() => _isSending = false);
+    }
+  }
+
+  Future<void> _showGroupMenu() async {
+    final action = await showModalBottomSheet<_GroupChatMenuAction>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.person_add_alt_1_rounded),
+                title: Text(appText(context, 'Add members')),
+                onTap: () =>
+                    Navigator.of(context).pop(_GroupChatMenuAction.addMembers),
+              ),
+              ListTile(
+                leading: const Icon(Icons.info_outline_rounded),
+                title: Text(appText(context, 'Group info')),
+                onTap: () =>
+                    Navigator.of(context).pop(_GroupChatMenuAction.info),
+              ),
+              ListTile(
+                leading: const Icon(Icons.perm_media_outlined),
+                title: Text(appText(context, 'Group media')),
+                onTap: () =>
+                    Navigator.of(context).pop(_GroupChatMenuAction.media),
+              ),
+              ListTile(
+                leading: Icon(
+                  _membership.isMuted
+                      ? Icons.notifications_off_rounded
+                      : Icons.notifications_outlined,
+                ),
+                title: Text(appText(context, 'Notifications')),
+                subtitle: _membership.isMuted
+                    ? Text(appText(context, 'Muted'))
+                    : null,
+                onTap: () => Navigator.of(
+                  context,
+                ).pop(_GroupChatMenuAction.notifications),
+              ),
+              ListTile(
+                leading: const Icon(Icons.more_horiz_rounded),
+                title: Text(appText(context, 'More')),
+                onTap: () =>
+                    Navigator.of(context).pop(_GroupChatMenuAction.more),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _GroupChatMenuAction.addMembers:
+        await _showInviteSheet();
+      case _GroupChatMenuAction.info:
+        await _showGroupInfo();
+      case _GroupChatMenuAction.media:
+        await _showGroupMedia();
+      case _GroupChatMenuAction.notifications:
+        await _showNotificationOptions();
+      case _GroupChatMenuAction.more:
+        await _showMoreOptions();
+    }
+  }
+
+  Future<void> _showGroupInfo() async {
+    await _showFullHeightChatSheet(
+      GroupChatInfoPanel(
+        chatId: widget.chat.id,
+        accountId: widget.account.uid,
+        repository: widget.repository,
+        onAddMembers: () {
+          Navigator.of(context).pop();
+          Future<void>.delayed(Duration.zero, _showInviteSheet);
+        },
+        onOpenMedia: () {
+          Navigator.of(context).pop();
+          Future<void>.delayed(Duration.zero, _showGroupMedia);
+        },
+      ),
+    );
+    final chat = await widget.repository.loadChat(widget.chat.id);
+    if (mounted && chat != null) {
+      setState(() => _chatTitle = chat.title);
+    }
+  }
+
+  Future<void> _showGroupMedia() {
+    return _showFullHeightChatSheet(
+      GroupChatMediaPanel(
+        chatId: widget.chat.id,
+        repository: widget.repository,
+      ),
+    );
+  }
+
+  Future<void> _showFullHeightChatSheet(Widget child) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => FractionallySizedBox(
+        heightFactor: MediaQuery.sizeOf(context).height < 700 ? 1 : .92,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showNotificationOptions() async {
+    final selected = await showModalBottomSheet<_ChatMuteChoice>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.notifications_active_rounded),
+                title: Text(appText(context, 'Unmute notifications')),
+                onTap: () => Navigator.of(context).pop(_ChatMuteChoice.unmuted),
+              ),
+              ListTile(
+                leading: const Icon(Icons.timer_outlined),
+                title: Text(appText(context, 'Mute for 30 minutes')),
+                onTap: () =>
+                    Navigator.of(context).pop(_ChatMuteChoice.thirtyMinutes),
+              ),
+              ListTile(
+                leading: const Icon(Icons.timer_outlined),
+                title: Text(appText(context, 'Mute for 1 hour')),
+                onTap: () => Navigator.of(context).pop(_ChatMuteChoice.oneHour),
+              ),
+              ListTile(
+                leading: const Icon(Icons.schedule_rounded),
+                title: Text(appText(context, 'Mute for 24 hours')),
+                onTap: () => Navigator.of(context).pop(_ChatMuteChoice.oneDay),
+              ),
+              ListTile(
+                leading: const Icon(Icons.notifications_off_rounded),
+                title: Text(appText(context, 'Mute forever')),
+                onTap: () => Navigator.of(context).pop(_ChatMuteChoice.forever),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    try {
+      final now = DateTime.now();
+      final until = switch (selected) {
+        _ChatMuteChoice.thirtyMinutes => now.add(const Duration(minutes: 30)),
+        _ChatMuteChoice.oneHour => now.add(const Duration(hours: 1)),
+        _ChatMuteChoice.oneDay => now.add(const Duration(days: 1)),
+        _ => null,
+      };
+      await widget.repository.setMute(
+        chatId: widget.chat.id,
+        accountId: widget.account.uid,
+        until: until,
+        forever: selected == _ChatMuteChoice.forever,
+      );
+      final membership = await widget.repository.loadMembership(
+        accountId: widget.account.uid,
+        chatId: widget.chat.id,
+      );
+      if (!mounted) return;
+      if (membership != null) {
+        setState(() => _membership = membership);
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            appText(
+              context,
+              selected == _ChatMuteChoice.unmuted
+                  ? 'Chat notifications are on.'
+                  : 'Chat notifications are muted.',
+            ),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) setState(() => _error = _chatErrorMessage(error));
+    }
+  }
+
+  Future<void> _showMoreOptions() async {
+    final action = await showModalBottomSheet<_ChatMoreAction>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.flag_outlined),
+                title: Text(appText(context, 'Report')),
+                onTap: () => Navigator.of(context).pop(_ChatMoreAction.report),
+              ),
+              ListTile(
+                leading: Icon(
+                  Icons.exit_to_app_rounded,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                title: Text(
+                  appText(context, 'Exit chat'),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                onTap: () => Navigator.of(context).pop(_ChatMoreAction.exit),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == _ChatMoreAction.report) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            appText(context, 'Report received. No data was submitted.'),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(appText(context, 'Exit chat?')),
+        content: Text(
+          appText(
+            context,
+            'You will lose access until another member invites you again.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(appText(context, 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(appText(context, 'Exit')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.repository.leaveChat(
+        chatId: widget.chat.id,
+        accountId: widget.account.uid,
+      );
+      if (mounted) widget.onBack();
+    } catch (error) {
+      if (mounted) setState(() => _error = _chatErrorMessage(error));
+    }
+  }
+
+  Future<void> _showAttachmentMenu() async {
+    final source = await showModalBottomSheet<ChatAttachmentSource>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620),
+          child: Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _AttachmentSourceButton(
+                icon: Icons.photo_camera_rounded,
+                label: 'Camera',
+                enabled: _attachmentService.cameraAvailable,
+                onTap: () =>
+                    Navigator.of(context).pop(ChatAttachmentSource.camera),
+              ),
+              _AttachmentSourceButton(
+                icon: Icons.photo_library_rounded,
+                label: 'Photos',
+                onTap: () =>
+                    Navigator.of(context).pop(ChatAttachmentSource.photos),
+              ),
+              _AttachmentSourceButton(
+                icon: Icons.video_library_rounded,
+                label: 'Videos',
+                onTap: () =>
+                    Navigator.of(context).pop(ChatAttachmentSource.videos),
+              ),
+              _AttachmentSourceButton(
+                icon: Icons.attach_file_rounded,
+                label: 'Files',
+                onTap: () =>
+                    Navigator.of(context).pop(ChatAttachmentSource.files),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || source == null) return;
+    setState(() {
+      _isSendingAttachment = true;
+      _error = null;
+    });
+    try {
+      final settings = PerformanceScope.maybeSettingsOf(context);
+      final attachment = await _attachmentService.pick(
+        source: source,
+        imageQuality: settings.imageQuality,
+      );
+      if (attachment == null) return;
+      await widget.repository.sendAttachment(
+        chatId: widget.chat.id,
+        accountId: widget.account.uid,
+        profile: widget.user,
+        senderPhotoUrl: widget.user.photoUrl ?? widget.account.photoUrl,
+        attachment: attachment,
+      );
+    } catch (error) {
+      if (mounted) setState(() => _error = _chatErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _isSendingAttachment = false);
     }
   }
 
@@ -1012,6 +1367,61 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
             child: Text(appText(context, 'Done')),
           ),
         ],
+      ),
+    );
+  }
+}
+
+enum _GroupChatMenuAction { addMembers, info, media, notifications, more }
+
+enum _ChatMuteChoice { unmuted, thirtyMinutes, oneHour, oneDay, forever }
+
+enum _ChatMoreAction { report, exit }
+
+class _AttachmentSourceButton extends StatelessWidget {
+  const _AttachmentSourceButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.enabled = true,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 130,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: enabled ? onTap : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 32,
+                color: enabled
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).disabledColor,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                appText(context, label),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: enabled ? null : Theme.of(context).disabledColor,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

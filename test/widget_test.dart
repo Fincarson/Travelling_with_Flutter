@@ -13,13 +13,11 @@ import 'package:flutter_app/app/app.dart';
 void main() {
   testWidgets('App renders configured home', (WidgetTester tester) async {
     await tester.pumpWidget(
-      const MyApp(
-        home: Scaffold(body: Text('Travelling with Flutter')),
-      ),
+      const MyApp(home: Scaffold(body: Text('Travel Agent'))),
     );
 
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    expect(find.text('Travelling with Flutter'), findsOneWidget);
+    expect(find.text('Travel Agent'), findsOneWidget);
   });
 }
