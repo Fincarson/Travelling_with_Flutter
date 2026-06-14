@@ -380,7 +380,7 @@ service cloud.firestore {
         'spent',
         'currency',
         'status',
-        'groupType',
+        'numOfTravelers',
         'images',
         'preferences',
         'checklist',

@@ -38,7 +38,7 @@ class _PendingAiTripPreview {
     required this.endDate,
     required this.budget,
     required this.currency,
-    required this.groupType,
+    required this.numOfTravelers,
     required this.preferences,
     required this.plan,
     required this.startLocation,
@@ -50,7 +50,7 @@ class _PendingAiTripPreview {
   final DateTime endDate;
   final int budget;
   final String currency;
-  final String groupType;
+  final int numOfTravelers;
   final List<String> preferences;
   final GeneratedTripPlan plan;
   final TripStartLocation? startLocation;
@@ -81,7 +81,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   List<PlaceSuggestion> _originSuggestions = const [];
   final List<CreateTripChatMessage> _chatMessages = [];
   CreateTripDraft? _pendingDraft;
-  var _group = 'Friends';
+  var _numOfTravelers = 2;
   var _currency = AppCurrency.fallbackCurrencyCode;
   var _mode = 0;
   String? _formError;
@@ -130,8 +130,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             .map((item) => item.code)
             .toList(growable: false);
   }
-
-  static const _groupOptions = ['Friends', 'Family', 'Tour'];
 
   static const _planningGoals = [
     PlanningGoal(
@@ -195,7 +193,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         endDate: '2026-09-15',
         budget: 4200,
         spent: 0,
-        groupType: 'Friends',
+        numOfTravelers: 2,
         currency: 'USD',
         status: TripStatus.upcoming,
         images: [
@@ -305,7 +303,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         endDate: '2026-10-11',
         budget: 3200,
         spent: 0,
-        groupType: 'Family',
+        numOfTravelers: 4,
         currency: 'USD',
         status: TripStatus.upcoming,
         images: [
@@ -1118,11 +1116,20 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       }
     }
 
-    String? groupType = draft.groupType;
-    if (lower.contains('solo')) groupType = 'Solo';
-    if (lower.contains('friend')) groupType = 'Friends';
-    if (lower.contains('family')) groupType = 'Family';
-    if (lower.contains('tour')) groupType = 'Tour';
+    int? numOfTravelers = draft.numOfTravelers;
+    final travelerMatch = RegExp(
+      r'\b(\d{1,2})\s*(?:people|person|travelers?|travellers?|guests?|adults?|kids?|children)\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    final travelerCount = int.tryParse(travelerMatch?.group(1) ?? '');
+    if (travelerCount != null) {
+      numOfTravelers = travelerCount.clamp(1, 99).toInt();
+    } else {
+      if (lower.contains('solo')) numOfTravelers = 1;
+      if (lower.contains('friend')) numOfTravelers ??= 2;
+      if (lower.contains('family')) numOfTravelers ??= 4;
+      if (lower.contains('tour')) numOfTravelers ??= 12;
+    }
 
     final currency = _currencyFromText(text) ?? draft.currency ?? _currency;
     String? budget = draft.budget;
@@ -1203,7 +1210,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       endDate: endDate,
       budget: budget,
       currency: currency,
-      groupType: groupType,
+      numOfTravelers: numOfTravelers,
       preferences: preferenceAdds.toList(),
     );
   }
@@ -1275,7 +1282,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     if ((draft.destination ?? '').trim().isEmpty) missing.add('destination');
     if (draft.startDate == null || draft.endDate == null) missing.add('dates');
     if ((draft.budget ?? '').trim().isEmpty) missing.add('total budget');
-    if ((draft.groupType ?? '').trim().isEmpty) missing.add('who is coming');
+    if (draft.numOfTravelers == null) missing.add('number of travelers');
     return missing;
   }
 
@@ -1287,8 +1294,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         return 'Choose a date range, like 15/06/2026 to 20/06/2026, or say 5 days.';
       case 'total budget':
         return 'What total budget should I plan around in $_currency?';
-      case 'who is coming':
-        return 'Who is coming with you: Solo, Friends, Family, or Tour?';
+      case 'number of travelers':
+        return 'How many people are coming on this trip?';
       default:
         return 'Tell me one more detail for the trip.';
     }
@@ -1363,24 +1370,24 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               )
               .toList(),
         );
-      case 'who is coming':
+      case 'number of travelers':
         return const CreateTripChoiceWidget(
-          title: 'Travel party',
+          title: 'Number of travelers',
           options: [
             CreateTripChoiceOption(
-              label: 'Solo',
-              value: 'Solo',
-              description: 'Personal route and pace',
+              label: '1',
+              value: '1 traveler',
+              description: 'Single-traveler pacing',
             ),
             CreateTripChoiceOption(
-              label: 'Friends',
-              value: 'Friends',
-              description: 'Shared plans and votes',
+              label: '2',
+              value: '2 travelers',
+              description: 'Pair-friendly route',
             ),
             CreateTripChoiceOption(
-              label: 'Family',
-              value: 'Family',
-              description: 'Comfortable timing',
+              label: '4',
+              value: '4 travelers',
+              description: 'Small group timing',
             ),
           ],
         );
@@ -1716,9 +1723,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     if (currency != null && _currencyOptions.contains(currency)) {
       _currency = currency;
     }
-    final groupType = draft.groupType;
-    if (groupType != null && _groupOptions.contains(groupType)) {
-      _group = groupType;
+    final numOfTravelers = draft.numOfTravelers;
+    if (numOfTravelers != null) {
+      _numOfTravelers = numOfTravelers.clamp(1, 99).toInt();
     }
     _preferences
       ..clear()
@@ -1801,7 +1808,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final customTag = TextEditingController();
     var startDate = draft.startDate ?? _startDate;
     var endDate = draft.endDate ?? _endDate;
-    var groupType = draft.groupType ?? _group;
+    var numOfTravelers = draft.numOfTravelers ?? _numOfTravelers;
     final preferences = <String>{...draft.preferences};
 
     try {
@@ -1935,23 +1942,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              DropdownButtonFormField<String>(
-                                initialValue: groupType,
-                                decoration: InputDecoration(
-                                  labelText: appText(context, 'Who is coming'),
-                                ),
-                                items:
-                                    const ['Solo', 'Family', 'Friends', 'Tour']
-                                        .map(
-                                          (item) => DropdownMenuItem(
-                                            value: item,
-                                            child: Text(appText(context, item)),
-                                          ),
-                                        )
-                                        .toList(),
-                                onChanged: (value) => setSheetState(
-                                  () => groupType = value ?? groupType,
-                                ),
+                              _TravelerCountPicker(
+                                value: numOfTravelers,
+                                onChanged: (value) =>
+                                    setSheetState(() => numOfTravelers = value),
                               ),
                               const SizedBox(height: 14),
                               const LabelText('Trip tags'),
@@ -2021,7 +2015,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                         .replaceAll(RegExp(r'\D'), '')
                                         .trim(),
                                     currency: draft.currency ?? _currency,
-                                    groupType: groupType,
+                                    numOfTravelers: numOfTravelers,
                                     preferences: preferences.toList(),
                                   ),
                                 ),
@@ -2156,7 +2150,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             startDate: _startDate,
             endDate: _endDate,
             budget: budget,
-            groupType: _group,
+            numOfTravelers: _numOfTravelers,
             preferences: _aiGenerationPreferences,
             currency: _currency,
             airline: _airline.text.trim(),
@@ -2195,7 +2189,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       endDate: _endDate,
       budget: budget,
       currency: _currency,
-      groupType: _group,
+      numOfTravelers: _numOfTravelers,
       preferences: _savedTripPreferences,
       plan: plan,
       startLocation: startLocation,
@@ -2390,7 +2384,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             startDate: _startDate,
             endDate: _endDate,
             budget: budget,
-            groupType: _group,
+            numOfTravelers: _numOfTravelers,
             preferences: _aiGenerationPreferences,
             currency: _currency,
             airline: _airline.text.trim(),
@@ -2463,7 +2457,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           endDate: _dateKey(_endDate),
           budget: budget,
           spent: 0,
-          groupType: _group,
+          numOfTravelers: _numOfTravelers,
           currency: _currency,
           status: TripStatus.upcoming,
           images: tripImages,
@@ -2588,7 +2582,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       endDate: _dateKey(end),
       budget: template.budget,
       spent: 0,
-      groupType: template.groupType,
+      numOfTravelers: template.numOfTravelers,
       currency: template.currency,
       status: TripStatus.upcoming,
       images: template.images.isEmpty
@@ -2653,7 +2647,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     return switch (index) {
       0 => _destination.text.trim().isNotEmpty,
       1 => _parsedBudget() > 0,
-      2 => _group.trim().isNotEmpty && _preferences.isNotEmpty,
+      2 => _numOfTravelers >= 1 && _preferences.isNotEmpty,
       3 => true,
       _ => false,
     };
@@ -2725,11 +2719,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   void _applyAiStyleIdea({
-    required String group,
+    required int numOfTravelers,
     required List<String> preferences,
   }) {
     setState(() {
-      _group = group;
+      _numOfTravelers = numOfTravelers.clamp(1, 99).toInt();
       _preferences.addAll(preferences);
       _formError = null;
     });
@@ -2751,7 +2745,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       0 => true,
       1 => _destination.text.trim().isNotEmpty,
       2 => _parsedBudget() > 0,
-      3 => _group.trim().isNotEmpty && _preferences.isNotEmpty,
+      3 => _numOfTravelers >= 1 && _preferences.isNotEmpty,
       4 => true,
       _ => false,
     };
@@ -2981,7 +2975,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                   icon: Icons.auto_graph_rounded,
                   title: 'Timing and budget',
                   suggestion:
-                      'AI will balance the daily pace against your budget, dates, and travel party.',
+                      'AI will balance the daily pace against your budget, dates, and number of travelers.',
                   expanded: _aiExpandedStep == 2,
                   complete: aiStepComplete[2],
                   attention: aiFocusStep == 2,
@@ -3059,19 +3053,19 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                         choices: [
                           _AiChoice(
                             icon: Icons.group_rounded,
-                            title: 'Friends energy',
+                            title: 'Two travelers',
                             text: 'Food, shopping, nightlife, flexible pace',
                             onTap: () => _applyAiStyleIdea(
-                              group: 'Friends',
+                              numOfTravelers: 2,
                               preferences: ['Food', 'Shopping', 'Nightlife'],
                             ),
                           ),
                           _AiChoice(
                             icon: Icons.family_restroom_rounded,
-                            title: 'Family comfort',
+                            title: 'Four travelers',
                             text: 'Easy pace, culture, rain-ready stops',
                             onTap: () => _applyAiStyleIdea(
-                              group: 'Family',
+                              numOfTravelers: 4,
                               preferences: ['Culture', 'Relax', 'Museums'],
                             ),
                           ),
@@ -3080,7 +3074,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                             title: 'Active explorer',
                             text: 'Nature, walking routes, adventure',
                             onTap: () => _applyAiStyleIdea(
-                              group: 'Tour',
+                              numOfTravelers: 6,
                               preferences: ['Nature', 'Adventure', 'Walking'],
                             ),
                           ),
@@ -3089,13 +3083,14 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                       const SizedBox(height: 12),
                       _AiInputGrid(
                         children: [
-                          _AiPickerCard(
-                            label: 'Who is coming',
+                          _AiFieldCard(
+                            label: 'Number of travelers',
                             icon: Icons.group_rounded,
-                            value: _group,
-                            options: _groupOptions,
-                            onChanged: (value) =>
-                                setState(() => _group = value),
+                            child: _TravelerCountPicker(
+                              value: _numOfTravelers,
+                              onChanged: (value) =>
+                                  setState(() => _numOfTravelers = value),
+                            ),
                           ),
                           _AiCustomTagCard(
                             controller: _customPreference,
@@ -3226,41 +3221,42 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                 34 + bottomInset,
               ),
               children: [
-                Text(
-                  appText(context, 'Trip Basics'),
-                  style: const TextStyle(
-                    color: Color(0xFF355872),
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                    height: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  appText(context, "Let's start with the basics"),
-                  style: const TextStyle(
-                    color: Color(0xFF42474C),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                _ManualPreviewCard(
-                  completedSections: completedStepCount,
-                  totalSections: manualStepComplete.length,
-                  destination: _destination.text.trim(),
-                  startDate: _dateKey(_startDate),
-                  endDate: _dateKey(_endDate),
-                  tripLength: tripLength,
-                  budget: _hasBudgetText ? budgetLabel : '',
-                  group: _group,
-                  preferences: _preferences.toList(),
-                  expanded: _manualPreviewExpanded,
-                  onToggle: () => setState(
-                    () => _manualPreviewExpanded = !_manualPreviewExpanded,
-                  ),
-                ),
-                const SizedBox(height: 14),
+                // NOTE: disabled for now because it's kind of useless
+                // Text(
+                //   appText(context, 'Trip Basics'),
+                //   style: const TextStyle(
+                //     color: Color(0xFF355872),
+                //     fontSize: 24,
+                //     fontWeight: FontWeight.w900,
+                //     height: 1.2,
+                //   ),
+                // ),
+                // const SizedBox(height: 4),
+                // Text(
+                //   appText(context, "Let's start with the basics"),
+                //   style: const TextStyle(
+                //     color: Color(0xFF42474C),
+                //     fontSize: 15,
+                //     fontWeight: FontWeight.w600,
+                //   ),
+                // ),
+                // const SizedBox(height: 16),
+                // _ManualPreviewCard(
+                //   completedSections: completedStepCount,
+                //   totalSections: manualStepComplete.length,
+                //   destination: _destination.text.trim(),
+                //   startDate: _dateKey(_startDate),
+                //   endDate: _dateKey(_endDate),
+                //   tripLength: tripLength,
+                //   budget: _hasBudgetText ? budgetLabel : '',
+                //   travelerCount: _numOfTravelers,
+                //   preferences: _preferences.toList(),
+                //   expanded: _manualPreviewExpanded,
+                //   onToggle: () => setState(
+                //     () => _manualPreviewExpanded = !_manualPreviewExpanded,
+                //   ),
+                // ),
+                // const SizedBox(height: 14),
                 const _ManualInfoBanner(),
                 const SizedBox(height: 20),
                 LayoutBuilder(
@@ -3285,9 +3281,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                             children: [
                               _ManualAccordionSection(
                                 icon: Icons.route_rounded,
-                                title: 'Route',
+                                title: 'Destination',
                                 subtitle:
-                                    'Set where the trip goes and where the first travel leg starts.',
+                                    'Where would you like to travel to?',
                                 expanded: _manualExpandedStep == 0,
                                 complete: manualStepComplete[0],
                                 attention: manualFocusStep == 0,
@@ -3312,7 +3308,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                               ),
                                         child: _ManualTextField(
                                           controller: _destination,
-                                          hint: 'Where do you want to go?',
+                                          hint: 'Where to?',
                                           onChanged: _schedulePlaceSearch,
                                         ),
                                       ),
@@ -3426,7 +3422,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                 icon: Icons.tune_rounded,
                                 title: 'Travel style',
                                 subtitle:
-                                    'Choose the travel party and the tags that should shape the starter trip.',
+                                    'Choose the number of travelers and the tags that should shape the starter trip.',
                                 expanded: _manualExpandedStep == 2,
                                 complete: manualStepComplete[2],
                                 attention: manualFocusStep == 2,
@@ -3436,13 +3432,15 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                   _ManualGrid(
                                     minTileWidth: 220,
                                     children: [
-                                      _ManualDropdownCard(
-                                        label: 'Who is coming',
-                                        value: _group,
+                                      _ManualFieldCard(
+                                        label: 'Number of travelers',
                                         icon: Icons.group_rounded,
-                                        options: _groupOptions,
-                                        onChanged: (value) =>
-                                            setState(() => _group = value),
+                                        child: _TravelerCountPicker(
+                                          value: _numOfTravelers,
+                                          onChanged: (value) => setState(
+                                            () => _numOfTravelers = value,
+                                          ),
+                                        ),
                                       ),
                                       _ManualCustomTagCard(
                                         controller: _customPreference,
@@ -3717,13 +3715,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                             CreateTripPromptChip(
                               label: 'Beach',
                               prompt:
-                                  'Trip to Bali with family, 10/07/2026 to 16/07/2026, budget \$5000',
+                                  'Trip to Bali for 4 travelers, 10/07/2026 to 16/07/2026, budget \$5000',
                               onTap: _sendCreateTripChat,
                             ),
                             CreateTripPromptChip(
-                              label: 'Solo',
+                              label: '1 traveler',
                               prompt:
-                                  'Solo trip to Tokyo, 01/06/2026 to 05/06/2026, budget \$2500',
+                                  '1 traveler trip to Tokyo, 01/06/2026 to 05/06/2026, budget \$2500',
                               onTap: _sendCreateTripChat,
                             ),
                           ],
@@ -4003,7 +4001,10 @@ class _AiTripPreviewSheetState extends State<_AiTripPreviewSheet> {
                     value:
                         '${preview.currency} ${_formatAmountText(preview.budget.toString())}',
                   ),
-                  DraftStat(label: 'Party', value: preview.groupType),
+                  DraftStat(
+                    label: 'Travelers',
+                    value: _travelerCountLabel(preview.numOfTravelers),
+                  ),
                 ],
               ),
               if (preview.preferences.isNotEmpty) ...[
@@ -4503,7 +4504,7 @@ class _AiTripPreviewSheetState extends State<_AiTripPreviewSheet> {
       endDate: _dateKey(preview.endDate),
       budget: preview.budget,
       spent: 0,
-      groupType: preview.groupType,
+      numOfTravelers: preview.numOfTravelers,
       currency: preview.currency,
       status: TripStatus.upcoming,
       images: preview.images,
@@ -5208,7 +5209,9 @@ class _TemplatePreviewSheet extends StatelessWidget {
                               SmallPill(
                                 label: _templateBudgetLabel(context, trip),
                               ),
-                              SmallPill(label: trip.groupType),
+                              SmallPill(
+                                label: _travelerCountLabel(trip.numOfTravelers),
+                              ),
                               for (final tag in trip.preferences.take(3))
                                 SmallPill(label: tag),
                             ],
@@ -5758,6 +5761,109 @@ class _AiPickerCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AiFieldCard extends StatelessWidget {
+  const _AiFieldCard({
+    required this.label,
+    required this.icon,
+    required this.child,
+  });
+
+  final String label;
+  final IconData icon;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 92),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8F0),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: const Color(0xFF355872), size: 19),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  appText(context, label),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF42474C),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                child,
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TravelerCountPicker extends StatelessWidget {
+  const _TravelerCountPicker({required this.value, required this.onChanged});
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final safeValue = value.clamp(1, 99).toInt();
+    return Row(
+      children: [
+        IconButton.filledTonal(
+          tooltip: appText(context, 'Decrease travelers'),
+          onPressed: safeValue <= 1 ? null : () => onChanged(safeValue - 1),
+          icon: const Icon(Icons.remove_rounded),
+        ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              _travelerCountLabel(safeValue),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Color(0xFF355872),
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ),
+        IconButton.filled(
+          tooltip: appText(context, 'Increase travelers'),
+          onPressed: safeValue >= 99 ? null : () => onChanged(safeValue + 1),
+          icon: const Icon(Icons.add_rounded),
+        ),
+      ],
     );
   }
 }
@@ -7835,7 +7941,7 @@ class _ManualPreviewCard extends StatelessWidget {
     required this.endDate,
     required this.tripLength,
     required this.budget,
-    required this.group,
+    required this.travelerCount,
     required this.preferences,
     required this.expanded,
     required this.onToggle,
@@ -7848,7 +7954,7 @@ class _ManualPreviewCard extends StatelessWidget {
   final String endDate;
   final int tripLength;
   final String budget;
-  final String group;
+  final int travelerCount;
   final List<String> preferences;
   final bool expanded;
   final VoidCallback onToggle;
@@ -7866,7 +7972,7 @@ class _ManualPreviewCard extends StatelessWidget {
     final preferenceText = visiblePreferences.isEmpty
         ? appText(context, 'Pick travel style')
         : [
-            group,
+            _travelerCountLabel(travelerCount),
             visiblePreferences.join(', '),
             if (preferences.length > visiblePreferences.length)
               '+${preferences.length - visiblePreferences.length} more',
@@ -8383,40 +8489,25 @@ class _ManualFooterActions extends StatelessWidget {
           top: BorderSide(color: const Color(0xFFC2C7CC).withValues(alpha: .3)),
         ),
       ),
-      child: Row(
-        children: [
-          TextButton(
-            onPressed: onCancel,
-            child: Text(
-              appText(context, 'Cancel'),
-              style: const TextStyle(
-                color: Color(0xFF42474C),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
+      child: FilledButton.icon(
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF355872),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
           ),
-          const Spacer(),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF355872),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-            onPressed: isCreating ? null : onCreate,
-            icon: isCreating
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.arrow_forward_rounded, size: 18),
-            label: Text(
-              appText(context, isCreating ? 'Creating' : 'Create manually'),
-            ),
-          ),
-        ],
+        ),
+        onPressed: isCreating ? null : onCreate,
+        icon: isCreating
+            ? const SizedBox.square(
+                dimension: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.arrow_forward_rounded, size: 18),
+        label: Text(
+          appText(context, isCreating ? 'CREATING' : 'CREATE TRIP'),
+        ),
       ),
     );
   }

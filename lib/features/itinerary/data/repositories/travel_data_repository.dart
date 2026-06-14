@@ -370,7 +370,7 @@ class TravelDataRepository {
       'spent': trip.spent,
       'currency': trip.currency,
       'status': trip.status.name,
-      'groupType': trip.groupType,
+      'numOfTravelers': trip.numOfTravelers,
       'memberIds': memberIds,
       'roles': roles,
       'images': trip.images,

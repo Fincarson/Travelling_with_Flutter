@@ -10,7 +10,7 @@ class Trip {
     required this.endDate,
     required this.budget,
     required this.spent,
-    required this.groupType,
+    required this.numOfTravelers,
     required this.status,
     required this.images,
     required this.items,
@@ -36,7 +36,7 @@ class Trip {
   final String endDate;
   final int budget;
   final int spent;
-  final String groupType;
+  final int numOfTravelers;
   final TripStatus status;
   final List<String> images;
   final List<ScheduleItem> items;
@@ -60,7 +60,7 @@ class Trip {
     String? destination,
     String? startDate,
     String? endDate,
-    String? groupType,
+    int? numOfTravelers,
     String? currency,
     List<String>? images,
     List<ScheduleItem>? items,
@@ -84,7 +84,7 @@ class Trip {
     endDate: endDate ?? this.endDate,
     budget: budget ?? this.budget,
     spent: spent ?? this.spent,
-    groupType: groupType ?? this.groupType,
+    numOfTravelers: numOfTravelers ?? this.numOfTravelers,
     status: status ?? this.status,
     images: images ?? this.images,
     items: items ?? this.items,
@@ -116,7 +116,7 @@ class Trip {
     'endDate': endDate,
     'budget': budget,
     'spent': spent,
-    'groupType': groupType,
+    'numOfTravelers': numOfTravelers,
     'currency': currency,
     'status': status.name,
     'images': images,
@@ -148,7 +148,7 @@ class Trip {
       endDate: (map['endDate'] as String?) ?? '',
       budget: (map['budget'] as num?)?.toInt() ?? 0,
       spent: (map['spent'] as num?)?.toInt() ?? 0,
-      groupType: (map['groupType'] as String?) ?? 'Solo',
+      numOfTravelers: _numOfTravelersFromMap(map),
       currency: (map['currency'] as String?) ?? 'USD',
       status: TripStatus.values.firstWhere(
         (status) => status.name == map['status'],
@@ -210,7 +210,7 @@ class Trip {
       endDate: (map['endDate'] as String?) ?? '',
       budget: (map['budget'] as num?)?.toInt() ?? 0,
       spent: (map['spent'] as num?)?.toInt() ?? 0,
-      groupType: (map['groupType'] as String?) ?? 'Solo',
+      numOfTravelers: _numOfTravelersFromMap(map),
       currency: (map['currency'] as String?) ?? 'USD',
       status: TripStatus.values.firstWhere(
         (status) => status.name == map['status'],
@@ -234,6 +234,17 @@ class Trip {
       budgetCategories: budgetCategories,
     );
   }
+}
+
+int _numOfTravelersFromMap(Map<String, dynamic> map) {
+  final value = (map['numOfTravelers'] as num?)?.toInt();
+  if (value == null) return 1;
+  return value.clamp(1, 99).toInt();
+}
+
+String _travelerCountLabel(int count) {
+  final safeCount = count.clamp(1, 99).toInt();
+  return safeCount == 1 ? '1 traveler' : '$safeCount travelers';
 }
 
 class TripMemory {

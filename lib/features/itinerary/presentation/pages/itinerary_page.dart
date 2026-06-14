@@ -335,12 +335,13 @@ class _TripHeaderBannerContent extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            const Flexible(
+            Icon(Icons.person_rounded, color: Colors.white.withValues(alpha: .82), size: 20),
+            Flexible(
               child: Text(
-                '67 PEOPLE',
+                trip.numOfTravelers.toString(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
+                style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 1.5,

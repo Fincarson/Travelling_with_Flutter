@@ -323,7 +323,7 @@ class HeroTripCard extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           Text(
-            trip.groupType.toUpperCase(),
+            _travelerCountLabel(trip.numOfTravelers).toUpperCase(),
             style: const TextStyle(
               color: _accent,
               fontWeight: FontWeight.w900,
@@ -643,7 +643,7 @@ class _TripListCardState extends State<TripListCard> {
             ),
             const SizedBox(height: 4),
             Text(
-              '${widget.trip.startDate} / ${appText(context, widget.trip.groupType)}',
+              '${widget.trip.startDate} / ${_travelerCountLabel(widget.trip.numOfTravelers)}',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
