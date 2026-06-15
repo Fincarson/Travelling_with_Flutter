@@ -231,13 +231,6 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
                   if (title != null)
                     _MainPageHeader(
                       title: title,
-                      leading: widget.location == '/trips/new'
-                          ? IconButton(
-                              tooltip: appText(context, 'Back'),
-                              onPressed: _navigateBack,
-                              icon: const Icon(Icons.chevron_left_rounded),
-                            )
-                          : null,
                       action: widget.location == '/profile'
                           ? IconButton(
                               tooltip: appText(context, 'Settings'),
@@ -267,26 +260,6 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
   }
 
   Widget? _headerAction(BuildContext context, String location) {
-    if (location == '/') {
-      return SizedBox.square(
-        dimension: _MainPageHeader.actionSize,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Positioned.fill(
-              child: IconButton(
-                tooltip: appText(context, 'Notifications'),
-                onPressed: () => context.go('/notifications'),
-                icon: const Icon(Icons.notifications_none_rounded),
-              ),
-            ),
-            if (widget.appState._user.notificationsEnabled)
-              const Positioned(right: 8, top: 8, child: Dot()),
-          ],
-        ),
-      );
-    }
-
     if (location == '/chat' && !widget.appState._isChatRoomOpen) {
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -469,14 +442,12 @@ String? _parentLocation(String location) {
 }
 
 class _MainPageHeader extends StatelessWidget {
-  const _MainPageHeader({required this.title, this.leading, this.action});
+  const _MainPageHeader({required this.title, this.action});
 
   static const height = 40.0;
   static const verticalPadding = 8.0;
-  static const actionSize = 40.0;
 
   final String title;
-  final Widget? leading;
   final Widget? action;
 
   @override
@@ -515,8 +486,6 @@ class _MainPageHeader extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (leading != null)
-                  Align(alignment: Alignment.centerLeft, child: leading!),
                 if (action != null)
                   Align(alignment: Alignment.centerRight, child: action!),
               ],

@@ -4020,7 +4020,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         child: ListView(
           padding: _responsivePagePadding(context, top: 18),
           children: [
-            TopBar(title: 'How do you want to start?', onBack: widget.onBack),
+            Text(
+              appText(context, 'How do you want to start?'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+            ),
             const SizedBox(height: 18),
             const AnimatedGlobe(),
             const SizedBox(height: 22),
