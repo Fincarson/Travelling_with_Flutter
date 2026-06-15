@@ -169,7 +169,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _EmptyTripCard(onCreate: widget.onCreate),
           ] else ...[
             Text(
-              appText(context, "Current Trip").toUpperCase(),
+              appText(context, _currentTripHeading(trip)).toUpperCase(),
               style: const TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w900,
@@ -557,18 +557,17 @@ class _DestinationDetailsPanel extends StatelessWidget {
   }
 }
 
-String _dailyTripPrompt(Trip trip) {
-  if (trip.status != TripStatus.ongoing) {
-    return 'Help me prepare to start my ${trip.destination} trip.';
-  }
+String _currentTripHeading(Trip trip) {
   final runtime = _tripRuntimePlan(trip);
-  final next = runtime.nextItem;
-  final base =
-      'I am currently running my ${trip.destination} trip. Today is day ${runtime.currentDay} of ${runtime.totalDays}.';
-  if (next == null) {
-    return '$base Help me plan the rest of today based on my schedule, current time, and location if available.';
+  if (runtime.phase == _TripRuntimePhase.duringTrip) return 'Current trip';
+  if (runtime.phase != _TripRuntimePhase.beforeStart) {
+    return 'Continue planning';
   }
-  return '$base My next scheduled activity is "${next.activity}" at ${next.time}. Help me run today smoothly using current time and location if available.';
+
+  final start = _parseTripDate(trip.startDate);
+  if (start == null) return 'Continue planning';
+  final daysUntilStart = start.difference(_dateOnly(_travelAgentNow())).inDays;
+  return daysUntilStart > 7 ? 'Continue planning' : 'Starting soon';
 }
 
 class _EmptyTripCard extends StatelessWidget {

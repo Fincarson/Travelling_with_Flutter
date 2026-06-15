@@ -13,19 +13,18 @@ class CurrentTripCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasStarted = trip.status == TripStatus.ongoing;
     final runtime = _tripRuntimePlan(trip);
+    final isOngoingNow = runtime.phase == _TripRuntimePhase.duringTrip;
     final booking = trip.bookings.isEmpty ? null : trip.bookings.first;
     final image = trip.images.isEmpty
         ? destinations.first.image
         : trip.images.first;
-    final eyebrow = hasStarted ? _runtimeEyebrow(runtime) : 'READY TO GO';
-    final nextTitle = hasStarted
-        ? _runtimeTitle(trip, runtime)
-        : 'Start your trip';
-    final nextDetail = hasStarted
-        ? _runtimeDetail(trip, runtime)
-        : '${trip.destination} / ${trip.startDate} to ${trip.endDate}';
+    final destination = _destinationCityLabel(trip.destination);
+    final tripDates = trip.startDate == trip.endDate
+        ? trip.startDate
+        : '${trip.startDate} to ${trip.endDate}';
+    final checklistTotal = _tripChecklistTotalCount(trip);
+    final checklistDone = _tripChecklistDoneCount(trip);
 
     return Container(
       clipBehavior: Clip.antiAlias,
@@ -87,20 +86,9 @@ class CurrentTripCard extends StatelessWidget {
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                const SizedBox(height: 8),
                                 Text(
-                                  appText(context, eyebrow),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: _accent,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 1.4,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  appText(context, nextTitle),
+                                  appText(context, destination),
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
@@ -111,13 +99,16 @@ class CurrentTripCard extends StatelessWidget {
                                   ),
                                 ),
                                 const SizedBox(height: 8),
-                                Text(
-                                  appText(context, nextDetail),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: .75),
-                                    fontWeight: FontWeight.w700,
+                                _TripDateTravelerLine(
+                                  dates: tripDates,
+                                  travelerCount: trip.numOfTravelers,
+                                  dateStyle: TextStyle(
+                                    color: Colors.white.withValues(alpha: .82),
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                  travelerForeground: Colors.white,
+                                  travelerBackground: Colors.white.withValues(
+                                    alpha: .14,
                                   ),
                                 ),
                               ],
@@ -128,8 +119,8 @@ class CurrentTripCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 18),
-                if (hasStarted) ...[
+                const SizedBox(height: 36),
+                if (isOngoingNow) ...[
                   _RuntimeDayStrip(runtime: runtime),
                   const SizedBox(height: 14),
                 ],
@@ -142,12 +133,37 @@ class CurrentTripCard extends StatelessWidget {
                           ? 'No bookings yet'
                           : '${booking.date} / confirmed',
                     ),
-                    _CurrentTripOverlayStat(
-                      title: 'Budget',
-                      value: _displayMoney(context, trip.spent, trip.currency),
-                      detail:
-                          'of ${_displayMoney(context, trip.budget, trip.currency)}',
-                      trailing: Icons.add_rounded,
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _CurrentTripOverlayStat(
+                        title: 'Checklist',
+                        value: checklistTotal == 0
+                            ? '0 items'
+                            : '$checklistDone/$checklistTotal',
+                        detail: checklistTotal == 0
+                            ? 'Nothing added'
+                            : 'packed',
+                        trailing: Icons.checklist_rounded,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _CurrentTripOverlayStat(
+                        title: 'Budget',
+                        value: _displayMoney(
+                          context,
+                          trip.spent,
+                          trip.currency,
+                        ),
+                        detail:
+                            'of ${_displayMoney(context, trip.budget, trip.currency)}',
+                        trailing: Icons.add_rounded,
+                      ),
                     ),
                   ],
                 ),
@@ -166,6 +182,122 @@ class CurrentTripCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _TripDateTravelerLine extends StatelessWidget {
+  const _TripDateTravelerLine({
+    required this.dates,
+    required this.travelerCount,
+    required this.dateStyle,
+    required this.travelerForeground,
+    this.travelerBackground,
+    this.compactBreakpoint = 330,
+  });
+
+  final String dates;
+  final int travelerCount;
+  final TextStyle dateStyle;
+  final Color travelerForeground;
+  final Color? travelerBackground;
+  final double compactBreakpoint;
+
+  @override
+  Widget build(BuildContext context) {
+    final travelerPill = _TravelerCountPill(
+      count: travelerCount,
+      foregroundColor: travelerForeground,
+      backgroundColor: travelerBackground,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < compactBreakpoint;
+        final dateText = Text(
+          appText(context, dates),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: dateStyle,
+        );
+        if (compact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [dateText, const SizedBox(height: 6), travelerPill],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: dateText),
+            const SizedBox(width: 10),
+            travelerPill,
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _TravelerCountPill extends StatelessWidget {
+  const _TravelerCountPill({
+    required this.count,
+    required this.foregroundColor,
+    this.backgroundColor,
+  });
+
+  final int count;
+  final Color foregroundColor;
+  final Color? backgroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.person_rounded, color: foregroundColor, size: 16),
+        const SizedBox(width: 4),
+        Text(
+          appText(context, _travelerCountLabel(count)).toUpperCase(),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: foregroundColor,
+            fontSize: 9,
+            fontWeight: FontWeight.w900,
+            letterSpacing: .8,
+          ),
+        ),
+      ],
+    );
+
+    if (backgroundColor == null) return content;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: content,
+    );
+  }
+}
+
+String _destinationCityLabel(String destination) {
+  final trimmed = destination.trim();
+  if (trimmed.isEmpty) return 'Your trip';
+  return trimmed.split(',').first.trim();
+}
+
+int _tripChecklistTotalCount(Trip trip) {
+  return trip.checklist.fold<int>(
+    0,
+    (total, category) => total + category.items.length,
+  );
+}
+
+int _tripChecklistDoneCount(Trip trip) {
+  return trip.checklist.fold<int>(
+    0,
+    (total, category) =>
+        total + category.items.where(_isChecklistItemChecked).length,
+  );
 }
 
 class _CurrentTripOverlayStat extends StatelessWidget {
@@ -280,35 +412,6 @@ class _RuntimeDayStrip extends StatelessWidget {
   }
 }
 
-String _runtimeEyebrow(_TripRuntimePlan runtime) {
-  return switch (runtime.phase) {
-    _TripRuntimePhase.beforeStart => 'STARTING SOON',
-    _TripRuntimePhase.afterTrip => 'TRIP WRAPPED',
-    _ => 'UP NEXT',
-  };
-}
-
-String _runtimeTitle(Trip trip, _TripRuntimePlan runtime) {
-  final next = runtime.nextItem;
-  if (runtime.phase == _TripRuntimePhase.beforeStart) {
-    return 'Trip starts ${trip.startDate}';
-  }
-  if (runtime.phase == _TripRuntimePhase.afterTrip) return 'Trip complete';
-  return next?.activity ?? 'Day ${runtime.currentDay} is open';
-}
-
-String _runtimeDetail(Trip trip, _TripRuntimePlan runtime) {
-  final next = runtime.nextItem;
-  if (runtime.phase == _TripRuntimePhase.beforeStart) {
-    return '${trip.destination} / ${trip.startDate} to ${trip.endDate}';
-  }
-  if (runtime.phase == _TripRuntimePhase.afterTrip) {
-    return '${trip.destination} / ${trip.startDate} to ${trip.endDate}';
-  }
-  if (next == null) return 'Day ${runtime.currentDay} / no more stops';
-  return '${next.time} / Day ${next.day} route';
-}
-
 class HeroTripCard extends StatelessWidget {
   const HeroTripCard({required this.trip, super.key});
   final Trip trip;
@@ -322,14 +425,11 @@ class HeroTripCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          Text(
-            _travelerCountLabel(trip.numOfTravelers).toUpperCase(),
-            style: const TextStyle(
-              color: _accent,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.5,
-            ),
+          _TravelerCountPill(
+            count: trip.numOfTravelers,
+            foregroundColor: _accent,
           ),
+          const SizedBox(height: 4),
           Text(
             trip.destination,
             maxLines: 2,
@@ -637,17 +737,21 @@ class TripListCard extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 3),
-                            Text(
-                              trip.startDate == trip.endDate
+                            _TripDateTravelerLine(
+                              dates: trip.startDate == trip.endDate
                                   ? trip.startDate
                                   : '${trip.startDate} to ${trip.endDate}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
+                              travelerCount: trip.numOfTravelers,
+                              dateStyle: TextStyle(
                                 color: scheme.onSurfaceVariant,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
                               ),
+                              travelerForeground: const Color(0xFF355872),
+                              travelerBackground: const Color(
+                                0xFFB6D8F2,
+                              ).withValues(alpha: .55),
+                              compactBreakpoint: compact ? 245 : 310,
                             ),
                           ],
                         ),
@@ -668,28 +772,6 @@ class TripListCard extends StatelessWidget {
                                 : scheme.onSurfaceVariant,
                           ),
                         ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFB6D8F2).withValues(alpha: .55),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          appText(
-                            context,
-                            _travelerCountLabel(trip.numOfTravelers),
-                          ).toUpperCase(),
-                          style: const TextStyle(
-                            color: Color(0xFF355872),
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: .8,
-                          ),
-                        ),
-                      ),
                     ],
                   ),
                   const SizedBox(height: 16),

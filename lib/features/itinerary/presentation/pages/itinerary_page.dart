@@ -450,38 +450,17 @@ class _TripHeaderBannerContent extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '${trip.startDate} ~ ${trip.endDate}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: .82),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Icon(
-              Icons.person_rounded,
-              color: Colors.white.withValues(alpha: .82),
-              size: 20,
-            ),
-            Flexible(
-              child: Text(
-                trip.numOfTravelers.toString(),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.5,
-                ),
-              ),
-            ),
-          ],
+        _TripDateTravelerLine(
+          dates: trip.startDate == trip.endDate
+              ? trip.startDate
+              : '${trip.startDate} ~ ${trip.endDate}',
+          travelerCount: trip.numOfTravelers,
+          dateStyle: TextStyle(
+            color: Colors.white.withValues(alpha: .82),
+            fontWeight: FontWeight.w800,
+          ),
+          travelerForeground: Colors.white,
+          travelerBackground: Colors.white.withValues(alpha: .14),
         ),
       ],
     );

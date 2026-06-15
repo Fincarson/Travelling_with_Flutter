@@ -418,6 +418,19 @@ service cloud.firestore {
         ]);
     }
 
+    function validTripMembershipSnapshot(tripId) {
+      return request.resource.data.tripId == tripId &&
+        validRole(request.resource.data.role) &&
+        request.resource.data.status in ['active', 'invited', 'left'] &&
+        request.resource.data.titleSnapshot is string &&
+        request.resource.data.destinationSnapshot is string &&
+        (
+          !request.resource.data.keys().hasAny(['coverImageUrl']) ||
+          request.resource.data.coverImageUrl == null ||
+          request.resource.data.coverImageUrl is string
+        );
+    }
+
     function editorTripFieldsOnly() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
         'title',
@@ -557,8 +570,7 @@ service cloud.firestore {
         allow read: if signedIn() &&
           (request.auth.uid == userId || canReadTrip(tripId));
         allow create, update: if signedIn() &&
-          request.resource.data.tripId == tripId &&
-          validRole(request.resource.data.role) &&
+          validTripMembershipSnapshot(tripId) &&
           (
             canEditTrip(tripId) ||
             canEditTripAfter(tripId)

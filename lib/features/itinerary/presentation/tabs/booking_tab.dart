@@ -161,13 +161,7 @@ class BookingTab extends StatelessWidget {
                 ),
                 child: const Icon(Icons.delete_rounded, color: Colors.red),
               ),
-              onDismissed: (_) => onSave(
-                trip.copyWith(
-                  bookings: trip.bookings
-                      .where((candidate) => candidate != booking)
-                      .toList(),
-                ),
-              ),
+              onDismissed: (_) => _deleteBooking(context, booking),
               child: BookingTile(booking: booking, currency: trip.currency),
             ),
       ],

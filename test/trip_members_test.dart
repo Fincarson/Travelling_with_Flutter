@@ -50,6 +50,7 @@ void main() {
             onOpenChat: () {},
             onOpenBudget: () {},
             onOpenPacking: () {},
+            onOpenSettings: () {},
             onUpdateTrip: (_) {},
             initialTabIndex: 1,
           ),

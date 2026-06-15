@@ -85,12 +85,13 @@ void main() {
     final performance = AppPerformanceController();
     addTearDown(performance.dispose);
 
-    Widget page() => PerformanceScope(
+    Widget page(Key key) => PerformanceScope(
       controller: performance,
       child: MaterialApp(
         theme: TravelAgentTheme.light(),
         home: Scaffold(
           body: CreateTripScreen(
+            key: key,
             profileLanguage: 'en',
             savedTrips: const [],
             onBack: () {},
@@ -100,7 +101,7 @@ void main() {
       ),
     );
 
-    await tester.pumpWidget(page());
+    await tester.pumpWidget(page(const ValueKey('manual-planner-test')));
     await tester.pump();
     final manualOption = find.widgetWithText(
       CreateOptionCard,
@@ -116,12 +117,16 @@ void main() {
     );
     expect(tester.takeException(), isNull);
 
-    await tester.tap(find.byIcon(Icons.arrow_back_rounded).first);
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(page(const ValueKey('template-planner-test')));
+    await tester.pump();
     final templateOption = find.byKey(
       const ValueKey('create-trip-template-option'),
     );
-    await tester.ensureVisible(templateOption);
+    await tester.scrollUntilVisible(
+      templateOption,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pump();
     tester.widget<CreateOptionCard>(templateOption).onTap();
     await tester.pumpAndSettle();
