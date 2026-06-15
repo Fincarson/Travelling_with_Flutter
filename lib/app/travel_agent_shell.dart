@@ -1126,7 +1126,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       account: widget.account,
       user: _user,
       onBack: () => _go('/chat'),
-      onBack: () => _go('/chat'),
       onOpenTrip: (tripId) => _go(_tripLocation(tripId)),
       onVisibilityChanged: _setActiveChatId,
     );
