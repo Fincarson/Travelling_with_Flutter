@@ -2,10 +2,14 @@
 
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
-const {onDocumentCreated} = require("firebase-functions/v2/firestore");
+const {
+  onDocumentCreated,
+  onDocumentWritten,
+} = require("firebase-functions/v2/firestore");
 const {TranslationServiceClient} = require("@google-cloud/translate").v3;
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
+const {randomInt} = require("crypto");
 
 admin.initializeApp();
 
@@ -26,6 +30,12 @@ function openAiApiKey() {
   return String(process.env.OPENAI_API_KEY ?? "").trim();
 }
 
+function safeTravelerCount(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(99, Math.max(1, parsed));
+}
+
 const travelAssistantInstructions = [
   "You are a concise travel planning assistant inside a mobile app.",
   "Help with itinerary order, budget tradeoffs, packing, food, transit,",
@@ -42,7 +52,7 @@ const tripPlanInstructions = [
   "For each distinctive tag, include at least one matching schedule item, venue area, event search, food stop, accessibility choice, or practical constraint.",
   "For example, anime should trigger anime convention/event-calendar research when dates match, or anime districts, stores, themed cafes, arcades, museums, or pop-culture stops when no convention is current.",
   "Halal food should trigger halal restaurants or Muslim-friendly food areas. Wheelchair access should trigger accessible transit and step-free venues.",
-  "Keep activities suitable for the destination, dates, budget, group, and tags.",
+  "Keep activities suitable for the destination, dates, budget, number of travelers, and tags.",
   "Use appContext.localDate and appContext.timeZoneOffset as today's context.",
   "Use startLocation as the trip origin when provided. If startLocation is missing, use appContext.location when available.",
   "If startLocation has an address, use that address as the origin reference; do not show raw coordinates in user-facing itinerary text.",
@@ -73,8 +83,8 @@ const createTripInstructions = [
   "When asking for dates, include a 'Pick exact dates' option with value '__pick_dates__'.",
   "Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset as the source of truth for today, tomorrow, next weekend, and relative dates.",
   "Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.",
-  "Required final fields: destination, startDate, endDate, budget, groupType.",
-  "Dates must be ISO yyyy-MM-dd. groupType must be Solo, Friends, Family, or Tour.",
+  "Required final fields: destination, startDate, endDate, budget, numOfTravelers.",
+  "Dates must be ISO yyyy-MM-dd. numOfTravelers must be an integer from 1 to 99.",
   "If the user names a currency, set currency to its three-letter ISO 4217 code.",
 ].join(" ");
 
@@ -224,7 +234,7 @@ const createTripReplyFormat = {
           endDate: {type: ["string", "null"]},
           budget: {type: ["string", "null"]},
           currency: {type: ["string", "null"]},
-          groupType: {type: ["string", "null"]},
+          numOfTravelers: {type: ["integer", "null"]},
           preferences: {
             type: "array",
             items: {type: "string"},
@@ -236,7 +246,7 @@ const createTripReplyFormat = {
           "endDate",
           "budget",
           "currency",
-          "groupType",
+          "numOfTravelers",
           "preferences",
         ],
       },
@@ -1000,7 +1010,7 @@ exports.generateTripPlan = onCall(
         currency: String(data.currency ?? "USD"),
         profileLanguage: String(data.profileLanguage ?? "en"),
         outputLanguage: aiLanguageName(data.profileLanguage, data.outputLanguage),
-        groupType: String(data.groupType ?? "Solo"),
+        numOfTravelers: safeTravelerCount(data.numOfTravelers),
         preferences: Array.isArray(data.preferences) ? data.preferences : [],
         flight: {
           airline: String(data.airline ?? ""),
@@ -1049,7 +1059,7 @@ exports.generateScheduleStop = onCall(
         endDate: String(data.endDate ?? ""),
         currency: String(data.currency ?? "USD"),
         budget: Number.parseInt(data.budget, 10) || 0,
-        groupType: String(data.groupType ?? "Solo"),
+        numOfTravelers: safeTravelerCount(data.numOfTravelers),
         preferences: Array.isArray(data.preferences) ? data.preferences : [],
         targetDay,
         request: requestText || "Suggest a useful trip stop.",
@@ -1150,6 +1160,313 @@ exports.runTripAutomationReminders = onSchedule(
   },
 );
 
+exports.ensureGroupChatJoinCode = onDocumentCreated(
+    "chat_groups/{chatId}",
+    async (event) => {
+      const chat = event.data?.data();
+      if (!chat) return;
+      await createOrRotateGroupJoinCode({
+        db: admin.firestore(),
+        chatId: String(event.params.chatId),
+        actorId: String(chat.ownerId || ""),
+        regenerate: false,
+        system: true,
+      }).catch((error) => {
+        logger.error("Could not create group join code", {
+          chatId: event.params.chatId,
+          message: error?.message,
+        });
+      });
+    },
+);
+
+exports.getGroupChatJoinCode = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Sign in to manage a group code.",
+      );
+    }
+    const chatId = String(request.data?.chatId || "").trim();
+    if (!chatId) {
+      throw new HttpsError("invalid-argument", "Choose a group chat.");
+    }
+
+    const code = await createOrRotateGroupJoinCode({
+      db: admin.firestore(),
+      chatId,
+      actorId: request.auth.uid,
+      regenerate: request.data?.regenerate === true,
+      system: false,
+    });
+    return {chatId, code};
+  },
+);
+
+exports.joinGroupChatByCode = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Sign in to join a group.");
+    }
+
+    const rawCode = normalizeGroupJoinCode(request.data?.code);
+    if (!rawCode) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Enter a valid group code.",
+      );
+    }
+
+    const db = admin.firestore();
+    const codeRef = db.collection("chat_join_codes").doc(rawCode);
+    const accountId = request.auth.uid;
+    const result = await db.runTransaction(async (transaction) => {
+      const codeSnapshot = await transaction.get(codeRef);
+      if (!codeSnapshot.exists || codeSnapshot.data()?.active !== true) {
+        throw new HttpsError("not-found", "This group code is not valid.");
+      }
+
+      const codeData = codeSnapshot.data() || {};
+      const chatId = String(codeData.chatId || "");
+      const chatRef = db.collection("chat_groups").doc(chatId);
+      const memberRef = chatRef.collection("members").doc(accountId);
+      const membershipRef = db
+          .collection("travel_users")
+          .doc(accountId)
+          .collection("chatMemberships")
+          .doc(chatId);
+      const profileRef = db.collection("travel_users").doc(accountId);
+      const [
+        chatSnapshot,
+        memberSnapshot,
+        profileSnapshot,
+      ] = await Promise.all([
+        transaction.get(chatRef),
+        transaction.get(memberRef),
+        transaction.get(profileRef),
+      ]);
+      if (!chatSnapshot.exists) {
+        throw new HttpsError("not-found", "This group no longer exists.");
+      }
+
+      const chat = chatSnapshot.data() || {};
+      if (normalizeGroupJoinCode(chat.joinCode) !== rawCode) {
+        throw new HttpsError(
+          "failed-precondition",
+          "This group code was replaced.",
+        );
+      }
+
+      const existingMember = memberSnapshot.data() || {};
+      if (
+        existingMember.status === "active" &&
+        Array.isArray(chat.memberIds) &&
+        chat.memberIds.includes(accountId)
+      ) {
+        return {
+          chatId,
+          title: String(chat.title || "Group chat"),
+          role: String(existingMember.role || "member"),
+          alreadyMember: true,
+        };
+      }
+
+      const profile = profileSnapshot.data() || {};
+      const role = "member";
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const memberIds = Array.isArray(chat.memberIds)
+        ? chat.memberIds.map(String)
+        : [];
+      const roles = {...(chat.roles || {}), [accountId]: role};
+      const displayName = String(
+          profile.name || request.auth.token.name || "Explorer",
+      ).trim() || "Explorer";
+      const photoUrl = typeof profile.photoUrl === "string" ?
+        profile.photoUrl :
+        null;
+
+      transaction.set(
+          chatRef,
+          {
+            memberIds: memberIds.includes(accountId) ?
+              memberIds :
+              [...memberIds, accountId],
+            roles,
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      transaction.set(
+          memberRef,
+          {
+            role,
+            status: "active",
+            displayNameSnapshot: displayName,
+            photoUrlSnapshot: photoUrl,
+            joinedAt: now,
+            invitedBy: String(codeData.createdBy || chat.ownerId || ""),
+            inviteCode: formatGroupJoinCode(rawCode),
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      transaction.set(
+          membershipRef,
+          {
+            chatId,
+            role,
+            status: "active",
+            titleSnapshot: String(chat.title || "Group chat"),
+            lastMessageText: String(chat.lastMessageText || ""),
+            lastMessageAt: chat.lastMessageAt || null,
+            unreadCount: 0,
+            mutedUntil: null,
+            mutedForever: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+
+      return {
+        chatId,
+        title: String(chat.title || "Group chat"),
+        role,
+        alreadyMember: false,
+      };
+    });
+
+    return result;
+  },
+);
+
+async function createOrRotateGroupJoinCode({
+  db,
+  chatId,
+  actorId,
+  regenerate,
+  system,
+}) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const candidate = newGroupJoinCode();
+    try {
+      return await db.runTransaction(async (transaction) => {
+        const chatRef = db.collection("chat_groups").doc(chatId);
+        const memberRef = chatRef.collection("members").doc(actorId);
+        const candidateRef = db.collection("chat_join_codes").doc(candidate);
+        const reads = [
+          transaction.get(chatRef),
+          transaction.get(candidateRef),
+        ];
+        if (!system) reads.push(transaction.get(memberRef));
+        const snapshots = await Promise.all(reads);
+        const chatSnapshot = snapshots[0];
+        const candidateSnapshot = snapshots[1];
+        const memberSnapshot = system ? null : snapshots[2];
+
+        if (!chatSnapshot.exists) {
+          throw new HttpsError("not-found", "Group chat not found.");
+        }
+        const chat = chatSnapshot.data() || {};
+        const existingCode = normalizeGroupJoinCode(chat.joinCode);
+
+        if (!system) {
+          const member = memberSnapshot?.data() || {};
+          const activeMember =
+            memberSnapshot?.exists === true &&
+            member.status === "active" &&
+            Array.isArray(chat.memberIds) &&
+            chat.memberIds.includes(actorId);
+          if (!activeMember) {
+            throw new HttpsError(
+              "permission-denied",
+              "You are not an active member of this group.",
+            );
+          }
+          if (
+            regenerate &&
+            !["owner", "admin"].includes(String(member.role || ""))
+          ) {
+            throw new HttpsError(
+              "permission-denied",
+              "Only the owner or an admin can change the group code.",
+            );
+          }
+        }
+
+        if (!regenerate && existingCode) {
+          return formatGroupJoinCode(existingCode);
+        }
+
+        if (candidateSnapshot.exists) {
+          const collision = new Error("join-code-collision");
+          collision.joinCodeCollision = true;
+          throw collision;
+        }
+
+        const now = admin.firestore.FieldValue.serverTimestamp();
+        if (existingCode && existingCode !== candidate) {
+          transaction.delete(
+              db.collection("chat_join_codes").doc(existingCode),
+          );
+        }
+        transaction.set(candidateRef, {
+          chatId,
+          active: true,
+          createdBy: actorId || String(chat.ownerId || ""),
+          createdAt: now,
+          updatedAt: now,
+        });
+        transaction.set(
+            chatRef,
+            {
+              joinCode: formatGroupJoinCode(candidate),
+              joinCodeUpdatedAt: now,
+              updatedAt: now,
+            },
+            {merge: true},
+        );
+        return formatGroupJoinCode(candidate);
+      });
+    } catch (error) {
+      if (error?.joinCodeCollision === true) continue;
+      throw error;
+    }
+  }
+  throw new HttpsError(
+    "internal",
+    "Could not generate a unique group code.",
+  );
+}
+
+function newGroupJoinCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from(
+      {length: 10},
+      () => alphabet[randomInt(0, alphabet.length)],
+  ).join("");
+}
+
+function normalizeGroupJoinCode(value) {
+  const code = String(value || "")
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+  return code.length === 10 ? code : "";
+}
+
+function formatGroupJoinCode(value) {
+  const code = normalizeGroupJoinCode(value);
+  return code ? `${code.slice(0, 5)}-${code.slice(5)}` : "";
+}
+
 exports.notifyGroupChatMembers = onDocumentCreated(
     "chat_groups/{chatId}/messages/{messageId}",
     async (event) => {
@@ -1168,90 +1485,85 @@ exports.notifyGroupChatMembers = onDocumentCreated(
         : [];
       if (!memberIds.length) return;
 
-      const now = Date.now();
-      const tokens = [];
-      const tokenRefs = [];
-      for (const memberId of memberIds) {
-        const membershipRef = db
-            .collection("travel_users")
-            .doc(memberId)
-            .collection("chatMemberships")
-            .doc(chatId);
-        const membershipSnapshot = await membershipRef.get();
-        const membership = membershipSnapshot.data() || {};
-        const mutedUntil = membership.mutedUntil?.toDate?.();
-        if (
-          membership.status !== "active" ||
-          membership.mutedForever === true ||
-          (mutedUntil instanceof Date && mutedUntil.getTime() > now)
-        ) {
-          continue;
-        }
-
-        const tokenSnapshot = await db
-            .collection("travel_users")
-            .doc(memberId)
-            .collection("notificationTokens")
-            .where("enabled", "==", true)
-            .get();
-        for (const tokenDoc of tokenSnapshot.docs) {
-          const token = tokenDoc.data().token;
-          if (typeof token !== "string" || !token.trim()) continue;
-          tokens.push(token);
-          tokenRefs.push(tokenDoc.ref);
-        }
-      }
-      if (!tokens.length) return;
-
       const title = String(chat.title || "Group chat");
       const sender = String(message.senderNameSnapshot || "Someone");
-      const body = `${sender}: ${chatMessagePreview(message)}`;
-      for (let start = 0; start < tokens.length; start += 500) {
-        const chunk = tokens.slice(start, start + 500);
-        const response = await admin.messaging().sendEachForMulticast({
-          tokens: chunk,
-          notification: {title, body},
-          data: {
-            title,
-            body,
-            chatId,
-            type: "group_chat",
-            tag: `group-chat-${chatId}`,
-          },
-          webpush: {
-            notification: {
-              title,
-              body,
-              icon: "/icons/Icon-192.png",
-              tag: `group-chat-${chatId}`,
-            },
-            fcmOptions: {
-              link: `/chat/${chatId}`,
-            },
-          },
-          android: {
-            priority: "high",
-            notification: {
-              tag: `group-chat-${chatId}`,
-            },
-          },
-        });
-
-        const deletes = [];
-        response.responses.forEach((result, offset) => {
-          if (!result.error) return;
-          const code = result.error.code;
-          if (
-            code === "messaging/registration-token-not-registered" ||
-            code === "messaging/invalid-registration-token"
-          ) {
-            deletes.push(tokenRefs[start + offset].delete());
-          }
-        });
-        await Promise.all(deletes);
-      }
+      const body = chatMessageNotificationBody(message, sender);
+      await sendNotificationToUsers({
+        db,
+        userIds: memberIds,
+        title,
+        body,
+        chatId,
+        data: {
+          chatId,
+          messageId: String(event.params.messageId),
+          type: "group_chat",
+          tag: `group-chat-${chatId}`,
+          targetPath: `/chat/${encodeURIComponent(chatId)}`,
+        },
+      });
     },
 );
+
+exports.notifyGroupChatMemberJoined = onDocumentWritten(
+    "chat_groups/{chatId}/members/{memberId}",
+    async (event) => {
+      const before = event.data?.before.data();
+      const after = event.data?.after.data();
+      if (!after || after.status !== "active" || before?.status === "active") {
+        return;
+      }
+
+      const db = admin.firestore();
+      const chatId = String(event.params.chatId);
+      const joinedMemberId = String(event.params.memberId);
+      const chatSnapshot = await db.collection("chat_groups").doc(chatId).get();
+      if (!chatSnapshot.exists) return;
+
+      const chat = chatSnapshot.data() || {};
+      const memberIds = Array.isArray(chat.memberIds)
+        ? chat.memberIds
+            .map(String)
+            .filter((id) => id && id !== joinedMemberId)
+        : [];
+      if (!memberIds.length) return;
+
+      const joinedName = String(
+          after.displayNameSnapshot || "Someone",
+      ).trim() || "Someone";
+      const title = String(chat.title || "Group chat");
+      await sendNotificationToUsers({
+        db,
+        userIds: memberIds,
+        title,
+        body: `${joinedName} joined the group.`,
+        chatId,
+        data: {
+          chatId,
+          memberId: joinedMemberId,
+          type: "group_member_joined",
+          tag: `group-member-${chatId}`,
+          targetPath: `/chat/${encodeURIComponent(chatId)}`,
+        },
+      });
+    },
+);
+
+function chatMessageNotificationBody(message, sender) {
+  const attachment = Array.isArray(message.attachments)
+    ? message.attachments[0]
+    : null;
+  if (String(attachment?.type || "") === "image") {
+    return `${sender} just sent a photo.`;
+  }
+  if (String(message.type || "") === "poll") {
+    const question = String(message.poll?.question || "").trim();
+    return question ?
+      `${sender} started a poll: ${question}` :
+      `${sender} started a poll.`;
+  }
+  return `${sender}: ${chatMessagePreview(message)}`;
+}
 
 function chatMessagePreview(message) {
   const text = String(message.text || "").trim();
@@ -1273,6 +1585,140 @@ function chatMessagePreview(message) {
     default:
       return `File: ${String(attachment?.name || "attachment")}`;
   }
+}
+
+async function sendNotificationToUsers({
+  db,
+  userIds,
+  title,
+  body,
+  data,
+  chatId,
+}) {
+  const recipients = await loadNotificationRecipients({
+    db,
+    userIds,
+    chatId,
+  });
+  if (!recipients.length) return 0;
+
+  const payloadData = {
+    title: String(title),
+    body: String(body),
+    ...Object.fromEntries(
+        Object.entries(data || {}).map(([key, value]) => [
+          key,
+          String(value),
+        ]),
+    ),
+  };
+  const targetPath = payloadData.targetPath || "/";
+  let sent = 0;
+
+  for (let start = 0; start < recipients.length; start += 500) {
+    const chunk = recipients.slice(start, start + 500);
+    const response = await admin.messaging().sendEachForMulticast({
+      tokens: chunk.map((recipient) => recipient.token),
+      notification: {title, body},
+      data: payloadData,
+      webpush: {
+        notification: {
+          title,
+          body,
+          icon: "/icons/Icon-192.png",
+          tag: payloadData.tag || payloadData.type || "travel-agent",
+          data: payloadData,
+        },
+        fcmOptions: {
+          link: targetPath,
+        },
+      },
+      android: {
+        priority: "high",
+        notification: {
+          tag: payloadData.tag || payloadData.type || "travel-agent",
+          clickAction: "FLUTTER_NOTIFICATION_CLICK",
+          sound: "default",
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+          },
+        },
+      },
+    });
+
+    sent += response.successCount;
+    const deletes = [];
+    response.responses.forEach((result, offset) => {
+      if (!result.error) return;
+      const code = result.error.code;
+      if (
+        code === "messaging/registration-token-not-registered" ||
+        code === "messaging/invalid-registration-token"
+      ) {
+        deletes.push(chunk[offset].ref.delete());
+      }
+    });
+    await Promise.all(deletes);
+  }
+
+  return sent;
+}
+
+async function loadNotificationRecipients({db, userIds, chatId}) {
+  const recipients = [];
+  const uniqueUserIds = [...new Set(userIds.map(String).filter(Boolean))];
+  const now = Date.now();
+  const activePresenceLifetimeMs = 2 * 60 * 1000;
+
+  for (const userId of uniqueUserIds) {
+    const userRef = db.collection("travel_users").doc(userId);
+    const reads = [userRef.get()];
+    if (chatId) {
+      reads.push(userRef.collection("chatMemberships").doc(chatId).get());
+    }
+    const snapshots = await Promise.all(reads);
+    const user = snapshots[0].data() || {};
+    if (user.settings?.notificationsEnabled === false) continue;
+
+    if (chatId) {
+      const membership = snapshots[1].data() || {};
+      const mutedUntil = membership.mutedUntil?.toDate?.();
+      if (
+        membership.status !== "active" ||
+        membership.mutedForever === true ||
+        (mutedUntil instanceof Date && mutedUntil.getTime() > now)
+      ) {
+        continue;
+      }
+    }
+
+    const tokenSnapshot = await userRef
+        .collection("notificationTokens")
+        .where("enabled", "==", true)
+        .get();
+    for (const tokenDoc of tokenSnapshot.docs) {
+      const tokenData = tokenDoc.data() || {};
+      const token = tokenData.token;
+      if (typeof token !== "string" || !token.trim()) continue;
+
+      const presenceUpdatedAt = tokenData.presenceUpdatedAt?.toDate?.();
+      const viewingThisChat =
+        Boolean(chatId) &&
+        tokenData.appState === "foreground" &&
+        tokenData.activeChatId === chatId &&
+        presenceUpdatedAt instanceof Date &&
+        now - presenceUpdatedAt.getTime() <= activePresenceLifetimeMs;
+      if (viewingThisChat) continue;
+
+      recipients.push({token, ref: tokenDoc.ref});
+    }
+  }
+
+  return recipients;
 }
 
 const aiChecklistMarker = "[AI] ";
@@ -1475,77 +1921,20 @@ function withRainChecklist(checklistValue, rainyDays) {
 
 async function notifyTripMembers(db, tripId, trip, rainyDays) {
   const memberIds = Array.isArray(trip.memberIds) ? trip.memberIds : [];
-  const tokens = [];
-  const tokenRefs = [];
-
-  for (const memberId of memberIds) {
-    const tokenSnapshot = await db
-      .collection("travel_users")
-      .doc(String(memberId))
-      .collection("notificationTokens")
-      .where("enabled", "==", true)
-      .get();
-    for (const tokenDoc of tokenSnapshot.docs) {
-      const token = tokenDoc.data().token;
-      if (typeof token !== "string" || !token.trim()) continue;
-      tokens.push(token);
-      tokenRefs.push(tokenDoc.ref);
-    }
-  }
-
-  if (!tokens.length) return 0;
-
   const title = `${trip.destination || "Your trip"} weather update`;
   const body = rainPushBody(rainyDays);
-  let sent = 0;
-
-  for (let start = 0; start < tokens.length; start += 500) {
-    const chunk = tokens.slice(start, start + 500);
-    const response = await admin.messaging().sendEachForMulticast({
-      tokens: chunk,
-      notification: {title, body},
-      data: {
-        title,
-        body,
-        tripId,
-        tag: `trip-weather-${tripId}-${dateKey(new Date())}`,
-        type: "trip_weather",
-      },
-      webpush: {
-        notification: {
-          title,
-          body,
-          icon: "/icons/Icon-192.png",
-          tag: `trip-weather-${tripId}-${dateKey(new Date())}`,
-        },
-        fcmOptions: {
-          link: "/",
-        },
-      },
-      android: {
-        priority: "high",
-        notification: {
-          tag: `trip-weather-${tripId}`,
-        },
-      },
-    });
-
-    sent += response.successCount;
-    const deletes = [];
-    response.responses.forEach((result, offset) => {
-      if (!result.error) return;
-      const code = result.error.code;
-      if (
-        code === "messaging/registration-token-not-registered" ||
-        code === "messaging/invalid-registration-token"
-      ) {
-        deletes.push(tokenRefs[start + offset].delete());
-      }
-    });
-    await Promise.all(deletes);
-  }
-
-  return sent;
+  return sendNotificationToUsers({
+    db,
+    userIds: memberIds,
+    title,
+    body,
+    data: {
+      tripId,
+      tag: `trip-weather-${tripId}-${dateKey(new Date())}`,
+      type: "trip_weather",
+      targetPath: `/trips/${encodeURIComponent(tripId)}`,
+    },
+  });
 }
 
 function rainPushBody(rainyDays) {

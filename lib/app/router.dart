@@ -8,7 +8,7 @@ class AppRouter {
     required Listenable refreshListenable,
   }) {
     return GoRouter(
-      initialLocation: '/',
+      initialLocation: _initialTravelLocation(),
       refreshListenable: refreshListenable,
       redirect: (context, state) {
         return null;
@@ -165,6 +165,13 @@ class AppRouter {
       ],
     );
   }
+
+  static String _initialTravelLocation() {
+    if (!kIsWeb) return '/';
+    final uri = Uri.base;
+    final path = uri.path.isEmpty ? '/' : uri.path;
+    return uri.hasQuery ? '$path?${uri.query}' : path;
+  }
 }
 
 class _TravelRouteFrame extends StatefulWidget {
@@ -272,14 +279,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
             Positioned.fill(
               child: IconButton(
                 tooltip: appText(context, 'Notifications'),
-                onPressed: () {
-                  context.go('/notifications');
-                  if (!widget.appState._user.notificationsEnabled) {
-                    unawaited(
-                      widget.appState._enableNotificationsFromDashboard(),
-                    );
-                  }
-                },
+                onPressed: () => context.go('/notifications'),
                 icon: const Icon(Icons.notifications_none_rounded),
               ),
             ),
@@ -291,18 +291,17 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     }
 
     if (location == '/chat' && !widget.appState._isChatRoomOpen) {
-      final actions = widget.appState._chatListAppBarActions;
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
             tooltip: appText(context, 'Accept invite'),
-            onPressed: actions?.onReviewInvite,
+            onPressed: widget.appState._reviewChatInviteFromHeader,
             icon: const Icon(Icons.link_rounded),
           ),
           IconButton.filled(
             tooltip: appText(context, 'Create chat'),
-            onPressed: actions?.onCreateChat,
+            onPressed: widget.appState._createChatFromHeader,
             icon: const Icon(Icons.add_rounded),
           ),
         ],

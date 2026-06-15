@@ -9,7 +9,7 @@ class CreateTripDraft {
     this.endDate,
     this.budget,
     this.currency,
-    this.groupType,
+    this.numOfTravelers,
     this.preferences = const [],
   });
 
@@ -18,7 +18,7 @@ class CreateTripDraft {
   final DateTime? endDate;
   final String? budget;
   final String? currency;
-  final String? groupType;
+  final int? numOfTravelers;
   final List<String> preferences;
 
   CreateTripDraft copyWith({
@@ -27,7 +27,7 @@ class CreateTripDraft {
     DateTime? endDate,
     String? budget,
     String? currency,
-    String? groupType,
+    int? numOfTravelers,
     List<String>? preferences,
   }) {
     return CreateTripDraft(
@@ -36,7 +36,7 @@ class CreateTripDraft {
       endDate: endDate ?? this.endDate,
       budget: budget ?? this.budget,
       currency: currency ?? this.currency,
-      groupType: groupType ?? this.groupType,
+      numOfTravelers: numOfTravelers ?? this.numOfTravelers,
       preferences: preferences ?? this.preferences,
     );
   }
@@ -47,7 +47,7 @@ class CreateTripDraft {
     'endDate': endDate == null ? null : _dateKey(endDate!),
     'budget': budget,
     'currency': currency,
-    'groupType': groupType,
+    'numOfTravelers': numOfTravelers,
     'preferences': preferences,
   };
 
@@ -61,7 +61,10 @@ class CreateTripDraft {
       endDate: _parseIsoDate(map['endDate']) ?? fallback.endDate,
       budget: _nonEmptyString(map['budget']) ?? fallback.budget,
       currency: _normalCurrencyCode(map['currency']) ?? fallback.currency,
-      groupType: _normalGroupType(map['groupType']) ?? fallback.groupType,
+      numOfTravelers:
+          _normalTravelerCount(map['numOfTravelers']) ??
+          _legacyTravelerCountFromGroupType(map['groupType']) ??
+          fallback.numOfTravelers,
       preferences: ((map['preferences'] as List<dynamic>?) ?? const [])
           .whereType<String>()
           .where((item) => item.trim().isNotEmpty)
@@ -195,12 +198,22 @@ DateTime? _parseIsoDate(Object? value) {
   return DateTime.tryParse(value.trim());
 }
 
-String? _normalGroupType(Object? value) {
+int? _normalTravelerCount(Object? value) {
+  if (value is num) return value.toInt().clamp(1, 99).toInt();
+  final text = _nonEmptyString(value);
+  if (text == null) return null;
+  final match = RegExp(r'\d+').firstMatch(text);
+  final count = int.tryParse(match?.group(0) ?? '');
+  if (count == null) return null;
+  return count.clamp(1, 99).toInt();
+}
+
+int? _legacyTravelerCountFromGroupType(Object? value) {
   final text = _nonEmptyString(value)?.toLowerCase();
   if (text == null) return null;
-  if (text.contains('solo')) return 'Solo';
-  if (text.contains('family')) return 'Family';
-  if (text.contains('tour')) return 'Tour';
-  if (text.contains('friend')) return 'Friends';
+  if (text.contains('solo')) return 1;
+  if (text.contains('family')) return 4;
+  if (text.contains('tour')) return 12;
+  if (text.contains('friend')) return 2;
   return null;
 }

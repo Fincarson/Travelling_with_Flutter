@@ -20,11 +20,12 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
+  if (payload.notification) return;
+
   const data = payload.data || {};
-  const notification = payload.notification || {};
-  const title = notification.title || data.title || "Trip reminder";
+  const title = data.title || "Trip reminder";
   const options = {
-    body: notification.body || data.body || "Open your trip itinerary.",
+    body: data.body || "Open your trip itinerary.",
     icon: "icons/Icon-192.png",
     badge: "icons/Icon-192.png",
     tag: data.tag || data.tripId || "trip-reminder",
@@ -36,13 +37,24 @@ messaging.onBackgroundMessage((payload) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = new URL("/", self.location.origin).href;
+  const data = event.notification.data || {};
+  const targetPath =
+    typeof data.targetPath === "string" && data.targetPath.startsWith("/") ?
+      data.targetPath :
+      "/";
+  const targetUrl = new URL(targetPath, self.location.origin).href;
 
   event.waitUntil(
     clients
       .matchAll({type: "window", includeUncontrolled: true})
       .then((clientList) => {
         for (const client of clientList) {
+          if (!client.url.startsWith(self.location.origin)) continue;
+          if ("navigate" in client) {
+            return client.navigate(targetUrl).then((navigatedClient) => {
+              return navigatedClient?.focus();
+            });
+          }
           if ("focus" in client) return client.focus();
         }
         if (clients.openWindow) return clients.openWindow(targetUrl);

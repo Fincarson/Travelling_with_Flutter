@@ -18,12 +18,17 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     with WidgetsBindingObserver {
   final _repository = TravelDataRepository(FirebaseFirestore.instance);
   final _authService = AccountAuthService();
-  final _notificationService = TripNotificationService();
+  final _appNotificationService = AppNotificationService();
+  late final _notificationService = TripNotificationService(
+    notifications: _appNotificationService.notifications,
+    initializeNotifications: _appNotificationService.ensureLocalInitialized,
+  );
   final _automationService = const TripAutomationService();
   final _deviceContextService = AppDeviceContextService();
   final _placesService = GeoapifyPlacesService();
   final _currencyExchangeService = CurrencyExchangeService();
   final _profilePhotoService = ProfilePhotoService();
+  final _chatListKey = GlobalKey<_ChatListScreenState>();
   late final _pushTokenService = PushTokenService(FirebaseFirestore.instance);
   static const _localProfilePrefix = 'travel_agent.profile.';
   static const _lastCurrencyCountryPrefix =
@@ -39,6 +44,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   var _exchangeData = CurrencyExchangeData.fallback;
   var _currencyLocationCheckInFlight = false;
   var _isChatRoomOpen = false;
+  var _isAppForeground = true;
   var _screen = _Screen.dashboard;
   var _tab = _NavTab.home;
   var _tripDetailInitialTab = 0;
@@ -56,6 +62,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   String? _pendingTripAiPrompt;
   String? _suggestedDestination;
   String? _accountId;
+  String? _activeChatId;
+  String? _pendingNotificationPath;
   String? _loadError;
   var _helpOpen = false;
   var _tutorialDismissedForSession = false;
@@ -74,6 +82,19 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     _router = AppRouter._createTravelAgentRouter(
       appState: this,
       refreshListenable: _routerRefresh,
+    );
+    unawaited(
+      _appNotificationService.initialize(
+        notificationsEnabled: () => _user.notificationsEnabled,
+        activeChatId: () => _activeChatId,
+        onOpen: _openNotificationTarget,
+      ),
+    );
+    unawaited(
+      _pushTokenService.updatePresence(
+        isForeground: true,
+        activeChatId: _activeChatId,
+      ),
     );
     _loadSavedState();
   }
@@ -164,6 +185,11 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     _watchAccountData(accountId);
     if (!mounted) return;
     setState(() => _isLoading = false);
+    final pendingNotificationPath = _pendingNotificationPath;
+    _pendingNotificationPath = null;
+    if (pendingNotificationPath != null) {
+      await _openNotificationTarget(pendingNotificationPath);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_checkForCurrencyLocationChange());
     });
@@ -455,7 +481,14 @@ class _TravelAgentAppState extends State<TravelAgentApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    _isAppForeground = state == AppLifecycleState.resumed;
+    unawaited(
+      _pushTokenService.updatePresence(
+        isForeground: _isAppForeground,
+        activeChatId: _activeChatId,
+      ),
+    );
+    if (_isAppForeground) {
       unawaited(_checkForCurrencyLocationChange());
     }
   }
@@ -563,11 +596,13 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Future<void> _createTrip(Trip trip) async {
+    final router = GoRouter.of(context);
     final saved = await _saveTripOnline(trip);
     if (!saved || !mounted) return;
+    setState(() => _selectedTrip = trip);
     await _refreshTripsFromBackend(selectTripId: trip.id);
     if (!mounted || !context.mounted) return;
-    context.go(_tripLocation(trip.id));
+    router.go(_tripLocation(trip.id));
   }
 
   Future<void> _startTrip(Trip trip) async {
@@ -789,6 +824,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     _tripsSubscription?.cancel();
     _memoriesSubscription?.cancel();
     unawaited(_pushTokenService.dispose());
+    unawaited(_appNotificationService.dispose());
     for (final timer in _pendingTripDeleteTimers.values) {
       timer.cancel();
     }
@@ -1019,6 +1055,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
 
   Widget _buildChatListScreen(BuildContext context) {
     return ChatListScreen(
+      key: _chatListKey,
       account: widget.account,
       user: _user,
       onRoomOpenChanged: _setChatRoomOpen,
@@ -1033,6 +1070,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       account: widget.account,
       user: _user,
       onBack: () => context.go('/chat'),
+      onVisibilityChanged: _setActiveChatId,
     );
   }
 
@@ -1053,6 +1091,26 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     if (!mounted) return;
     if (_chatListAppBarActions == actions) return;
     setState(() => _chatListAppBarActions = actions);
+  }
+
+  void _reviewChatInviteFromHeader() {
+    final action = _chatListAppBarActions?.onReviewInvite;
+    if (action != null) {
+      action();
+      return;
+    }
+    final state = _chatListKey.currentState;
+    if (state != null) unawaited(state._reviewInviteCode());
+  }
+
+  void _createChatFromHeader() {
+    final action = _chatListAppBarActions?.onCreateChat;
+    if (action != null) {
+      action();
+      return;
+    }
+    final state = _chatListKey.currentState;
+    if (state != null) unawaited(state._showCreateChatSheet());
   }
 
   Widget _buildSettingsScreen(BuildContext context) {
@@ -1119,6 +1177,16 @@ class _TravelAgentAppState extends State<TravelAgentApp>
 
   String _tripLocation(String tripId) => '/trips/$tripId';
 
+  Future<void> _openNotificationTarget(String targetPath) async {
+    final path = targetPath.trim();
+    if (!path.startsWith('/')) return;
+    if (_isLoading) {
+      _pendingNotificationPath = path;
+      return;
+    }
+    _router.go(path);
+  }
+
   void _notifyRoutes() => _routerRefresh.notify();
 
   // ignore: unused_element
@@ -1147,9 +1215,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
               onOpenMap: () => setState(() => _screen = _Screen.map),
               onOpenNotifications: () {
                 setState(() => _screen = _Screen.notifications);
-                if (!_user.notificationsEnabled) {
-                  unawaited(_enableNotificationsFromDashboard());
-                }
               },
             ),
             performance,
@@ -1213,9 +1278,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
           onOpenMap: () => setState(() => _screen = _Screen.map),
           onOpenNotifications: () {
             setState(() => _screen = _Screen.notifications);
-            if (!_user.notificationsEnabled) {
-              unawaited(_enableNotificationsFromDashboard());
-            }
           },
         );
       case _Screen.notifications:
@@ -1444,37 +1506,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     );
   }
 
-  Future<void> _enableNotificationsFromDashboard() async {
-    try {
-      PushTokenSyncResult result;
-      if (_user.notificationsEnabled) {
-        result = await _syncPushTokenRegistrationResult();
-        await _syncTripReminders();
-      } else {
-        result = await _syncPushTokenRegistrationResult(enabled: true);
-        if (result.registered) {
-          await _saveProfile(_user.copyWith(notificationsEnabled: true));
-          await _syncTripReminders();
-        }
-      }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(content: Text(appText(context, result.message))),
-        );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(appText(context, 'Could not enable notifications.')),
-          ),
-        );
-    }
-  }
-
   void _queueTripAutomation(List<Trip> trips) {
     for (final trip in trips) {
       final key = _tripAutomationKey(trip);
@@ -1520,6 +1551,19 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   void _setChatRoomOpen(bool isOpen) {
     if (_isChatRoomOpen == isOpen) return;
     setState(() => _isChatRoomOpen = isOpen);
+  }
+
+  void _setActiveChatId(String? chatId) {
+    final normalized = chatId?.trim();
+    final next = normalized == null || normalized.isEmpty ? null : normalized;
+    if (_activeChatId == next) return;
+    _activeChatId = next;
+    unawaited(
+      _pushTokenService.updatePresence(
+        isForeground: _isAppForeground,
+        activeChatId: _activeChatId,
+      ),
+    );
   }
 }
 
