@@ -657,13 +657,15 @@ class GroupChatRoomScreen extends StatefulWidget {
 class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   final _input = TextEditingController();
   final _inputFocusNode = FocusNode();
-  final _scrollController = ScrollController();
   final _attachmentService = ChatAttachmentService();
+  final _composerActionsController = OverlayPortalController(
+    debugLabel: 'chat-composer-actions',
+  );
+  final _composerActionsVisible = ValueNotifier(false);
   late String _chatTitle;
   late GroupChatMembership _membership;
   var _isSending = false;
   var _isSendingAttachment = false;
-  var _showComposerActions = false;
   String? _error;
 
   @override
@@ -671,13 +673,13 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
     super.initState();
     _chatTitle = widget.chat.title;
     _membership = widget.membership;
-    _inputFocusNode.addListener(_refreshComposer);
   }
 
   @override
   void didUpdateWidget(covariant GroupChatRoomScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.chat.id != widget.chat.id) {
+      _hideComposerActions();
       _chatTitle = widget.chat.title;
       _membership = widget.membership;
     }
@@ -685,15 +687,10 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
 
   @override
   void dispose() {
-    _inputFocusNode.removeListener(_refreshComposer);
+    _composerActionsVisible.dispose();
     _input.dispose();
     _inputFocusNode.dispose();
-    _scrollController.dispose();
     super.dispose();
-  }
-
-  void _refreshComposer() {
-    if (mounted) setState(() {});
   }
 
   @override
@@ -720,15 +717,6 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
               stream: widget.repository.watchMessages(widget.chat.id),
               builder: (context, snapshot) {
                 final messages = snapshot.data ?? const <GroupChatMessage>[];
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  if (!_scrollController.hasClients) return;
-                  _scrollController.animateTo(
-                    _scrollController.position.maxScrollExtent,
-                    duration: const Duration(milliseconds: 180),
-                    curve: Curves.easeOut,
-                  );
-                });
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
@@ -762,11 +750,11 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                   );
                 }
                 return ListView.builder(
-                  controller: _scrollController,
+                  reverse: true,
                   padding: _responsivePagePadding(context, top: 12, bottom: 12),
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
-                    final message = messages[index];
+                    final message = messages[messages.length - index - 1];
                     return GroupMessageBubble(
                       message: message,
                       isMine: message.senderId == widget.account.uid,
@@ -799,81 +787,103 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
               _responsiveHorizontalPadding(context),
               MediaQuery.viewInsetsOf(context).bottom + 18,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_showComposerActions) ...[
-                  _buildComposerActions(context),
-                  const SizedBox(height: 8),
-                ],
-                Row(
-                  children: [
-                    IconButton.filledTonal(
-                      tooltip: appText(
-                        context,
-                        _showComposerActions ? 'Close' : 'Attach',
-                      ),
-                      onPressed: _isSending || _isSendingAttachment
-                          ? null
-                          : _toggleComposerActions,
-                      icon: _isSendingAttachment
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(
-                              _showComposerActions
-                                  ? Icons.close_rounded
-                                  : Icons.add_rounded,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return OverlayPortal.overlayChildLayoutBuilder(
+                  controller: _composerActionsController,
+                  overlayChildBuilder: (overlayContext, layoutInfo) {
+                    final composerTopLeft = MatrixUtils.transformPoint(
+                      layoutInfo.childPaintTransform,
+                      Offset.zero,
+                    );
+                    return Positioned(
+                      left: composerTopLeft.dx,
+                      width: layoutInfo.childSize.width,
+                      bottom:
+                          layoutInfo.overlaySize.height -
+                          composerTopLeft.dy +
+                          8,
+                      child: _buildComposerActions(overlayContext),
+                    );
+                  },
+                  child: Row(
+                    children: [
+                      ValueListenableBuilder<bool>(
+                        valueListenable: _composerActionsVisible,
+                        builder: (context, isVisible, _) {
+                          return IconButton.filledTonal(
+                            tooltip: appText(
+                              context,
+                              isVisible ? 'Close' : 'Attach',
                             ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        controller: _input,
-                        focusNode: _inputFocusNode,
-                        minLines: 1,
-                        maxLines: 4,
-                        textInputAction: TextInputAction.send,
-                        decoration: InputDecoration(
-                          hintText: _inputFocusNode.hasFocus
-                              ? null
-                              : appText(context, 'Message'),
-                          hintStyle: TextStyle(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant
-                                .withValues(alpha: .72),
-                            fontWeight: FontWeight.w700,
+                            onPressed: _isSending || _isSendingAttachment
+                                ? null
+                                : _toggleComposerActions,
+                            icon: _isSendingAttachment
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Icon(
+                                    isVisible
+                                        ? Icons.close_rounded
+                                        : Icons.add_rounded,
+                                  ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: _input,
+                          focusNode: _inputFocusNode,
+                          minLines: 1,
+                          maxLines: 4,
+                          textInputAction: TextInputAction.send,
+                          decoration: InputDecoration(
+                            hintText: appText(context, 'Message'),
+                            hintStyle: TextStyle(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant
+                                  .withValues(alpha: .72),
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
+                          onTap: _hideComposerActions,
+                          onSubmitted: (_) => _sendMessage(),
                         ),
-                        onTap: _hideComposerActions,
-                        onSubmitted: (_) => _sendMessage(),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    IconButton.filled(
-                      style: IconButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Theme.of(
-                          context,
-                        ).colorScheme.onPrimary,
-                        fixedSize: const Size(54, 54),
+                      const SizedBox(width: 10),
+                      IconButton.filled(
+                        style: IconButton.styleFrom(
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onPrimary,
+                          fixedSize: const Size(54, 54),
+                        ),
+                        onPressed: _isSending ? null : _sendMessage,
+                        icon: _isSending
+                            ? SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onPrimary,
+                                ),
+                              )
+                            : const Icon(Icons.send_rounded),
                       ),
-                      onPressed: _isSending ? null : _sendMessage,
-                      icon: _isSending
-                          ? SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Theme.of(context).colorScheme.onPrimary,
-                              ),
-                            )
-                          : const Icon(Icons.send_rounded),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -884,10 +894,10 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   Future<void> _sendMessage() async {
     final text = _input.text.trim();
     if (text.isEmpty || _isSending) return;
+    _hideComposerActions();
     setState(() {
       _isSending = true;
       _error = null;
-      _showComposerActions = false;
     });
     _input.clear();
     try {
@@ -1184,13 +1194,15 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
     return Material(
       key: const ValueKey('chat-composer-options'),
       color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      elevation: 12,
+      shadowColor: Theme.of(context).colorScheme.shadow.withValues(alpha: .24),
       borderRadius: BorderRadius.circular(22),
       child: Padding(
         padding: const EdgeInsets.all(10),
         child: LayoutBuilder(
           builder: (context, constraints) {
             const spacing = 8.0;
-            const preferredWidth = 96.0;
+            const preferredWidth = 84.0;
             const actionCount = 5;
             final availableWidth = constraints.maxWidth;
             final columns =
@@ -1245,14 +1257,19 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   }
 
   void _toggleComposerActions() {
-    final shouldShow = !_showComposerActions;
-    if (shouldShow) _inputFocusNode.unfocus();
-    setState(() => _showComposerActions = shouldShow);
+    if (_composerActionsController.isShowing) {
+      _hideComposerActions();
+      return;
+    }
+    _inputFocusNode.unfocus();
+    _composerActionsController.show();
+    _composerActionsVisible.value = true;
   }
 
   void _hideComposerActions() {
-    if (!_showComposerActions) return;
-    setState(() => _showComposerActions = false);
+    if (!_composerActionsController.isShowing) return;
+    _composerActionsController.hide();
+    _composerActionsVisible.value = false;
   }
 
   Future<void> _runComposerAction(_ChatComposerAction action) async {

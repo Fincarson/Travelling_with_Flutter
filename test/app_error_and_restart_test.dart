@@ -3,6 +3,7 @@ import 'package:flutter_app/app/app_restart_scope.dart';
 import 'package:flutter_app/core/errors/app_error.dart';
 import 'package:flutter_app/shared/widgets/app_error_widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 void main() {
   testWidgets('unexpected error hides raw details until expanded', (
@@ -32,34 +33,37 @@ void main() {
     expect(find.text('setState() called after dispose'), findsOneWidget);
   });
 
-  testWidgets('page error back button returns to the previous route', (
+  testWidgets('page error back arrow uses router fallback navigation', (
     tester,
   ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Builder(
-          builder: (context) => Scaffold(
+    late GoRouter router;
+    router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => Scaffold(
             body: Center(
               child: FilledButton(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const UnexpectedErrorView(
-                        error: AppErrorData(
-                          code: 'page-build-failed',
-                          details: 'The page could not be built.',
-                        ),
-                      ),
-                    ),
-                  );
-                },
+                onPressed: () => router.go('/broken'),
                 child: const Text('Open broken page'),
               ),
             ),
           ),
         ),
-      ),
+        GoRoute(
+          path: '/broken',
+          builder: (context, state) => const UnexpectedErrorView(
+            error: AppErrorData(
+              code: 'page-build-failed',
+              details: 'The page could not be built.',
+            ),
+          ),
+        ),
+      ],
     );
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
 
     await tester.tap(find.text('Open broken page'));
     await tester.pumpAndSettle();
@@ -67,8 +71,12 @@ void main() {
       find.text('An unexpected error has occurred. Please try again later.'),
       findsOneWidget,
     );
+    final backButton = find.byTooltip('Back');
+    expect(backButton, findsOneWidget);
+    expect(tester.getTopLeft(backButton).dx, lessThan(32));
+    expect(tester.getTopLeft(backButton).dy, lessThan(32));
 
-    await tester.tap(find.text('Back'));
+    await tester.tap(backButton);
     await tester.pumpAndSettle();
     expect(find.text('Open broken page'), findsOneWidget);
   });
@@ -117,7 +125,7 @@ void main() {
       find.text('An unexpected error has occurred. Please try again later.'),
       findsOneWidget,
     );
-    expect(find.text('Back'), findsOneWidget);
+    expect(find.byTooltip('Back'), findsOneWidget);
   });
 
   testWidgets('restart scope recreates the full child tree', (tester) async {

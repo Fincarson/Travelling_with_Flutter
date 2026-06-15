@@ -98,6 +98,16 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
+    const messages = [
+      GroupChatMessage(
+        id: 'message-1',
+        senderId: 'user-2',
+        senderNameSnapshot: 'Morgan',
+        text: 'Visible message',
+        type: 'text',
+      ),
+    ];
+
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -124,7 +134,7 @@ void main() {
               email: 'taylor@example.com',
               interests: [],
             ),
-            repository: _FakeGroupChatRepository(),
+            repository: _FakeGroupChatRepository(messages: messages),
             onBack: () {},
           ),
         ),
@@ -132,11 +142,15 @@ void main() {
     );
     await tester.pump();
 
+    final messageList = find.byType(ListView);
+    final listRectBefore = tester.getRect(messageList);
+    final messageField = find.byType(TextField);
+    final messageFieldRectBefore = tester.getRect(messageField);
+
     await tester.tap(find.byTooltip('Attach'));
     await tester.pump();
 
     final options = find.byKey(const ValueKey('chat-composer-options'));
-    final messageField = find.byType(TextField);
     expect(options, findsOneWidget);
     expect(find.text('Camera'), findsOneWidget);
     expect(find.text('Photos'), findsOneWidget);
@@ -155,10 +169,102 @@ void main() {
       tester.getTopLeft(find.text('Poll')).dy,
       greaterThan(tester.getTopLeft(find.text('Camera')).dy),
     );
+    final optionsRect = tester.getRect(options);
+    expect(
+      optionsRect.bottom,
+      lessThanOrEqualTo(messageFieldRectBefore.top - 4),
+    );
+    expect(optionsRect.height, lessThan(260));
+    expect(tester.getRect(messageList), listRectBefore);
+    expect(tester.getRect(messageField), messageFieldRectBefore);
 
     await tester.tap(find.byTooltip('Close'));
     await tester.pump();
     expect(options, findsNothing);
+    expect(tester.getRect(messageList), listRectBefore);
+  });
+
+  testWidgets('chat opens at the latest message without animated scrolling', (
+    tester,
+  ) async {
+    final messages = List<GroupChatMessage>.generate(
+      30,
+      (index) => GroupChatMessage(
+        id: 'message-$index',
+        senderId: index.isEven ? 'user-1' : 'user-2',
+        senderNameSnapshot: index.isEven ? 'Taylor' : 'Morgan',
+        text: index == 29 ? 'Latest message' : 'Older message $index',
+        type: 'text',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: GroupChatRoomScreen(
+            chat: const GroupChat(
+              id: 'chat-1',
+              title: 'Test chat',
+              ownerId: 'user-1',
+              memberIds: ['user-1', 'user-2'],
+              roles: {'user-1': 'owner', 'user-2': 'member'},
+            ),
+            membership: const GroupChatMembership(
+              chatId: 'chat-1',
+              role: 'owner',
+              status: 'active',
+              titleSnapshot: 'Test chat',
+            ),
+            account: const AuthenticatedAccount(
+              uid: 'user-1',
+              displayName: 'Taylor',
+            ),
+            user: const UserProfile(
+              name: 'Taylor',
+              email: 'taylor@example.com',
+              interests: [],
+            ),
+            repository: _FakeGroupChatRepository(messages: messages),
+            onBack: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final messageList = tester.widget<ListView>(find.byType(ListView));
+    expect(messageList.reverse, isTrue);
+    expect(find.text('Latest message'), findsOneWidget);
+    expect(find.text('Older message 0'), findsNothing);
+  });
+
+  testWidgets('short text message bubble fits its content', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: GroupMessageBubble(
+              message: GroupChatMessage(
+                id: 'short-message',
+                senderId: 'user-1',
+                senderNameSnapshot: 'Taylor',
+                text: 'Hi',
+                type: 'text',
+              ),
+              isMine: true,
+              currentUserId: 'user-1',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final bubble = find.byKey(
+      const ValueKey('chat-message-bubble-short-message'),
+    );
+    expect(bubble, findsOneWidget);
+    expect(tester.getSize(bubble).width, lessThan(90));
   });
 
   test('GroupChatJoinResult parses callable response data', () {
@@ -177,8 +283,12 @@ void main() {
 }
 
 class _FakeGroupChatRepository extends Fake implements GroupChatRepository {
+  _FakeGroupChatRepository({this.messages = const <GroupChatMessage>[]});
+
+  final List<GroupChatMessage> messages;
+
   @override
   Stream<List<GroupChatMessage>> watchMessages(String chatId) {
-    return Stream.value(const []);
+    return Stream.value(messages);
   }
 }
