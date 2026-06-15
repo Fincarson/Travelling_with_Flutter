@@ -6,20 +6,30 @@ class CreateTripPlannerSession {
     required this.pendingDraft,
     required this.pendingDraftConfirmed,
     required this.currency,
+    required this.pendingPreviewData,
+    required this.isPreparingPreview,
   });
 
   final List<CreateTripChatMessage> messages;
   final CreateTripDraft? pendingDraft;
   final bool pendingDraftConfirmed;
   final String currency;
+  final Map<String, dynamic>? pendingPreviewData;
+  final bool isPreparingPreview;
 
-  bool get isEmpty => messages.isEmpty && pendingDraft == null;
+  bool get isEmpty =>
+      messages.isEmpty &&
+      pendingDraft == null &&
+      pendingPreviewData == null &&
+      !isPreparingPreview;
 
   Map<String, dynamic> toMap() => {
     'messages': messages.map((message) => message.toMap()).toList(),
     'pendingDraft': pendingDraft?.toMap(),
     'pendingDraftConfirmed': pendingDraftConfirmed,
     'currency': currency,
+    'pendingPreview': pendingPreviewData,
+    'isPreparingPreview': isPreparingPreview,
     'updatedAt': FieldValue.serverTimestamp(),
   };
 
@@ -41,6 +51,10 @@ class CreateTripPlannerSession {
       pendingDraftConfirmed: map['pendingDraftConfirmed'] == true,
       currency:
           (map['currency'] as String?) ?? AppCurrency.fallbackCurrencyCode,
+      pendingPreviewData: map['pendingPreview'] is Map
+          ? Map<String, dynamic>.from(map['pendingPreview'] as Map)
+          : null,
+      isPreparingPreview: map['isPreparingPreview'] == true,
     );
   }
 }

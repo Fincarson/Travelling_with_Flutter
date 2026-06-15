@@ -23,6 +23,18 @@ class PlaceSuggestion {
   final int? distanceMeters;
   final List<String> categories;
 
+  Map<String, dynamic> toMap() => {
+    'name': name,
+    'formatted': formatted,
+    'latitude': latitude,
+    'longitude': longitude,
+    'placeId': placeId,
+    'country': country,
+    'resultType': resultType,
+    'distance': distanceMeters,
+    'categories': categories,
+  };
+
   static PlaceSuggestion fromMap(Map<String, dynamic> map) {
     final properties = map['properties'] is Map
         ? Map<String, dynamic>.from(map['properties'] as Map)

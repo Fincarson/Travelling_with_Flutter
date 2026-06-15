@@ -6,13 +6,13 @@ class TravelAssistantService {
           functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
 
   static const _chatTimeout = Duration(seconds: 20);
-  static const _createTripReplyTimeout = Duration(seconds: 35);
-  static const _tripPlanTimeout = Duration(seconds: 100);
+  static const _createTripReplyTimeout = Duration(seconds: 30);
+  static const _tripPlanTimeout = Duration(seconds: 30);
   static const _scheduleStopTimeout = Duration(seconds: 18);
   static const _dayPlanEditTimeout = Duration(seconds: 28);
   static const _transportRecommendationsTimeout = Duration(seconds: 35);
   static const _fastChatModel = 'gpt-5.4-mini';
-  static const _smartItineraryModel = 'gpt-5.5';
+  static const _smartItineraryModel = _fastChatModel;
 
   final FirebaseFunctions _functions;
   final _deviceContext = AppDeviceContextService();
@@ -195,7 +195,7 @@ class TravelAssistantService {
               'Use current-known attraction names, transportation options, ticket prices, and local food costs.',
               'Use specific real place names or clearly named local areas. Do not use generic stop titles like "signature landmark visit", "historic district walk", "scenic viewpoint stop", or "local scene stop" unless the title also includes the actual venue or district name.',
               'When the destination name has multiple comma-separated parts, keep enough administrative context to avoid choosing a different city with the same name.',
-              'For mappable sightseeing, food, shopping, museum, cafe, beach, hiking, and temple stops, include address, latitude, longitude, and imageUrl when you can; use null only for non-place reminders, uncertain transport, or unknown coordinates.',
+              'Do not spend time finding coordinates, addresses, or images. The app maps stops later in the background.',
               'When live data may vary, mark times, prices, and operator details as approximate and tell the user to confirm before departure.',
               'Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.',
               'Write all user-facing itinerary text in $outputLanguage.',
@@ -235,10 +235,6 @@ class TravelAssistantService {
                     'activity': 'Activity name',
                     'type': 'place|food|walk|museum|beach|shopping|train',
                     'cost': 25,
-                    'address': 'Venue address or null',
-                    'latitude': -6.9175,
-                    'longitude': 107.6191,
-                    'imageUrl': 'https://example.com/photo.jpg or null',
                   },
                 ],
                 'bookings': [
@@ -837,30 +833,8 @@ Map<String, dynamic> _tripPlanTextFormat() => {
               ],
             },
             'cost': {'type': 'integer'},
-            'address': {
-              'type': ['string', 'null'],
-            },
-            'latitude': {
-              'type': ['number', 'null'],
-            },
-            'longitude': {
-              'type': ['number', 'null'],
-            },
-            'imageUrl': {
-              'type': ['string', 'null'],
-            },
           },
-          'required': [
-            'day',
-            'time',
-            'activity',
-            'type',
-            'cost',
-            'address',
-            'latitude',
-            'longitude',
-            'imageUrl',
-          ],
+          'required': ['day', 'time', 'activity', 'type', 'cost'],
         },
       },
       'bookings': {

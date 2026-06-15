@@ -1,15 +1,17 @@
 /* global process */
 
-const {onCall, HttpsError} = require("firebase-functions/v2/https");
-const {onDocumentCreated} = require("firebase-functions/v2/firestore");
-const {onSchedule} = require("firebase-functions/v2/scheduler");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 
 admin.initializeApp();
 
+const openAiApiKeySecret = defineSecret("OPENAI_API_KEY");
 const openAiChatModel = "gpt-5.4-mini";
-const openAiItineraryModel = "gpt-5.5";
+const openAiItineraryModel = openAiChatModel;
 const openAiTimeoutMs = 30000;
 
 function geoapifyApiKey() {
@@ -55,9 +57,9 @@ const tripPlanInstructions = [
   "Choose transport by distance: local transit/taxi for nearby trips, train/bus/high-speed rail for regional trips, and flights only for genuinely long-distance trips.",
   "Never suggest a plane for short regional travel such as Hsinchu to Taipei.",
   "Use current-known attraction names, transportation options, ticket prices, and local food costs.",
-  "Use specific real place names or clearly named local areas. Do not use generic stop titles like \"signature landmark visit\", \"historic district walk\", \"scenic viewpoint stop\", or \"local scene stop\" unless the title also includes the actual venue or district name.",
+  'Use specific real place names or clearly named local areas. Do not use generic stop titles like "signature landmark visit", "historic district walk", "scenic viewpoint stop", or "local scene stop" unless the title also includes the actual venue or district name.',
   "When the destination name has multiple comma-separated parts, keep enough administrative context to avoid choosing a different city with the same name.",
-  "For mappable sightseeing, food, shopping, museum, cafe, beach, hiking, and temple stops, include address, latitude, longitude, and imageUrl when known; use null only for non-place reminders, uncertain transport, or unknown coordinates.",
+  "Do not spend time finding coordinates, addresses, or image URLs. The app maps stops later in the background.",
   "When live data may vary, mark times, prices, and operator details as approximate and tell the user to confirm before departure.",
   "Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.",
 ].join(" ");
@@ -141,9 +143,9 @@ const tripPlanFormat = {
           type: "object",
           additionalProperties: false,
           properties: {
-            day: {type: "integer"},
-            time: {type: "string"},
-            activity: {type: "string"},
+            day: { type: "integer" },
+            time: { type: "string" },
+            activity: { type: "string" },
             type: {
               type: "string",
               enum: [
@@ -162,23 +164,9 @@ const tripPlanFormat = {
                 "temple",
               ],
             },
-            cost: {type: "integer"},
-            address: {type: ["string", "null"]},
-            latitude: {type: ["number", "null"]},
-            longitude: {type: ["number", "null"]},
-            imageUrl: {type: ["string", "null"]},
+            cost: { type: "integer" },
           },
-          required: [
-            "day",
-            "time",
-            "activity",
-            "type",
-            "cost",
-            "address",
-            "latitude",
-            "longitude",
-            "imageUrl",
-          ],
+          required: ["day", "time", "activity", "type", "cost"],
         },
       },
       bookings: {
@@ -188,11 +176,11 @@ const tripPlanFormat = {
           type: "object",
           additionalProperties: false,
           properties: {
-            title: {type: "string"},
-            date: {type: "string"},
-            time: {type: "string"},
-            reference: {type: "string"},
-            cost: {type: "integer"},
+            title: { type: "string" },
+            date: { type: "string" },
+            time: { type: "string" },
+            reference: { type: "string" },
+            cost: { type: "integer" },
             type: {
               type: "string",
               enum: ["hotel", "flight", "train", "place"],
@@ -208,12 +196,12 @@ const tripPlanFormat = {
           type: "object",
           additionalProperties: false,
           properties: {
-            category: {type: "string"},
+            category: { type: "string" },
             items: {
               type: "array",
               minItems: 1,
               maxItems: 8,
-              items: {type: "string"},
+              items: { type: "string" },
             },
           },
           required: ["category", "items"],
@@ -232,20 +220,20 @@ const createTripReplyFormat = {
     type: "object",
     additionalProperties: false,
     properties: {
-      message: {type: "string"},
+      message: { type: "string" },
       draft: {
         type: "object",
         additionalProperties: false,
         properties: {
-          destination: {type: ["string", "null"]},
-          startDate: {type: ["string", "null"]},
-          endDate: {type: ["string", "null"]},
-          budget: {type: ["string", "null"]},
-          currency: {type: ["string", "null"]},
-          groupType: {type: ["string", "null"]},
+          destination: { type: ["string", "null"] },
+          startDate: { type: ["string", "null"] },
+          endDate: { type: ["string", "null"] },
+          budget: { type: ["string", "null"] },
+          currency: { type: ["string", "null"] },
+          groupType: { type: ["string", "null"] },
           preferences: {
             type: "array",
-            items: {type: "string"},
+            items: { type: "string" },
           },
         },
         required: [
@@ -262,7 +250,7 @@ const createTripReplyFormat = {
         type: ["object", "null"],
         additionalProperties: false,
         properties: {
-          title: {type: "string"},
+          title: { type: "string" },
           options: {
             type: "array",
             minItems: 1,
@@ -271,9 +259,9 @@ const createTripReplyFormat = {
               type: "object",
               additionalProperties: false,
               properties: {
-                label: {type: "string"},
-                value: {type: "string"},
-                description: {type: "string"},
+                label: { type: "string" },
+                value: { type: "string" },
+                description: { type: "string" },
               },
               required: ["label", "value", "description"],
             },
@@ -294,9 +282,9 @@ const scheduleStopFormat = {
     type: "object",
     additionalProperties: false,
     properties: {
-      day: {type: "integer"},
-      time: {type: "string"},
-      activity: {type: "string"},
+      day: { type: "integer" },
+      time: { type: "string" },
+      activity: { type: "string" },
       type: {
         type: "string",
         enum: [
@@ -315,7 +303,7 @@ const scheduleStopFormat = {
           "temple",
         ],
       },
-      cost: {type: "integer"},
+      cost: { type: "integer" },
     },
     required: ["day", "time", "activity", "type", "cost"],
   },
@@ -329,8 +317,8 @@ const dayPlanEditFormat = {
     type: "object",
     additionalProperties: false,
     properties: {
-      feasible: {type: "boolean"},
-      warning: {type: "string"},
+      feasible: { type: "boolean" },
+      warning: { type: "string" },
       items: {
         type: "array",
         maxItems: 8,
@@ -338,9 +326,9 @@ const dayPlanEditFormat = {
           type: "object",
           additionalProperties: false,
           properties: {
-            day: {type: "integer"},
-            time: {type: "string"},
-            activity: {type: "string"},
+            day: { type: "integer" },
+            time: { type: "string" },
+            activity: { type: "string" },
             type: {
               type: "string",
               enum: [
@@ -359,7 +347,7 @@ const dayPlanEditFormat = {
                 "temple",
               ],
             },
-            cost: {type: "integer"},
+            cost: { type: "integer" },
           },
           required: ["day", "time", "activity", "type", "cost"],
         },
@@ -377,7 +365,7 @@ const transportRecommendationsFormat = {
     type: "object",
     additionalProperties: false,
     properties: {
-      summary: {type: "string"},
+      summary: { type: "string" },
       options: {
         type: "array",
         minItems: 1,
@@ -386,15 +374,15 @@ const transportRecommendationsFormat = {
           type: "object",
           additionalProperties: false,
           properties: {
-            mode: {type: "string"},
-            provider: {type: "string"},
-            route: {type: "string"},
-            duration: {type: "string"},
-            price: {type: "integer"},
-            currency: {type: "string"},
-            bookingHint: {type: "string"},
-            sourceName: {type: "string"},
-            sourceUrl: {type: "string"},
+            mode: { type: "string" },
+            provider: { type: "string" },
+            route: { type: "string" },
+            duration: { type: "string" },
+            price: { type: "integer" },
+            currency: { type: "string" },
+            bookingHint: { type: "string" },
+            sourceName: { type: "string" },
+            sourceUrl: { type: "string" },
           },
           required: [
             "mode",
@@ -421,7 +409,7 @@ exports.searchPlaces = onCall(
   async (request) => {
     const query = String(request.data?.query ?? "").trim();
     if (query.length < 3) {
-      return {results: []};
+      return { results: [] };
     }
 
     const apiKey = geoapifyApiKey();
@@ -435,8 +423,8 @@ exports.searchPlaces = onCall(
 
     try {
       const [countryResults, cityResults] = await Promise.all([
-        fetchGeoapifyAutocomplete({query, type: "country", apiKey}),
-        fetchGeoapifyAutocomplete({query, type: "city", apiKey}),
+        fetchGeoapifyAutocomplete({ query, type: "country", apiKey }),
+        fetchGeoapifyAutocomplete({ query, type: "city", apiKey }),
       ]);
 
       return {
@@ -481,7 +469,7 @@ exports.reversePlace = onCall(
         longitude,
         apiKey,
       });
-      return {result: result ? normalizeGeoapifyResult(result) : null};
+      return { result: result ? normalizeGeoapifyResult(result) : null };
     } catch (error) {
       logger.error("Geoapify reverse lookup failed", {
         latitude,
@@ -503,9 +491,11 @@ exports.searchNearbyPlaces = onCall(
   async (request) => {
     const latitude = Number(request.data?.latitude);
     const longitude = Number(request.data?.longitude);
-    const categories = Array.isArray(request.data?.categories) ?
-      request.data.categories.map((item) => String(item).trim()).filter(Boolean) :
-      [];
+    const categories = Array.isArray(request.data?.categories)
+      ? request.data.categories
+          .map((item) => String(item).trim())
+          .filter(Boolean)
+      : [];
     const radiusMeters = Math.min(
       5000,
       Math.max(100, Number.parseInt(request.data?.radiusMeters ?? 1200, 10)),
@@ -544,7 +534,7 @@ exports.searchNearbyPlaces = onCall(
         limit,
         apiKey,
       });
-      return {results: results.map(normalizeGeoapifyResult)};
+      return { results: results.map(normalizeGeoapifyResult) };
     } catch (error) {
       logger.error("Geoapify nearby lookup failed", {
         latitude,
@@ -567,7 +557,7 @@ exports.searchItineraryStop = onCall(
     const latitude = Number(request.data?.latitude);
     const longitude = Number(request.data?.longitude);
     if (query.length < 3) {
-      return {results: []};
+      return { results: [] };
     }
 
     const apiKey = geoapifyApiKey();
@@ -596,12 +586,15 @@ exports.searchItineraryStop = onCall(
         destination,
         message: error?.message,
       });
-      throw new HttpsError("unavailable", "Itinerary stop lookup is unavailable.");
+      throw new HttpsError(
+        "unavailable",
+        "Itinerary stop lookup is unavailable.",
+      );
     }
   },
 );
 
-async function fetchGeoapifyAutocomplete({query, type, apiKey}) {
+async function fetchGeoapifyAutocomplete({ query, type, apiKey }) {
   const url = new URL("https://api.geoapify.com/v1/geocode/autocomplete");
   url.searchParams.set("text", query);
   url.searchParams.set("format", "json");
@@ -614,7 +607,7 @@ async function fetchGeoapifyAutocomplete({query, type, apiKey}) {
     const detail = await response.text().catch(() => "");
     throw new Error(
       `Geoapify ${type} search failed with ${response.status}: ` +
-      detail.slice(0, 300),
+        detail.slice(0, 300),
     );
   }
 
@@ -622,7 +615,7 @@ async function fetchGeoapifyAutocomplete({query, type, apiKey}) {
   return Array.isArray(body.results) ? body.results : [];
 }
 
-async function fetchGeoapifyReverse({latitude, longitude, apiKey}) {
+async function fetchGeoapifyReverse({ latitude, longitude, apiKey }) {
   const url = new URL("https://api.geoapify.com/v1/geocode/reverse");
   url.searchParams.set("lat", String(latitude));
   url.searchParams.set("lon", String(longitude));
@@ -634,7 +627,7 @@ async function fetchGeoapifyReverse({latitude, longitude, apiKey}) {
     const detail = await response.text().catch(() => "");
     throw new Error(
       `Geoapify reverse lookup failed with ${response.status}: ` +
-      detail.slice(0, 300),
+        detail.slice(0, 300),
     );
   }
 
@@ -666,7 +659,7 @@ async function fetchGeoapifyStopSearch({
     const detail = await response.text().catch(() => "");
     throw new Error(
       `Geoapify stop search failed with ${response.status}: ` +
-      detail.slice(0, 300),
+        detail.slice(0, 300),
     );
   }
 
@@ -697,7 +690,7 @@ async function fetchGeoapifyPlaces({
     const detail = await response.text().catch(() => "");
     throw new Error(
       `Geoapify nearby lookup failed with ${response.status}: ` +
-      detail.slice(0, 300),
+        detail.slice(0, 300),
     );
   }
 
@@ -708,12 +701,13 @@ async function fetchGeoapifyPlaces({
 function normalizeGeoapifyResult(item) {
   const properties = item.properties ?? item;
   const geometry = item.geometry ?? {};
-  const coordinates = Array.isArray(geometry.coordinates) ?
-    geometry.coordinates :
-    [];
+  const coordinates = Array.isArray(geometry.coordinates)
+    ? geometry.coordinates
+    : [];
   const resultType = properties.result_type ?? properties.type ?? null;
   const country = properties.country ?? null;
-  const locality = properties.name ??
+  const locality =
+    properties.name ??
     properties.city ??
     properties.county ??
     properties.state ??
@@ -730,9 +724,9 @@ function normalizeGeoapifyResult(item) {
     country,
     resultType,
     distanceMeters: properties.distance ?? null,
-    categories: Array.isArray(properties.categories) ?
-      properties.categories :
-      [],
+    categories: Array.isArray(properties.categories)
+      ? properties.categories
+      : [],
   };
 }
 
@@ -779,8 +773,8 @@ function geoapifyRankScore(place, normalizedQuery) {
   const name = normalizedPlaceName(place.name);
   const country = normalizedPlaceName(place.country ?? "");
   const formatted = normalizedPlaceName(place.formatted);
-  const isCountry = place.resultType === "country" ||
-    Boolean(country && name === country);
+  const isCountry =
+    place.resultType === "country" || Boolean(country && name === country);
 
   if (isCountry && (name === normalizedQuery || country === normalizedQuery)) {
     return 0;
@@ -856,11 +850,7 @@ async function generateTripPlanFromRequest(data, options = {}) {
     publicMessage: "AI itinerary generation failed.",
     timeoutMs: options.timeoutMs,
   });
-  return enrichTripPlanPlaces(plan, {
-    destination,
-    latitude: Number(place.latitude ?? 0),
-    longitude: Number(place.longitude ?? 0),
-  });
+  return plan;
 }
 
 function sanitizedTripPreviewRequest(data) {
@@ -878,9 +868,9 @@ function sanitizedTripPreviewRequest(data) {
     endDate: String(data.endDate ?? "").trim(),
     budget: Number.parseInt(data.budget, 10),
     groupType: String(data.groupType ?? "Solo"),
-    preferences: Array.isArray(data.preferences) ?
-      data.preferences.map((item) => String(item)).slice(0, 20) :
-      [],
+    preferences: Array.isArray(data.preferences)
+      ? data.preferences.map((item) => String(item)).slice(0, 20)
+      : [],
     currency: String(data.currency ?? "USD"),
     profileLanguage: String(data.profileLanguage ?? "en"),
     outputLanguage: String(data.outputLanguage ?? ""),
@@ -892,58 +882,19 @@ function sanitizedTripPreviewRequest(data) {
     flightLandingPlace: String(data.flightLandingPlace ?? ""),
     startLocation: data.startLocation ?? null,
     appContext: data.appContext ?? null,
-    fallbackImages: Array.isArray(data.fallbackImages) ?
-      data.fallbackImages
-        .map((item) => String(item))
-        .filter((item) => item.startsWith("https://"))
-        .slice(0, 8) :
-      [],
+    fallbackImages: Array.isArray(data.fallbackImages)
+      ? data.fallbackImages
+          .map((item) => String(item))
+          .filter((item) => item.startsWith("https://"))
+          .slice(0, 8)
+      : [],
   };
 }
 
-async function enrichTripPlanPlaces(plan, destinationContext) {
-  const apiKey = geoapifyApiKey();
-  if (!apiKey || !Array.isArray(plan.items)) return plan;
-
-  const enrichedItems = [];
-  for (const item of plan.items) {
-    const enriched = {...item};
-    if (shouldEnrichScheduleItem(item)) {
-      try {
-        const query = scheduleItemPlaceQuery(item);
-        const results = await fetchGeoapifyStopSearch({
-          query,
-          destination: destinationContext.destination,
-          latitude: destinationContext.latitude,
-          longitude: destinationContext.longitude,
-          apiKey,
-        });
-        const place = rankGeoapifyResults(results, query)[0];
-        if (place && shouldAcceptEnrichedPlace(item, place, destinationContext)) {
-          enriched.address = place.formatted;
-          enriched.latitude = place.latitude;
-          enriched.longitude = place.longitude;
-        }
-        const image = await firstPreviewImageForQueries([
-          `${query} ${destinationContext.destination}`,
-          query,
-          destinationContext.destination,
-        ]);
-        if (image) enriched.imageUrl = image;
-      } catch (error) {
-        logger.warn("Schedule item enrichment failed", {
-          activity: item.activity,
-          message: error?.message,
-        });
-      }
-    }
-    enrichedItems.push(enriched);
-  }
-  return {...plan, items: enrichedItems};
-}
-
 function shouldEnrichScheduleItem(item) {
-  const activity = String(item?.activity ?? "").trim().toLowerCase();
+  const activity = String(item?.activity ?? "")
+    .trim()
+    .toLowerCase();
   if (activity.length < 3) return false;
   if (isGenericScheduleActivity(activity)) return false;
   if (activity.includes("weather check") || activity.includes("rain chance")) {
@@ -969,7 +920,8 @@ function shouldEnrichScheduleItem(item) {
 }
 
 function isGenericScheduleActivity(activity) {
-  return activity.includes("signature landmark") ||
+  return (
+    activity.includes("signature landmark") ||
     activity.includes("transit-friendly district route") ||
     activity.includes("scenic walk, riverside, or viewpoint") ||
     activity.includes("find the best local scene") ||
@@ -980,42 +932,8 @@ function isGenericScheduleActivity(activity) {
     activity.includes("easy evening viewpoint") ||
     activity.includes("shopping street or neighborhood browse") ||
     activity.includes("food market or local specialty lunch") ||
-    activity.includes("golden-hour park, bridge, or plaza");
-}
-
-function shouldAcceptEnrichedPlace(item, place, destinationContext) {
-  const destinationLat = Number(destinationContext.latitude);
-  const destinationLng = Number(destinationContext.longitude);
-  const placeLat = Number(place.latitude);
-  const placeLng = Number(place.longitude);
-  if (
-    !Number.isFinite(destinationLat) ||
-    !Number.isFinite(destinationLng) ||
-    !Number.isFinite(placeLat) ||
-    !Number.isFinite(placeLng) ||
-    destinationLat === 0 ||
-    destinationLng === 0 ||
-    placeLat === 0 ||
-    placeLng === 0
-  ) {
-    return true;
-  }
-  const distance = distanceKm(destinationLat, destinationLng, placeLat, placeLng);
-  if (distance <= 80) return true;
-  return isLongDistanceScheduleItem(item);
-}
-
-function isLongDistanceScheduleItem(item) {
-  const activity = String(item?.activity ?? "").toLowerCase();
-  const type = String(item?.type ?? "").toLowerCase();
-  return type === "flight" ||
-    activity.includes("flight ") ||
-    activity.includes("fly ") ||
-    activity.includes("airport") ||
-    activity.includes("intercity") ||
-    activity.includes("long-haul") ||
-    activity.includes("return home") ||
-    activity.includes("go home");
+    activity.includes("golden-hour park, bridge, or plaza")
+  );
 }
 
 function scheduleItemPlaceQuery(item) {
@@ -1025,65 +943,46 @@ function scheduleItemPlaceQuery(item) {
     .trim();
 }
 
-function distanceKm(lat1, lng1, lat2, lng2) {
-  const radiusKm = 6371;
-  const dLat = degreesToRadians(lat2 - lat1);
-  const dLng = degreesToRadians(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(degreesToRadians(lat1)) *
-      Math.cos(degreesToRadians(lat2)) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return radiusKm * c;
-}
-
-function degreesToRadians(degrees) {
-  return degrees * Math.PI / 180;
-}
-
 async function previewImagesForJob(requestData, plan) {
-  const fallbackImages = Array.isArray(requestData.fallbackImages) ?
-    requestData.fallbackImages :
-    [];
-  const itemImages = Array.isArray(plan?.items) ?
-    plan.items
-      .map((item) => item.imageUrl)
-      .filter((image) => typeof image === "string" && image.startsWith("https://")) :
-    [];
-  const itemQueries = Array.isArray(plan?.items) ?
-    plan.items
-      .filter(shouldEnrichScheduleItem)
-      .map((item) => `${scheduleItemPlaceQuery(item)} ${requestData.place?.name}`)
-      .slice(0, 6) :
-    [];
+  const fallbackImages = Array.isArray(requestData.fallbackImages)
+    ? requestData.fallbackImages
+    : [];
+  const itemImages = Array.isArray(plan?.items)
+    ? plan.items
+        .map((item) => item.imageUrl)
+        .filter(
+          (image) => typeof image === "string" && image.startsWith("https://"),
+        )
+    : [];
+  const itemQueries = Array.isArray(plan?.items)
+    ? plan.items
+        .filter(shouldEnrichScheduleItem)
+        .map(
+          (item) =>
+            `${scheduleItemPlaceQuery(item)} ${requestData.place?.name}`,
+        )
+        .slice(0, 6)
+    : [];
   const searchedImages = [];
   for (const query of itemQueries) {
-    searchedImages.push(...await fetchWikimediaPreviewImages(query));
+    searchedImages.push(...(await fetchWikimediaPreviewImages(query)));
   }
   if (!searchedImages.length) {
     searchedImages.push(
-      ...await fetchWikimediaPreviewImages(requestData.place?.name),
+      ...(await fetchWikimediaPreviewImages(requestData.place?.name)),
     );
   }
   const seen = new Set();
   return [...itemImages, ...searchedImages, ...fallbackImages]
-    .filter((image) => typeof image === "string" && image.startsWith("https://"))
+    .filter(
+      (image) => typeof image === "string" && image.startsWith("https://"),
+    )
     .filter((image) => {
       if (seen.has(image)) return false;
       seen.add(image);
       return true;
     })
     .slice(0, 8);
-}
-
-async function firstPreviewImageForQueries(queries) {
-  for (const query of queries) {
-    const images = await fetchWikimediaPreviewImages(query);
-    if (images.length) return images[0];
-  }
-  return null;
 }
 
 async function fetchWikimediaPreviewImages(destination) {
@@ -1105,7 +1004,7 @@ async function fetchWikimediaPreviewImages(destination) {
   try {
     const response = await fetch(url, {
       headers: {
-        "Accept": "application/json",
+        Accept: "application/json",
         "User-Agent": "TravellingWithFlutter/1.0 trip-preview-jobs",
       },
       signal: AbortSignal.timeout(5000),
@@ -1114,7 +1013,7 @@ async function fetchWikimediaPreviewImages(destination) {
     const body = await response.json();
     const pages = body?.query?.pages ?? {};
     return Object.values(pages)
-      .flatMap((page) => Array.isArray(page.imageinfo) ? page.imageinfo : [])
+      .flatMap((page) => (Array.isArray(page.imageinfo) ? page.imageinfo : []))
       .map((info) => info.thumburl ?? info.url)
       .filter(isPreviewImageUrl)
       .slice(0, 8);
@@ -1129,11 +1028,13 @@ async function fetchWikimediaPreviewImages(destination) {
 
 function isPreviewImageUrl(value) {
   const lower = String(value ?? "").toLowerCase();
-  return lower.startsWith("https://") &&
+  return (
+    lower.startsWith("https://") &&
     (lower.includes(".jpg") ||
       lower.includes(".jpeg") ||
       lower.includes(".png") ||
-      lower.includes(".webp"));
+      lower.includes(".webp"))
+  );
 }
 
 function publicTripPreviewError(error) {
@@ -1163,8 +1064,8 @@ exports.chatWithAssistant = onCall(
           appContext: request.data?.appContext ?? null,
         }),
         store: false,
-        reasoning: {effort: "low"},
-        text: {verbosity: "low"},
+        reasoning: { effort: "low" },
+        text: { verbosity: "low" },
       },
       logContext: "OpenAI chat failed",
       publicMessage: "AI chat is unavailable.",
@@ -1184,7 +1085,7 @@ exports.chatWithAssistant = onCall(
       throw new HttpsError("unavailable", "AI chat returned an empty reply.");
     }
 
-    return {reply};
+    return { reply };
   },
 );
 
@@ -1193,12 +1094,13 @@ exports.generateTripPlan = onCall(
     region: "us-central1",
     timeoutSeconds: 120,
     memory: "512MiB",
+    secrets: [openAiApiKeySecret],
   },
   async (request) => {
     const plan = await generateTripPlanFromRequest(request.data ?? {}, {
-      timeoutMs: 90000,
+      timeoutMs: 30000,
     });
-    return {plan};
+    return { plan };
   },
 );
 
@@ -1228,7 +1130,7 @@ exports.createTripPreviewJob = onCall(
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    return {jobId: jobRef.id};
+    return { jobId: jobRef.id };
   },
 );
 
@@ -1238,6 +1140,7 @@ exports.runTripPreviewJob = onDocumentCreated(
     document: "travel_users/{userId}/tripPreviewJobs/{jobId}",
     timeoutSeconds: 120,
     memory: "512MiB",
+    secrets: [openAiApiKeySecret],
   },
   async (event) => {
     const snapshot = event.data;
@@ -1255,36 +1158,45 @@ exports.runTripPreviewJob = onDocumentCreated(
       .collection("tripPreviewJobs")
       .doc(jobId);
 
-    await jobRef.set({
-      status: "running",
-      startedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, {merge: true});
+    await jobRef.set(
+      {
+        status: "running",
+        startedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
 
     try {
       const requestData = data.request ?? {};
       const plan = await generateTripPlanFromRequest(requestData, {
-        timeoutMs: 90000,
+        timeoutMs: 30000,
       });
       const images = await previewImagesForJob(requestData, plan);
-      await jobRef.set({
-        status: "ready",
-        result: {plan, images},
-        finishedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, {merge: true});
+      await jobRef.set(
+        {
+          status: "ready",
+          result: { plan, images },
+          finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
     } catch (error) {
       logger.error("Trip preview job failed", {
         userId,
         jobId,
         message: error?.message,
       });
-      await jobRef.set({
-        status: "failed",
-        errorMessage: publicTripPreviewError(error),
-        finishedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, {merge: true});
+      await jobRef.set(
+        {
+          status: "failed",
+          errorMessage: publicTripPreviewError(error),
+          finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
     }
   },
 );
@@ -1334,7 +1246,7 @@ exports.generateScheduleStop = onCall(
       publicMessage: "AI schedule stop generation failed.",
     });
 
-    return {item};
+    return { item };
   },
 );
 
@@ -1399,7 +1311,7 @@ exports.generateDayPlanEdit = onCall(
       publicMessage: "AI day edit failed.",
     });
 
-    return {result};
+    return { result };
   },
 );
 
@@ -1459,13 +1371,14 @@ exports.generateTransportRecommendations = onCall(
           }))
           .sort((a, b) => a.price - b.price)
       : [];
-    return {result: {...result, options}};
+    return { result: { ...result, options } };
   },
 );
 
 exports.createTripReply = onCall(
   {
     region: "us-central1",
+    secrets: [openAiApiKeySecret],
   },
   async (request) => {
     const message = String(request.data?.message ?? "").trim();
@@ -1503,7 +1416,7 @@ exports.createTripReply = onCall(
       publicMessage: "AI create trip chat failed.",
     });
 
-    return {reply};
+    return { reply };
   },
 );
 
@@ -1532,7 +1445,7 @@ exports.runTripAutomationReminders = onSchedule(
             tripId: tripDoc.id,
             message: error?.message,
           });
-          return {updated: false, notified: 0};
+          return { updated: false, notified: 0 };
         },
       );
       if (result.updated) updated += 1;
@@ -1551,30 +1464,15 @@ const aiChecklistMarker = "[AI] ";
 const aiGuardianCategory = "AI Trip Guardian";
 const aiWeatherReminderPrefix = "AI weather check:";
 const rainWeatherCodes = new Set([
-  51,
-  53,
-  55,
-  56,
-  57,
-  61,
-  63,
-  65,
-  66,
-  67,
-  80,
-  81,
-  82,
-  95,
-  96,
-  99,
+  51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99,
 ]);
 
 async function automateTripWeatherReminder(db, tripDoc) {
   const trip = tripDoc.data();
-  if (!canAutomateTrip(trip)) return {updated: false, notified: 0};
+  if (!canAutomateTrip(trip)) return { updated: false, notified: 0 };
 
   const rainyDays = await fetchRainyTripDays(trip);
-  if (!rainyDays.length) return {updated: false, notified: 0};
+  if (!rainyDays.length) return { updated: false, notified: 0 };
 
   const checklist = withRainChecklist(trip.checklist, rainyDays);
   const existingRainReminders = await tripDoc.ref
@@ -1603,7 +1501,7 @@ async function automateTripWeatherReminder(db, tripDoc) {
     checklist,
   );
   if (!checklistChanged && !newReminderDays.length) {
-    return {updated: false, notified: 0};
+    return { updated: false, notified: 0 };
   }
 
   const batch = db.batch();
@@ -1615,7 +1513,7 @@ async function automateTripWeatherReminder(db, tripDoc) {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         automationLastWeatherCheck: dateKey(new Date()),
       },
-      {merge: true},
+      { merge: true },
     );
   }
 
@@ -1637,7 +1535,7 @@ async function automateTripWeatherReminder(db, tripDoc) {
 
   await batch.commit();
   const notified = await notifyTripMembers(db, tripDoc.id, trip, rainyDays);
-  return {updated: true, notified};
+  return { updated: true, notified };
 }
 
 function canAutomateTrip(trip) {
@@ -1723,7 +1621,7 @@ function withRainChecklist(checklistValue, rainyDays) {
   );
   const guardian =
     index === -1
-      ? {category: aiGuardianCategory, items: []}
+      ? { category: aiGuardianCategory, items: [] }
       : checklist[index];
   const existing = new Set(guardian.items.map(checklistCompareText));
   const additions = [
@@ -1739,7 +1637,7 @@ function withRainChecklist(checklistValue, rainyDays) {
     items.push(aiChecklistItem(addition));
   }
 
-  const nextGuardian = {...guardian, items};
+  const nextGuardian = { ...guardian, items };
   if (index === -1) checklist.push(nextGuardian);
   else checklist[index] = nextGuardian;
   return checklist;
@@ -1775,7 +1673,7 @@ async function notifyTripMembers(db, tripId, trip, rainyDays) {
     const chunk = tokens.slice(start, start + 500);
     const response = await admin.messaging().sendEachForMulticast({
       tokens: chunk,
-      notification: {title, body},
+      notification: { title, body },
       data: {
         title,
         body,
@@ -1825,7 +1723,8 @@ function rainPushBody(rainyDays) {
     .map((day) => day.precipitationProbability)
     .filter((value) => typeof value === "number")
     .reduce((max, value) => Math.max(max, value), 0);
-  const dayText = rainyDays.length === 1 ? "one day" : `${rainyDays.length} days`;
+  const dayText =
+    rainyDays.length === 1 ? "one day" : `${rainyDays.length} days`;
   if (peak > 0) {
     return `Rain is possible on ${dayText}, up to ${peak}%. I added umbrella/raincoat reminders.`;
   }
@@ -1896,11 +1795,7 @@ function numberAt(values, index) {
 function parseIsoDate(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
   if (!match) return null;
-  return new Date(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-  );
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
 }
 
 function dateOnly(date) {
@@ -1941,7 +1836,7 @@ async function createStructuredResponse({
     instructions,
     input: JSON.stringify(input),
     store: false,
-    reasoning: {effort: "low"},
+    reasoning: { effort: "low" },
     text: {
       verbosity: "low",
       format,
@@ -1984,15 +1879,15 @@ async function fetchOpenAiResponses({
     return await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${openAiApiKey()}`,
+        Authorization: `Bearer ${openAiApiKey()}`,
         "Content-Type": "application/json",
       },
       signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify(payload),
     });
   } catch (error) {
-    const timedOut = error?.name === "AbortError" ||
-      error?.name === "TimeoutError";
+    const timedOut =
+      error?.name === "AbortError" || error?.name === "TimeoutError";
     logger.error(logContext, {
       timeoutMs,
       message: error?.message,
@@ -2011,7 +1906,7 @@ function outputText(responseBody) {
 
   const output = Array.isArray(responseBody.output) ? responseBody.output : [];
   return output
-    .flatMap((item) => Array.isArray(item.content) ? item.content : [])
+    .flatMap((item) => (Array.isArray(item.content) ? item.content : []))
     .map((content) => content.text)
     .filter((text) => typeof text === "string")
     .join("\n");

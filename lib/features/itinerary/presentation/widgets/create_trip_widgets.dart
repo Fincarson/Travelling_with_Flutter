@@ -439,20 +439,16 @@ class _BudgetCurrencyMenu extends StatelessWidget {
 class CreateTripDraftCard extends StatelessWidget {
   const CreateTripDraftCard({
     required this.draft,
-    required this.confirmed,
-    required this.onConfirm,
     required this.onChange,
-    required this.onEdit,
     this.onUse,
+    this.isLoading = false,
     super.key,
   });
 
   final CreateTripDraft draft;
-  final bool confirmed;
-  final VoidCallback onConfirm;
   final ValueChanged<String> onChange;
-  final VoidCallback onEdit;
   final VoidCallback? onUse;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -481,7 +477,7 @@ class CreateTripDraftCard extends StatelessWidget {
                   ],
                 ),
               ),
-              SmallPill(label: confirmed ? 'Confirmed' : 'Review'),
+              SmallPill(label: isLoading ? 'Building' : 'Ready'),
             ],
           ),
           const SizedBox(height: 14),
@@ -542,54 +538,32 @@ class CreateTripDraftCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          ResponsiveSplit(
-            children: [
-              FilledButton(
-                onPressed: onEdit,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFF8FAFC),
-                  foregroundColor: _primary,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
-                child: Text(
-                  appText(context, 'CUSTOMIZE'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              FilledButton(
-                onPressed: onConfirm,
-                style: FilledButton.styleFrom(
-                  backgroundColor: confirmed ? _accent : _primary,
-                  foregroundColor: confirmed ? _primary : Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
-                child: Text(
-                  appText(context, confirmed ? 'CONFIRMED' : 'CONFIRM'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
+          FilledButton.icon(
             onPressed: onUse,
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _primary,
+            style: FilledButton.styleFrom(
+              backgroundColor: _primary,
+              disabledBackgroundColor: _primary.withValues(alpha: .72),
+              foregroundColor: Colors.white,
+              disabledForegroundColor: Colors.white,
               minimumSize: const Size.fromHeight(48),
-              side: const BorderSide(color: Color(0xFFEFF3F6)),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
             ),
-            icon: const Icon(Icons.auto_awesome_rounded),
+            icon: isLoading
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.3,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.auto_awesome_rounded),
             label: Text(
-              appText(context, 'PREVIEW ITINERARY'),
+              appText(
+                context,
+                isLoading ? 'BUILDING PREVIEW' : 'PREVIEW ITINERARY',
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),

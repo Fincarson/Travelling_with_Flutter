@@ -62,12 +62,79 @@ class _PendingAiTripPreview {
   final TripStartLocation? startLocation;
   final List<String> images;
   final String? jobId;
+
+  Map<String, dynamic> toMap() => {
+    'place': place.toMap(),
+    'startDate': _dateKey(startDate),
+    'endDate': _dateKey(endDate),
+    'budget': budget,
+    'currency': currency,
+    'groupType': groupType,
+    'preferences': preferences,
+    'plan': plan.toMap(),
+    'startLocation': startLocation?.toAiMap(),
+    'images': images,
+    'jobId': jobId,
+  };
+
+  static _PendingAiTripPreview? fromMap(Map<String, dynamic>? map) {
+    if (map == null) return null;
+    final placeMap = map['place'] is Map
+        ? Map<String, dynamic>.from(map['place'] as Map)
+        : null;
+    final planMap = map['plan'] is Map
+        ? Map<String, dynamic>.from(map['plan'] as Map)
+        : null;
+    final startDate = _parseIsoDate(map['startDate']);
+    final endDate = _parseIsoDate(map['endDate']);
+    if (placeMap == null ||
+        planMap == null ||
+        startDate == null ||
+        endDate == null) {
+      return null;
+    }
+
+    return _PendingAiTripPreview(
+      place: PlaceSuggestion.fromMap(placeMap),
+      startDate: startDate,
+      endDate: endDate,
+      budget: (map['budget'] as num?)?.toInt() ?? 0,
+      currency:
+          (map['currency'] as String?) ?? AppCurrency.fallbackCurrencyCode,
+      groupType: (map['groupType'] as String?) ?? 'Solo',
+      preferences: ((map['preferences'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .toList(),
+      plan: GeneratedTripPlan.fromMap(planMap),
+      startLocation: _tripStartLocationFromMap(map['startLocation']),
+      images: ((map['images'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .where((image) => image.trim().isNotEmpty)
+          .toList(),
+      jobId: map['jobId'] as String?,
+    );
+  }
+}
+
+TripStartLocation? _tripStartLocationFromMap(Object? value) {
+  if (value is! Map) return null;
+  final map = Map<String, dynamic>.from(value);
+  final label = (map['label'] as String?)?.trim();
+  if (label == null || label.isEmpty) return null;
+  return TripStartLocation(
+    label: label,
+    address: (map['address'] as String?)?.trim(),
+    latitude: (map['latitude'] as num?)?.toDouble(),
+    longitude: (map['longitude'] as num?)?.toDouble(),
+    isCurrentLocation: map['isCurrentLocation'] == true,
+  );
 }
 
 enum _TimingPresetProfile { nearby, farDomestic, international }
 
 class _CreateTripScreenState extends State<CreateTripScreen> {
-  static const _createTripChatTurnTimeout = Duration(seconds: 35);
+  static const _createTripChatTurnTimeout = Duration(seconds: 30);
+  static const _tripPlanFastTimeout = Duration(seconds: 30);
 
   final _places = GeoapifyPlacesService();
   final _assistant = TravelAssistantService();
@@ -460,7 +527,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
   @override
   void dispose() {
-    if (_chatMessages.isNotEmpty || _pendingDraft != null) {
+    if (_chatMessages.isNotEmpty ||
+        _pendingDraft != null ||
+        _pendingAiTripPreview != null ||
+        _isPreparingPreview) {
       unawaited(_savePlannerSessionNow());
     }
     _previewJobSubscription?.cancel();
@@ -546,17 +616,34 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             if (_chatMessages.isNotEmpty || _pendingDraft != null) return;
             if (session == null || session.isEmpty) return;
             _suppressPlannerSessionSave = true;
+            final restoredPreview = _PendingAiTripPreview.fromMap(
+              session.pendingPreviewData,
+            );
             setState(() {
               _chatMessages
                 ..clear()
                 ..addAll(session.messages);
               _pendingDraft = session.pendingDraft;
               _pendingDraftConfirmed = session.pendingDraftConfirmed;
+              _pendingAiTripPreview = restoredPreview;
+              _isPreparingPreview =
+                  session.isPreparingPreview && restoredPreview == null;
+              _isGenerating = _isPreparingPreview;
               if (_currencyOptions.contains(session.currency)) {
                 _currency = session.currency;
               }
             });
             _suppressPlannerSessionSave = false;
+            if (session.isPreparingPreview && restoredPreview == null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                setState(() {
+                  _isPreparingPreview = false;
+                  _isGenerating = false;
+                });
+                unawaited(_prepareAiTripPreviewFromDraft());
+              });
+            }
           },
           onError: (_) {
             _plannerSessionLoaded = true;
@@ -581,6 +668,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       pendingDraft: _pendingDraft,
       pendingDraftConfirmed: _pendingDraftConfirmed,
       currency: _currency,
+      pendingPreviewData: _pendingAiTripPreview?.toMap(),
+      isPreparingPreview: _isPreparingPreview,
     );
     try {
       if (session.isEmpty) {
@@ -589,6 +678,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         await _plannerSessions.saveCurrentSession(widget.accountId, session);
       }
     } catch (_) {}
+  }
+
+  void _addAssistantMessageOnce(String text) {
+    if (_chatMessages.isNotEmpty && _chatMessages.last.text == text) return;
+    _chatMessages.add(CreateTripChatMessage(fromUser: false, text: text));
   }
 
   Future<void> _clearPlannerSession() async {
@@ -615,6 +709,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         _formError =
             'The itinerary preview is taking too long. Try previewing again.';
       });
+      _schedulePlannerSessionSave();
       return;
     }
     if (job.isActive) {
@@ -624,6 +719,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         _isGenerating = true;
         _formError = null;
       });
+      _schedulePlannerSessionSave();
       return;
     }
 
@@ -638,6 +734,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             job.errorMessage ??
             'AI could not finish the itinerary preview. Please try again.';
       });
+      _schedulePlannerSessionSave();
       return;
     }
 
@@ -651,6 +748,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _formError = null;
       _pendingAiTripPreview = preview;
     });
+    _schedulePlannerSessionSave();
   }
 
   TripPreviewJob? _previewJobToDisplay(List<TripPreviewJob> jobs) {
@@ -1047,60 +1145,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     return options;
   }
 
-  Future<void> _showImagePicker() async {
-    final image = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 620),
-            child: Container(
-              margin: EdgeInsets.all(_responsiveHorizontalPadding(context)),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(28),
-              ),
-              child: SizedBox(
-                height: math.min(MediaQuery.sizeOf(context).height * .7, 520),
-                child: GridView.builder(
-                  itemCount: _galleryOptions.length,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: MediaQuery.sizeOf(context).width < 380
-                        ? 1
-                        : 2,
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: 1.35,
-                  ),
-                  itemBuilder: (context, index) {
-                    final option = _galleryOptions[index];
-                    return GestureDetector(
-                      onTap: () => Navigator.of(context).pop(option),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: Image.network(
-                          option,
-                          fit: BoxFit.cover,
-                          filterQuality: PerformanceScope.maybeSettingsOf(
-                            context,
-                          ).filterQuality,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-    if (image == null) return;
-    setState(() => _selectedImage = image);
-  }
-
   void _startAiChat() {
     setState(() {
       _mode = 3;
@@ -1108,12 +1152,16 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     });
   }
 
-  void _closeAiChatPlanner() {
+  Future<void> _closeAiChatPlanner() async {
     _plannerSessionSaveTimer?.cancel();
-    if (_chatMessages.isNotEmpty || _pendingDraft != null) {
+    if (_chatMessages.isNotEmpty ||
+        _pendingDraft != null ||
+        _pendingAiTripPreview != null ||
+        _isPreparingPreview) {
       _hasLocalPlannerSessionChanges = true;
-      unawaited(_savePlannerSessionNow());
+      await _savePlannerSessionNow();
     }
+    if (!mounted) return;
     setState(() => _mode = 0);
   }
 
@@ -1158,6 +1206,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         );
       });
       _schedulePlannerSessionSave();
+      unawaited(_usePendingDraft());
       return;
     }
 
@@ -1194,18 +1243,38 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _lastAiError = null;
     } catch (error) {
       if (!mounted) return;
+      final fallbackDraft = _protectDraftCurrency(
+        _parseTripDraft(text, _currentChatDraftForAi()),
+        text,
+      );
+      final missing = _missingDraftFields(fallbackDraft);
       setState(() {
         _isThinking = false;
-        _lastAiError = _friendlyAiError(error);
+        _lastAiError = null;
+        _pendingDraft = fallbackDraft;
+        final currency = fallbackDraft.currency;
+        if (currency != null) _currency = currency;
         _chatMessages.add(
-          CreateTripChatMessage(fromUser: false, text: _lastAiError!),
+          CreateTripChatMessage(
+            fromUser: false,
+            text: missing.isEmpty
+                ? 'Got it - I have the trip details and I am preparing the itinerary.'
+                : _questionForMissingField(missing.first),
+            widget: _fallbackWidgetForMissingField(
+              missing.isEmpty ? null : missing.first,
+            ),
+          ),
         );
       });
       _schedulePlannerSessionSave();
+      if (missing.isEmpty) {
+        unawaited(_usePendingDraft());
+      }
       return;
     }
 
     if (!mounted) return;
+    final canBuildItinerary = _missingDraftFields(aiResponse.draft).isEmpty;
 
     setState(() {
       _isThinking = false;
@@ -1224,6 +1293,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       );
     });
     _schedulePlannerSessionSave();
+    if (canBuildItinerary) {
+      unawaited(_usePendingDraft());
+    }
   }
 
   CreateTripDraft _currentChatDraftForAi() {
@@ -1396,28 +1468,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       ),
       child: child ?? const SizedBox.shrink(),
     );
-  }
-
-  String _friendlyAiError(Object error) {
-    final text = error.toString();
-    if (error is TimeoutException ||
-        text.contains('TimeoutException') ||
-        text.contains('deadline-exceeded') ||
-        text.contains('DEADLINE_EXCEEDED') ||
-        text.contains('AI itinerary generation failed')) {
-      return 'AI took longer than expected to build the itinerary. Please try again, or use Preview Itinerary so it can finish in the background.';
-    }
-    if (text.contains('not-found') ||
-        text.contains('NOT_FOUND') ||
-        text.contains('failed-precondition') ||
-        text.contains('SERVICE_DISABLED')) {
-      return 'AI is not connected yet. Set the Firebase Function secrets and deploy Functions, or run Flutter with an OPENAI_API_KEY dart define.';
-    }
-    if (text.contains('unauthenticated') ||
-        text.contains('permission-denied')) {
-      return 'AI could not be reached because the backend rejected the request.';
-    }
-    return 'AI is unavailable right now. Please try again.';
   }
 
   // ignore: unused_element
@@ -2275,274 +2325,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     );
   }
 
-  Future<void> _editPendingDraft() async {
-    final draft = _pendingDraft;
-    if (draft == null) return;
-
-    final destination = TextEditingController(text: draft.destination ?? '');
-    final budget = TextEditingController(text: draft.budget ?? '');
-    final customTag = TextEditingController();
-    var startDate = draft.startDate ?? _startDate;
-    var endDate = draft.endDate ?? _endDate;
-    var groupType = draft.groupType ?? _group;
-    final preferences = <String>{...draft.preferences};
-
-    try {
-      final edited = await showModalBottomSheet<CreateTripDraft>(
-        context: context,
-        isScrollControlled: true,
-        isDismissible: false,
-        enableDrag: false,
-        backgroundColor: Colors.transparent,
-        builder: (context) {
-          return StatefulBuilder(
-            builder: (context, setSheetState) {
-              Future<void> pickStart() async {
-                final today = _today();
-                final firstDate = DateTime(today.year, today.month, today.day);
-                final date = await showDatePicker(
-                  context: context,
-                  initialDate: startDate.isBefore(firstDate)
-                      ? firstDate
-                      : startDate,
-                  firstDate: firstDate,
-                  lastDate: DateTime(2028, 12, 31),
-                );
-                if (date == null) return;
-                setSheetState(() {
-                  startDate = date;
-                  if (endDate.isBefore(startDate)) {
-                    endDate = startDate.add(const Duration(days: 4));
-                  }
-                });
-              }
-
-              Future<void> pickEnd() async {
-                final date = await showDatePicker(
-                  context: context,
-                  initialDate: endDate.isBefore(startDate)
-                      ? startDate
-                      : endDate,
-                  firstDate: startDate,
-                  lastDate: DateTime(2028, 12, 31),
-                );
-                if (date == null) return;
-                setSheetState(() => endDate = date);
-              }
-
-              void addTag() {
-                final tag = customTag.text.trim();
-                if (tag.isEmpty) return;
-                setSheetState(() {
-                  preferences.add(tag);
-                  customTag.clear();
-                });
-              }
-
-              return SafeArea(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 620),
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        left: _responsiveHorizontalPadding(context),
-                        right: _responsiveHorizontalPadding(context),
-                        top: 16,
-                        bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
-                      ),
-                      child: Container(
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(28),
-                        ),
-                        child: SingleChildScrollView(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  const IconBadge(
-                                    icon: Icons.tune_rounded,
-                                    size: 42,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      appText(context, 'Customize AI Draft'),
-                                      style: const TextStyle(
-                                        color: _primary,
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    onPressed: () =>
-                                        Navigator.of(context).pop(),
-                                    icon: const Icon(Icons.close_rounded),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-                              TextField(
-                                controller: destination,
-                                decoration: InputDecoration(
-                                  labelText: appText(context, 'Destination'),
-                                  prefixIcon: const Icon(Icons.place_rounded),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              ResponsiveSplit(
-                                children: [
-                                  DraftEditButton(
-                                    label: 'Start',
-                                    value: _dateKey(startDate),
-                                    onTap: pickStart,
-                                  ),
-                                  DraftEditButton(
-                                    label: 'End',
-                                    value: _dateKey(endDate),
-                                    onTap: pickEnd,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: budget,
-                                keyboardType: TextInputType.number,
-                                decoration: InputDecoration(
-                                  labelText: appText(context, 'Total budget'),
-                                  prefixText: '\$ ',
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              DropdownButtonFormField<String>(
-                                initialValue: groupType,
-                                decoration: InputDecoration(
-                                  labelText: appText(context, 'Who is coming'),
-                                ),
-                                items:
-                                    const ['Solo', 'Family', 'Friends', 'Tour']
-                                        .map(
-                                          (item) => DropdownMenuItem(
-                                            value: item,
-                                            child: Text(appText(context, item)),
-                                          ),
-                                        )
-                                        .toList(),
-                                onChanged: (value) => setSheetState(
-                                  () => groupType = value ?? groupType,
-                                ),
-                              ),
-                              const SizedBox(height: 14),
-                              const LabelText('Trip tags'),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  for (final option in _preferenceOptions)
-                                    FilterChip(
-                                      selected: preferences.contains(option),
-                                      label: Text(appText(context, option)),
-                                      onSelected: (_) => setSheetState(() {
-                                        preferences.contains(option)
-                                            ? preferences.remove(option)
-                                            : preferences.add(option);
-                                      }),
-                                    ),
-                                  for (final tag in preferences.where(
-                                    (tag) => !_preferenceOptions.contains(tag),
-                                  ))
-                                    InputChip(
-                                      label: Text(appText(context, tag)),
-                                      onDeleted: () => setSheetState(
-                                        () => preferences.remove(tag),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: customTag,
-                                      decoration: InputDecoration(
-                                        labelText: appText(
-                                          context,
-                                          'Add custom tag',
-                                        ),
-                                      ),
-                                      onSubmitted: (_) => addTag(),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  IconButton.filled(
-                                    style: IconButton.styleFrom(
-                                      backgroundColor: _primary,
-                                      foregroundColor: Colors.white,
-                                      fixedSize: const Size(54, 54),
-                                    ),
-                                    onPressed: addTag,
-                                    icon: const Icon(Icons.add_rounded),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 18),
-                              PrimaryButton(
-                                label: 'Save draft edits',
-                                icon: Icons.check_rounded,
-                                onPressed: () => Navigator.of(context).pop(
-                                  CreateTripDraft(
-                                    destination: destination.text.trim(),
-                                    startDate: startDate,
-                                    endDate: endDate,
-                                    budget: budget.text
-                                        .replaceAll(RegExp(r'\D'), '')
-                                        .trim(),
-                                    currency: draft.currency ?? _currency,
-                                    groupType: groupType,
-                                    preferences: preferences.toList(),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      );
-
-      if (edited == null || !mounted) return;
-      setState(() {
-        _pendingDraft = edited;
-        _pendingDraftConfirmed = false;
-        _pendingAiTripPreview = null;
-        _chatMessages.add(
-          const CreateTripChatMessage(
-            fromUser: false,
-            text:
-                'Draft updated. Review the custom version, then confirm it when it looks right.',
-          ),
-        );
-      });
-      _schedulePlannerSessionSave();
-    } finally {
-      destination.dispose();
-      budget.dispose();
-      customTag.dispose();
-    }
-  }
-
   Future<PlaceSuggestion?> _resolvePlaceForGeneration(String typed) async {
     if (_selectedPlace != null) return _selectedPlace;
     if (typed.length < 2) return null;
@@ -2550,7 +2332,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     try {
       final suggestions = await _places.searchDestinations(typed);
       if (suggestions.isNotEmpty) {
-        return suggestions.first;
+        return _bestDestinationMatch(typed, suggestions);
       }
     } catch (_) {}
 
@@ -2562,6 +2344,39 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       placeId: typed.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-'),
     );
   }
+
+  PlaceSuggestion _bestDestinationMatch(
+    String typed,
+    List<PlaceSuggestion> suggestions,
+  ) {
+    final normalizedTyped = _normalizedDestinationText(typed);
+    final ranked = [...suggestions]
+      ..sort((a, b) {
+        final scoreA = _destinationMatchScore(normalizedTyped, a);
+        final scoreB = _destinationMatchScore(normalizedTyped, b);
+        return scoreB.compareTo(scoreA);
+      });
+    return ranked.first;
+  }
+
+  int _destinationMatchScore(String normalizedTyped, PlaceSuggestion place) {
+    final name = _normalizedDestinationText(place.name);
+    final formatted = _normalizedDestinationText(place.formatted);
+    final country = _normalizedDestinationText(place.country ?? '');
+    var score = 0;
+    if (name == normalizedTyped) score += 1000;
+    if (formatted == normalizedTyped) score += 900;
+    if (name.startsWith(normalizedTyped)) score += 500;
+    if (formatted.contains(normalizedTyped)) score += 350;
+    if (normalizedTyped.contains(name) && name.isNotEmpty) score += 250;
+    if (place.resultType == 'city') score += 80;
+    if (place.resultType == 'county') score -= 80;
+    if (country.isNotEmpty && formatted.endsWith(country)) score += 20;
+    return score;
+  }
+
+  String _normalizedDestinationText(String value) =>
+      value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
 
   int _parsedBudget() {
     final numeric = int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), ''));
@@ -2636,6 +2451,25 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       return;
     }
 
+    setState(() {
+      _activePreviewJobId = null;
+      _isPreparingPreview = true;
+      _isGenerating = true;
+      _pendingAiTripPreview = null;
+      _formError = null;
+      if (addChatStatusMessage &&
+          (_chatMessages.isEmpty ||
+              _chatMessages.last.text != _previewJobStartedMessage)) {
+        _chatMessages.add(
+          const CreateTripChatMessage(
+            fromUser: false,
+            text: _previewJobStartedMessage,
+          ),
+        );
+      }
+    });
+    _schedulePlannerSessionSave();
+
     final typedDestination = _destination.text.trim();
     PlaceSuggestion? place;
     try {
@@ -2643,12 +2477,20 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
+        _isPreparingPreview = false;
+        _isGenerating = false;
         _formError = 'Could not verify that destination right now: $error';
       });
+      _schedulePlannerSessionSave();
       return;
     }
     if (place == null) {
-      setState(() => _formError = 'Enter a destination.');
+      setState(() {
+        _isPreparingPreview = false;
+        _isGenerating = false;
+        _formError = 'Enter a destination.';
+      });
+      _schedulePlannerSessionSave();
       return;
     }
 
@@ -2671,140 +2513,66 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         _startLocation.text = startLocation.displayLabel;
       }
     });
+    _schedulePlannerSessionSave();
+
+    GeneratedTripPlan plan;
     try {
-      final jobId = await _previewJobs.createJob(
-        accountId: widget.accountId,
+      plan = await _assistant
+          .generateTripPlan(
+            place: place,
+            startDate: _startDate,
+            endDate: _endDate,
+            budget: budget,
+            groupType: _group,
+            preferences: _aiGenerationPreferences,
+            currency: _currency,
+            profileLanguage: widget.profileLanguage,
+            appContext: generationContext,
+            startLocation: startLocation,
+            airline: _airline.text.trim(),
+            flightCode: _flightCode.text.trim(),
+            flightDepartureTime: _flightDepartTime.text.trim(),
+            flightDeparturePlace: _flightDepartPlace.text.trim(),
+            flightLandingTime: _flightLandingTime.text.trim(),
+            flightLandingPlace: _flightLandingPlace.text.trim(),
+          )
+          .timeout(_tripPlanFastTimeout);
+      if (plan.items.isEmpty) throw Exception('AI returned no itinerary.');
+    } catch (_) {
+      plan = _fallbackTripPlan(
         place: place,
         startDate: _startDate,
         endDate: _endDate,
         budget: budget,
-        groupType: _group,
         preferences: _aiGenerationPreferences,
         currency: _currency,
-        profileLanguage: widget.profileLanguage,
-        appContext: generationContext,
         startLocation: startLocation,
-        fallbackImages: fallbackImages,
-        airline: _airline.text.trim(),
-        flightCode: _flightCode.text.trim(),
-        flightDepartureTime: _flightDepartTime.text.trim(),
-        flightDeparturePlace: _flightDepartPlace.text.trim(),
-        flightLandingTime: _flightLandingTime.text.trim(),
-        flightLandingPlace: _flightLandingPlace.text.trim(),
       );
-      if (jobId.trim().isEmpty) {
-        throw Exception('Preview job was not created.');
-      }
-      if (!mounted) return;
-      setState(() {
-        _activePreviewJobId = jobId;
-        _isPreparingPreview = true;
-        _isGenerating = true;
-        _pendingAiTripPreview = null;
-        _formError = null;
-        if (addChatStatusMessage &&
-            (_chatMessages.isEmpty ||
-                _chatMessages.last.text != _previewJobStartedMessage)) {
-          _chatMessages.add(
-            const CreateTripChatMessage(
-              fromUser: false,
-              text: _previewJobStartedMessage,
-            ),
-          );
-        }
-      });
-      _schedulePlannerSessionSave();
-    } catch (error) {
-      if (!mounted) return;
-      final message = _friendlyAiError(error);
-      setState(() {
-        _isPreparingPreview = false;
-        _isGenerating = false;
-        _pendingAiTripPreview = null;
-        _formError = message;
-        if (addChatStatusMessage) {
-          _chatMessages.add(
-            CreateTripChatMessage(
-              fromUser: false,
-              text: 'I could not generate the live itinerary. $message',
-            ),
-          );
-        }
-      });
-      return;
     }
-  }
 
-  Future<List<String>> _searchedImagesForTripPreview({
-    required PlaceSuggestion place,
-  }) async {
-    final fallbackImages = _mergedPreviewImages(
-      destination: place.name,
-      searchedImages: const [],
+    if (!mounted) return;
+    final nextPreview = _PendingAiTripPreview(
+      place: place,
+      startDate: _startDate,
+      endDate: _endDate,
+      budget: budget,
+      currency: _currency,
+      groupType: _group,
+      preferences: _savedTripPreferences,
+      plan: plan,
+      startLocation: startLocation,
+      images: fallbackImages,
     );
-    try {
-      final query = '${place.name} travel landmark';
-      final url = Uri.https('commons.wikimedia.org', '/w/api.php', {
-        'action': 'query',
-        'generator': 'search',
-        'gsrsearch': query,
-        'gsrnamespace': '6',
-        'gsrlimit': '8',
-        'prop': 'imageinfo',
-        'iiprop': 'url',
-        'iiurlwidth': '900',
-        'format': 'json',
-        'origin': '*',
-      });
-      final response = await http
-          .get(
-            url,
-            headers: const {
-              'Accept': 'application/json',
-              'User-Agent': 'TravellingWithFlutter/1.0 trip-preview-images',
-            },
-          )
-          .timeout(const Duration(seconds: 3));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        return fallbackImages;
+    setState(() {
+      _isPreparingPreview = false;
+      _isGenerating = false;
+      _pendingAiTripPreview = nextPreview;
+      _formError = null;
+      if (addChatStatusMessage) {
+        _addAssistantMessageOnce('The itinerary preview is ready.');
       }
-
-      final body = jsonDecode(response.body) as Map<String, dynamic>;
-      final pages = body['query'] is Map
-          ? (body['query'] as Map)['pages']
-          : null;
-      final searchedImages = <String>[];
-      if (pages is Map) {
-        for (final page in pages.values.whereType<Map>()) {
-          final imageInfoList = (page['imageinfo'] as List<dynamic>?)
-              ?.whereType<Map>()
-              .toList();
-          final imageInfo = imageInfoList == null || imageInfoList.isEmpty
-              ? null
-              : imageInfoList.first;
-          final imageUrl =
-              (imageInfo?['thumburl'] as String?) ??
-              (imageInfo?['url'] as String?);
-          if (_isPreviewImageUrl(imageUrl)) searchedImages.add(imageUrl!);
-        }
-      }
-      return _mergedPreviewImages(
-        destination: place.name,
-        searchedImages: searchedImages,
-      );
-    } catch (_) {
-      return fallbackImages;
-    }
-  }
-
-  bool _isPreviewImageUrl(String? value) {
-    if (value == null || value.trim().isEmpty) return false;
-    final lower = value.toLowerCase();
-    return lower.startsWith('https://') &&
-        (lower.contains('.jpg') ||
-            lower.contains('.jpeg') ||
-            lower.contains('.png') ||
-            lower.contains('.webp'));
+    });
+    _schedulePlannerSessionSave();
   }
 
   List<String> _mergedPreviewImages({
@@ -4243,7 +4011,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               padding: _responsivePagePadding(context, top: 18, bottom: 8),
               child: TopBar(
                 title: 'Plan with AI',
-                onBack: _closeAiChatPlanner,
+                onBack: () => unawaited(_closeAiChatPlanner()),
                 action: Icons.refresh_rounded,
                 onAction: _resetCreateTripChat,
               ),
@@ -4317,9 +4085,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                     const SizedBox(height: 12),
                     CreateTripDraftCard(
                       draft: pendingDraft,
-                      confirmed: _pendingDraftConfirmed,
-                      onConfirm: () => _sendCreateTripChat('confirm'),
-                      onEdit: _editPendingDraft,
+                      isLoading: _isPreparingPreview,
                       onUse: _isPreparingPreview ? null : _usePendingDraft,
                       onChange: _sendCreateTripChat,
                     ),
