@@ -61,6 +61,7 @@ class GroupMessageBubble extends StatelessWidget {
                       ),
                     ),
                   Container(
+                    key: ValueKey('chat-message-bubble-${message.id}'),
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: isMine

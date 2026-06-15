@@ -14,9 +14,12 @@ class ChatMessageContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final url = _firstUrlIn(message.text);
     final directGif = url != null && _isGifUri(url);
+    final hasWideContent = message.attachments.isNotEmpty || url != null;
     return Column(
       mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: hasWideContent
+          ? CrossAxisAlignment.stretch
+          : CrossAxisAlignment.start,
       children: [
         for (final attachment in message.attachments)
           Padding(
