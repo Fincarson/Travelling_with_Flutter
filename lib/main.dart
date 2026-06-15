@@ -19,15 +19,12 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   debugPrint = (String? message, {int? wrapWidth}) {};
-  FlutterError.onError = (details) {
-    AppErrorController.report(details.exception, details.stack);
-  };
-  PlatformDispatcher.instance.onError = (error, stackTrace) {
-    AppErrorController.report(error, stackTrace);
-    return true;
-  };
+  // Most framework and asynchronous errors are recoverable and should not
+  // replace an otherwise usable page.
+  FlutterError.onError = (_) {};
+  PlatformDispatcher.instance.onError = (_, _) => true;
   ErrorWidget.builder = (details) {
-    return UnexpectedErrorView(
+    return PageErrorFallback(
       error: AppErrorData.from(details.exception, details.stack),
     );
   };
@@ -62,7 +59,7 @@ class _BootstrapErrorApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: TravelAgentTheme.light(),
-      home: UnexpectedErrorView(error: error),
+      home: UnexpectedErrorView(error: error, showBackButton: false),
     );
   }
 }
