@@ -95,17 +95,17 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('filters upcoming trips by travel group', (tester) async {
+  testWidgets('filters upcoming trips by traveler count', (tester) async {
     await pumpTrips(tester);
 
     await tester.tap(find.byKey(const ValueKey('trip-filter-button')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('trip-filter-panel')), findsOneWidget);
 
-    final friendsFilter = find.widgetWithText(ChoiceChip, '2 travelers');
-    await tester.ensureVisible(friendsFilter);
+    final travelerFilter = find.widgetWithText(ChoiceChip, '2 travelers');
+    await tester.ensureVisible(travelerFilter);
     await tester.pumpAndSettle();
-    await tester.tap(friendsFilter);
+    await tester.tap(travelerFilter);
     await tester.pumpAndSettle();
 
     expect(find.text('Paris'), findsOneWidget);

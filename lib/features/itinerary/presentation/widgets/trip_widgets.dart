@@ -676,7 +676,7 @@ class TripListCard extends StatelessWidget {
                         child: Text(
                           appText(
                             context,
-                            _travelerGroupLabel(trip.numOfTravelers),
+                            _travelerCountLabel(trip.numOfTravelers),
                           ).toUpperCase(),
                           style: const TextStyle(
                             color: Color(0xFF355872),
