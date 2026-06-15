@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_app/app/travel_agent_app.dart';
+import 'package:flutter_app/features/auth/data/account_auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -89,6 +90,77 @@ void main() {
     });
   });
 
+  testWidgets('chat composer options appear above the bar and wrap', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: GroupChatRoomScreen(
+            chat: const GroupChat(
+              id: 'chat-1',
+              title: 'Test chat',
+              ownerId: 'user-1',
+              memberIds: ['user-1'],
+              roles: {'user-1': 'owner'},
+            ),
+            membership: const GroupChatMembership(
+              chatId: 'chat-1',
+              role: 'owner',
+              status: 'active',
+              titleSnapshot: 'Test chat',
+            ),
+            account: const AuthenticatedAccount(
+              uid: 'user-1',
+              displayName: 'Taylor',
+            ),
+            user: const UserProfile(
+              name: 'Taylor',
+              email: 'taylor@example.com',
+              interests: [],
+            ),
+            repository: _FakeGroupChatRepository(),
+            onBack: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Attach'));
+    await tester.pump();
+
+    final options = find.byKey(const ValueKey('chat-composer-options'));
+    final messageField = find.byType(TextField);
+    expect(options, findsOneWidget);
+    expect(find.text('Camera'), findsOneWidget);
+    expect(find.text('Photos'), findsOneWidget);
+    expect(find.text('Videos'), findsOneWidget);
+    expect(find.text('Files'), findsOneWidget);
+    expect(find.text('Poll'), findsOneWidget);
+    expect(
+      tester.getTopLeft(options).dy,
+      lessThan(tester.getTopLeft(messageField).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('Camera')).dy,
+      tester.getTopLeft(find.text('Photos')).dy,
+    );
+    expect(
+      tester.getTopLeft(find.text('Poll')).dy,
+      greaterThan(tester.getTopLeft(find.text('Camera')).dy),
+    );
+
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pump();
+    expect(options, findsNothing);
+  });
+
   test('GroupChatJoinResult parses callable response data', () {
     final result = GroupChatJoinResult.fromMap({
       'chatId': 'chat-123',
@@ -102,4 +174,11 @@ void main() {
     expect(result.role, GroupChatRole.member.name);
     expect(result.alreadyMember, isTrue);
   });
+}
+
+class _FakeGroupChatRepository extends Fake implements GroupChatRepository {
+  @override
+  Stream<List<GroupChatMessage>> watchMessages(String chatId) {
+    return Stream.value(const []);
+  }
 }
