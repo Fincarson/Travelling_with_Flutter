@@ -1,22 +1,66 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/errors/app_error.dart';
 import '../../core/localization/app_text.dart';
 
+class PageErrorFallback extends StatelessWidget {
+  const PageErrorFallback({required this.error, this.onBack, super.key});
+
+  final AppErrorData error;
+  final VoidCallback? onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!_occupiesMostOfPage(context, constraints)) {
+          return const SizedBox.shrink();
+        }
+        return UnexpectedErrorView(error: error, onBack: onBack);
+      },
+    );
+  }
+
+  bool _occupiesMostOfPage(BuildContext context, BoxConstraints constraints) {
+    if (!constraints.hasBoundedWidth || !constraints.hasBoundedHeight) {
+      return false;
+    }
+
+    final viewport = MediaQuery.maybeSizeOf(context);
+    if (viewport == null || viewport.isEmpty) {
+      return constraints.maxWidth >= 280 && constraints.maxHeight >= 320;
+    }
+
+    return constraints.maxWidth >= viewport.width * .72 &&
+        constraints.maxHeight >= viewport.height * .55;
+  }
+}
+
 class UnexpectedErrorView extends StatelessWidget {
   const UnexpectedErrorView({
     required this.error,
     this.compact = false,
+    this.onBack,
+    this.showBackButton = true,
     super.key,
   });
 
   final AppErrorData error;
   final bool compact;
+  final VoidCallback? onBack;
+  final bool showBackButton;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final content = _UnexpectedErrorPanel(error: error, compact: compact);
+    final content = _UnexpectedErrorPanel(
+      error: error,
+      compact: compact,
+      onBack: onBack,
+      showBackButton: showBackButton && !compact,
+    );
     if (compact) return content;
 
     return ColoredBox(
@@ -44,10 +88,17 @@ class UnexpectedErrorView extends StatelessWidget {
 }
 
 class _UnexpectedErrorPanel extends StatefulWidget {
-  const _UnexpectedErrorPanel({required this.error, required this.compact});
+  const _UnexpectedErrorPanel({
+    required this.error,
+    required this.compact,
+    required this.onBack,
+    required this.showBackButton,
+  });
 
   final AppErrorData error;
   final bool compact;
+  final VoidCallback? onBack;
+  final bool showBackButton;
 
   @override
   State<_UnexpectedErrorPanel> createState() => _UnexpectedErrorPanelState();
@@ -94,6 +145,15 @@ class _UnexpectedErrorPanelState extends State<_UnexpectedErrorPanel> {
               fontSize: 12,
               fontWeight: FontWeight.w800,
             ),
+          ),
+        ],
+        if (widget.showBackButton) ...[
+          const SizedBox(height: 18),
+          FilledButton.icon(
+            onPressed:
+                widget.onBack ?? () => unawaited(_returnFromError(context)),
+            icon: const Icon(Icons.arrow_back_rounded),
+            label: Text(appText(context, 'Back')),
           ),
         ],
         const SizedBox(height: 8),
@@ -148,6 +208,24 @@ class _UnexpectedErrorPanelState extends State<_UnexpectedErrorPanel> {
           ),
       ],
     );
+  }
+
+  Future<void> _returnFromError(BuildContext context) async {
+    final navigator = Navigator.maybeOf(context);
+    final rootNavigator = Navigator.maybeOf(context, rootNavigator: true);
+    final routerDelegate = Router.maybeOf(context)?.routerDelegate;
+
+    if (navigator != null && await navigator.maybePop()) return;
+
+    if (rootNavigator != null &&
+        rootNavigator != navigator &&
+        await rootNavigator.maybePop()) {
+      return;
+    }
+
+    if (routerDelegate != null && await routerDelegate.popRoute()) return;
+
+    AppErrorController.clear();
   }
 }
 

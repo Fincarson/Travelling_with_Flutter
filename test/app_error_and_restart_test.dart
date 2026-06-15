@@ -32,6 +32,94 @@ void main() {
     expect(find.text('setState() called after dispose'), findsOneWidget);
   });
 
+  testWidgets('page error back button returns to the previous route', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: FilledButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const UnexpectedErrorView(
+                        error: AppErrorData(
+                          code: 'page-build-failed',
+                          details: 'The page could not be built.',
+                        ),
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('Open broken page'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open broken page'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('An unexpected error has occurred. Please try again later.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    expect(find.text('Open broken page'), findsOneWidget);
+  });
+
+  testWidgets('minor widget failures do not show the error page', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 160,
+              height: 120,
+              child: PageErrorFallback(
+                error: AppErrorData(
+                  code: 'minor-widget-failed',
+                  details: 'A small widget could not be built.',
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.text('An unexpected error has occurred. Please try again later.'),
+      findsNothing,
+    );
+  });
+
+  testWidgets('page-sized widget failures show the error page', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: PageErrorFallback(
+          error: AppErrorData(
+            code: 'page-build-failed',
+            details: 'Most of the page could not be built.',
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.text('An unexpected error has occurred. Please try again later.'),
+      findsOneWidget,
+    );
+    expect(find.text('Back'), findsOneWidget);
+  });
+
   testWidgets('restart scope recreates the full child tree', (tester) async {
     var initializationCount = 0;
 
