@@ -58,12 +58,12 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   Trip? _activeTrip;
   String? _pendingTripAiPrompt;
   String? _suggestedDestination;
+  UserProfile? _pendingFavoritesProfile;
   String? _accountId;
   String? _activeChatId;
   String? _pendingNotificationPath;
   String? _loadError;
   var _helpOpen = false;
-  var _tutorialDismissedForSession = false;
 
   int get _cachedTabIndex => switch (_tab) {
     _NavTab.home => 0,
@@ -205,17 +205,29 @@ class _TravelAgentAppState extends State<TravelAgentApp>
         .listen(
           (profile) {
             if (!mounted || profile == null) return;
-            final normalizedRemote = profile.currencySettingsVersion < 1
+            var normalizedRemote = profile.currencySettingsVersion < 1
                 ? profile.copyWith(
                     displayCurrencyCode: AppCurrency.fallbackCurrencyCode,
                     currencyUpdateMode: CurrencyUpdateMode.automatic,
                     currencySettingsVersion: 1,
                   )
                 : profile;
+            final pendingFavorites = _pendingFavoritesProfile;
+            if (pendingFavorites != null) {
+              if (_sameFavorites(normalizedRemote, pendingFavorites)) {
+                _pendingFavoritesProfile = null;
+              } else {
+                normalizedRemote = normalizedRemote.copyWith(
+                  favoritePlaces: pendingFavorites.favoritePlaces,
+                  favoriteTripIds: pendingFavorites.favoriteTripIds,
+                );
+              }
+            }
             setState(() {
               _user = normalizedRemote;
               _loadError = null;
             });
+            _notifyRoutes();
             unawaited(_syncTripReminders());
             unawaited(_syncPushTokenRegistration());
             unawaited(
@@ -416,10 +428,12 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   // unrelated legacy field can't get the whole save rejected by the rules.
   Future<void> _persistFavorites(UserProfile updated) async {
     final previous = _user;
+    _pendingFavoritesProfile = updated;
     setState(() {
       _user = updated;
       _loadError = null;
     });
+    _notifyRoutes();
     final accountId = _accountId ?? widget.account.uid;
     await _saveLocalProfile(accountId, updated);
     try {
@@ -430,14 +444,33 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       );
     } catch (error) {
       if (!mounted) return;
+      if (_pendingFavoritesProfile == updated) {
+        _pendingFavoritesProfile = null;
+      }
       final messenger = ScaffoldMessenger.of(context);
       final message = appText(context, 'Could not update favorite.');
       setState(() => _user = previous);
+      _notifyRoutes();
       unawaited(_saveLocalProfile(accountId, previous));
       messenger
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(message)));
     }
+  }
+
+  bool _sameFavorites(UserProfile a, UserProfile b) {
+    if (a.favoritePlaces.length != b.favoritePlaces.length ||
+        a.favoriteTripIds.length != b.favoriteTripIds.length) {
+      return false;
+    }
+    final aPlaces = a.favoritePlaces.map((place) => place.id).toSet();
+    final bPlaces = b.favoritePlaces.map((place) => place.id).toSet();
+    if (aPlaces.length != bPlaces.length || !aPlaces.containsAll(bPlaces)) {
+      return false;
+    }
+    final aTrips = a.favoriteTripIds.toSet();
+    final bTrips = b.favoriteTripIds.toSet();
+    return aTrips.length == bTrips.length && aTrips.containsAll(bTrips);
   }
 
   Future<void> _rateTripMemory(
@@ -468,7 +501,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     final shouldPersist = !_user.tutorialCompleted;
     setState(() {
       _helpOpen = false;
-      _tutorialDismissedForSession = true;
     });
     if (shouldPersist) {
       await _saveProfile(_user.copyWith(tutorialCompleted: true));
@@ -561,21 +593,23 @@ class _TravelAgentAppState extends State<TravelAgentApp>
         context: context,
         barrierDismissible: false,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Change display currency?'),
+          title: Text(appText(context, 'Change display currency?')),
           content: Text(
-            'You appear to be in '
+            '${appText(context, 'You appear to be in')} '
             '${countryName == null || countryName.isEmpty ? countryCode : countryName}. '
-            'Would you like to change your display currency from '
-            '$currentCurrency to $suggestedCurrency?',
+            '${appText(context, 'Would you like to change your display currency from')} '
+            '$currentCurrency ${appText(context, 'to')} $suggestedCurrency?',
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: Text('Keep $currentCurrency'),
+              child: Text('${appText(context, 'Keep')} $currentCurrency'),
             ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: Text('Change to $suggestedCurrency'),
+              child: Text(
+                '${appText(context, 'Change to')} $suggestedCurrency',
+              ),
             ),
           ],
         ),
@@ -879,14 +913,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             : TravelAgentTheme.light(),
         child: Scaffold(
           resizeToAvoidBottomInset: false,
-          floatingActionButton: _isLoading
-              ? null
-              : FloatingActionButton.small(
-                  heroTag: 'global-help',
-                  tooltip: 'App help',
-                  onPressed: () => setState(() => _helpOpen = true),
-                  child: const Icon(Icons.help_outline_rounded),
-                ),
           bottomNavigationBar: _isLoading
               ? null
               : ValueListenableBuilder<_BottomNavController?>(
@@ -913,10 +939,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
                           top: 12,
                           child: SyncBanner(message: _loadError!),
                         ),
-                      if (_helpOpen ||
-                          (_user.onboardingCompleted &&
-                              !_user.tutorialCompleted &&
-                              !_tutorialDismissedForSession))
+                      if (_helpOpen)
                         Positioned.fill(
                           child: _AppTutorialOverlay(
                             onClose: () => unawaited(_closeTutorial()),
@@ -1004,9 +1027,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       onStartTrip: _startTrip,
       onDeleteTrip: _deleteTrip,
       favoriteTripIds: _user.favoriteTripIds,
-      onToggleFavoriteTrip: (trip) {
-        unawaited(_toggleFavoriteTrip(trip));
-      },
+      onToggleFavoriteTrip: _toggleFavoriteTrip,
       onRateMemory: _rateTripMemory,
     );
   }
@@ -1299,6 +1320,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
               onOpenTrip: _openTrip,
               onStartTrip: _startTrip,
               onDeleteTrip: _deleteTrip,
+              favoriteTripIds: _user.favoriteTripIds,
+              onToggleFavoriteTrip: _toggleFavoriteTrip,
             ),
             performance,
           ),
@@ -1418,6 +1441,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
           onOpenTrip: _openTrip,
           onStartTrip: _startTrip,
           onDeleteTrip: _deleteTrip,
+          favoriteTripIds: _user.favoriteTripIds,
+          onToggleFavoriteTrip: _toggleFavoriteTrip,
         );
       case _Screen.chatList:
         return ChatListScreen(
@@ -1864,7 +1889,7 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
                       Align(
                         alignment: Alignment.centerRight,
                         child: IconButton(
-                          tooltip: 'Close tutorial',
+                          tooltip: appText(context, 'Close tutorial'),
                           onPressed: widget.onClose,
                           icon: const Icon(Icons.close_rounded),
                         ),
@@ -1890,7 +1915,7 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
                                   IconBadge(icon: step.$1, size: 72),
                                   const SizedBox(height: 24),
                                   Text(
-                                    step.$2,
+                                    appText(context, step.$2),
                                     textAlign: TextAlign.center,
                                     style: Theme.of(context)
                                         .textTheme
@@ -1899,7 +1924,7 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
                                   ),
                                   const SizedBox(height: 12),
                                   Text(
-                                    step.$3,
+                                    appText(context, step.$3),
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       color: Theme.of(
@@ -1918,7 +1943,10 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
                       Row(
                         children: [
                           Text(
-                            '${_page + 1} of ${_steps.length}',
+                            appText(
+                              context,
+                              '${_page + 1} of ${_steps.length}',
+                            ),
                             style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                           const Spacer(),
@@ -1935,9 +1963,12 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
                               );
                             },
                             child: Text(
-                              _page == _steps.length - 1
-                                  ? 'Start exploring'
-                                  : 'Next',
+                              appText(
+                                context,
+                                _page == _steps.length - 1
+                                    ? 'Start exploring'
+                                    : 'Next',
+                              ),
                             ),
                           ),
                         ],

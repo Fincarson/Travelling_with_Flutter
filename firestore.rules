@@ -245,7 +245,6 @@ service cloud.firestore {
         request.resource.data.type in [
           'text',
           'attachment',
-          'system',
           'ai',
           'trip_update',
           'poll',

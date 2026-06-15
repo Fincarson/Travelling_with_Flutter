@@ -35,7 +35,7 @@ class TripsScreen extends StatefulWidget {
   final ValueChanged<Trip> onStartTrip;
   final ValueChanged<Trip> onDeleteTrip;
   final List<String> favoriteTripIds;
-  final ValueChanged<Trip>? onToggleFavoriteTrip;
+  final Future<void> Function(Trip)? onToggleFavoriteTrip;
   final Future<void> Function(TripMemory memory, int rating, String feedback)?
   onRateMemory;
 
@@ -50,6 +50,7 @@ class _TripsScreenState extends State<TripsScreen> {
   int? _travelerFilter;
   bool _filtersExpanded = false;
   int _columns = 1;
+  final Map<String, bool> _pendingFavoriteTripStates = {};
 
   @override
   void initState() {
@@ -136,6 +137,14 @@ class _TripsScreenState extends State<TripsScreen> {
       widget.memories.length;
 
   @override
+  void didUpdateWidget(covariant TripsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _pendingFavoriteTripStates.removeWhere((id, desiredState) {
+      return widget.favoriteTripIds.contains(id) == desiredState;
+    });
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
@@ -171,6 +180,31 @@ class _TripsScreenState extends State<TripsScreen> {
     });
   }
 
+  bool _isFavoriteTrip(Trip trip) {
+    return _pendingFavoriteTripStates[trip.id] ??
+        widget.favoriteTripIds.contains(trip.id);
+  }
+
+  Future<void> _toggleFavoriteTrip(Trip trip) async {
+    final callback = widget.onToggleFavoriteTrip;
+    if (callback == null) return;
+    final desiredState = !_isFavoriteTrip(trip);
+    setState(() => _pendingFavoriteTripStates[trip.id] = desiredState);
+    try {
+      await callback(trip);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _pendingFavoriteTripStates.remove(trip.id));
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(appText(context, 'Could not update favorite.')),
+          ),
+        );
+    }
+  }
+
   Future<bool> _confirmDelete(Trip trip) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -179,9 +213,12 @@ class _TripsScreenState extends State<TripsScreen> {
           Icons.delete_outline_rounded,
           color: Color(0xFFC64D57),
         ),
-        title: Text('Delete ${trip.destination}?'),
-        content: const Text(
-          'This trip will be queued for deletion. You can still undo it from the confirmation message.',
+        title: Text('${appText(context, 'Delete')} ${trip.destination}?'),
+        content: Text(
+          appText(
+            context,
+            'This trip will be queued for deletion. You can still undo it from the confirmation message.',
+          ),
         ),
         actions: [
           TextButton(
@@ -275,7 +312,8 @@ class _TripsScreenState extends State<TripsScreen> {
                         ),
                         builder: (context, constraints) {
                           const spacing = 16.0;
-                          final cellWidth = _columns == 2
+                          final effectiveColumns = _columns == 2 ? 2 : 1;
+                          final cellWidth = effectiveColumns == 2
                               ? (constraints.maxWidth - spacing) / 2
                               : constraints.maxWidth;
                           return Wrap(
@@ -292,19 +330,19 @@ class _TripsScreenState extends State<TripsScreen> {
                                               _confirmDelete(trip),
                                           child: TripListCard(
                                             trip: trip,
-                                            onTap: () => widget.onOpenTrip(trip),
+                                            onTap: () =>
+                                                widget.onOpenTrip(trip),
                                             onStart: () =>
                                                 widget.onStartTrip(trip),
-                                            favorite: widget.favoriteTripIds
-                                                .contains(trip.id),
+                                            favorite: _isFavoriteTrip(trip),
                                             onToggleFavorite:
                                                 widget.onToggleFavoriteTrip ==
-                                                    null
+                                                        null ||
+                                                    effectiveColumns == 2
                                                 ? null
-                                                : () => widget
-                                                      .onToggleFavoriteTrip!(
-                                                        trip,
-                                                      ),
+                                                : () => unawaited(
+                                                    _toggleFavoriteTrip(trip),
+                                                  ),
                                           ),
                                         )
                                       : TripListCard(
@@ -314,15 +352,15 @@ class _TripsScreenState extends State<TripsScreen> {
                                               ? () => widget.onStartTrip(trip)
                                               : null,
                                           canDelete: false,
-                                          favorite: widget.favoriteTripIds
-                                              .contains(trip.id),
+                                          favorite: _isFavoriteTrip(trip),
                                           onToggleFavorite:
-                                              widget.onToggleFavoriteTrip == null
+                                              widget.onToggleFavoriteTrip ==
+                                                      null ||
+                                                  effectiveColumns == 2
                                               ? null
-                                              : () =>
-                                                    widget.onToggleFavoriteTrip!(
-                                                      trip,
-                                                    ),
+                                              : () => unawaited(
+                                                  _toggleFavoriteTrip(trip),
+                                                ),
                                         ),
                                 ),
                               if (memories.isNotEmpty) ...[
@@ -375,13 +413,18 @@ class _TripsScreenState extends State<TripsScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: Text('Rate ${memory.destination}'),
+          title: Text('${appText(context, 'Rate')} ${memory.destination}'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('How well did this trip match your preferences?'),
+                Text(
+                  appText(
+                    context,
+                    'How well did this trip match your preferences?',
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -403,9 +446,12 @@ class _TripsScreenState extends State<TripsScreen> {
                   controller: feedback,
                   maxLines: 3,
                   maxLength: 400,
-                  decoration: const InputDecoration(
-                    labelText: 'Optional feedback',
-                    hintText: 'What should future recommendations change?',
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Optional feedback'),
+                    hintText: appText(
+                      context,
+                      'What should future recommendations change?',
+                    ),
                   ),
                 ),
               ],
@@ -414,12 +460,12 @@ class _TripsScreenState extends State<TripsScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+              child: Text(appText(context, 'Cancel')),
             ),
             FilledButton(
               onPressed: () =>
                   Navigator.of(context).pop((rating, feedback.text)),
-              child: const Text('Save rating'),
+              child: Text(appText(context, 'Save rating')),
             ),
           ],
         ),
@@ -670,9 +716,9 @@ class _TripFilters extends StatelessWidget {
                   key: const ValueKey('trip-search-field'),
                   controller: searchController,
                   onChanged: onSearchChanged,
-                  decoration: const InputDecoration(
-                    labelText: 'Search trips',
-                    prefixIcon: Icon(Icons.search_rounded),
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Search trips'),
+                    prefixIcon: const Icon(Icons.search_rounded),
                     isDense: true,
                   ),
                 );
@@ -680,16 +726,16 @@ class _TripFilters extends StatelessWidget {
                   key: const ValueKey('trip-sort-dropdown'),
                   initialValue: selectedSort,
                   isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Sort by',
-                    prefixIcon: Icon(Icons.sort_rounded),
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Sort by'),
+                    prefixIcon: const Icon(Icons.sort_rounded),
                     isDense: true,
                   ),
                   items: [
                     for (final option in _TripSort.values)
                       DropdownMenuItem(
                         value: option,
-                        child: Text(option.label),
+                        child: Text(appText(context, option.label)),
                       ),
                   ],
                   onChanged: (value) {
@@ -713,7 +759,7 @@ class _TripFilters extends StatelessWidget {
             if (travelerCounts.isNotEmpty) ...[
               const SizedBox(height: 14),
               Text(
-                'TRAVELERS',
+                appText(context, 'TRAVELERS'),
                 style: TextStyle(
                   color: scheme.onSurfaceVariant,
                   fontSize: 10,
@@ -727,7 +773,7 @@ class _TripFilters extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   ChoiceChip(
-                    label: const Text('All'),
+                    label: Text(appText(context, 'All')),
                     selected: selectedTravelerCount == null,
                     onSelected: (_) => onTravelerCountSelected(null),
                   ),
@@ -747,7 +793,7 @@ class _TripFilters extends StatelessWidget {
                 child: TextButton.icon(
                   onPressed: onClear,
                   icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                  label: const Text('Clear filters'),
+                  label: Text(appText(context, 'Clear filters')),
                 ),
               ),
             ],
@@ -874,11 +920,14 @@ class _TripsEmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           Text(
-            hasFilters
-                ? 'No matching trips'
-                : tab == _TripsTab.upcoming
-                ? appText(context, 'No trips yet')
-                : 'No past trips yet',
+            appText(
+              context,
+              hasFilters
+                  ? 'No matching trips'
+                  : tab == _TripsTab.upcoming
+                  ? 'No trips yet'
+                  : 'No past trips yet',
+            ),
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               color: Theme.of(context).colorScheme.onSurface,
               fontWeight: FontWeight.w900,
@@ -886,11 +935,14 @@ class _TripsEmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            hasFilters
-                ? 'Try clearing a filter or searching for another destination.'
-                : tab == _TripsTab.upcoming
-                ? appText(context, 'Create a trip to see it here.')
-                : 'Completed trips and travel memories will appear here.',
+            appText(
+              context,
+              hasFilters
+                  ? 'Try clearing a filter or searching for another destination.'
+                  : tab == _TripsTab.upcoming
+                  ? 'Create a trip to see it here.'
+                  : 'Completed trips and travel memories will appear here.',
+            ),
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w700,
@@ -902,7 +954,7 @@ class _TripsEmptyState extends StatelessWidget {
             OutlinedButton.icon(
               onPressed: onClearFilters,
               icon: const Icon(Icons.restart_alt_rounded),
-              label: const Text('Clear filters'),
+              label: Text(appText(context, 'Clear filters')),
             )
           else if (tab == _TripsTab.upcoming)
             PrimaryButton(

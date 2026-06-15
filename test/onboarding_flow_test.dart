@@ -225,6 +225,17 @@ void main() {
     expect(restored.favoriteTripIds, ['trip-kyoto']);
     expect(restored.favoritePlaces.single.name, 'Kyoto');
   });
+
+  test('legacy profiles without tutorial flag do not reopen tutorial', () {
+    final restored = UserProfile.fromMap(const {
+      'name': 'Nicolas',
+      'email': 'nicolas@example.com',
+      'settings': {'onboardingCompleted': true},
+    });
+
+    expect(restored.onboardingCompleted, isTrue);
+    expect(restored.tutorialCompleted, isTrue);
+  });
 }
 
 class _FakeAccountAuthService implements AccountAuthService {

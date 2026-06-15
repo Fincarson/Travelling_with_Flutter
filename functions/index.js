@@ -74,6 +74,57 @@ function safeShortStrings(value, {limit = 20, maxLength = 120} = {}) {
       .filter((item) => item.length > 0 && item.length <= maxLength);
 }
 
+function favoritePlaceId(value) {
+  return String(value ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, "-")
+      .replace(/^-+|-+$/g, "");
+}
+
+function cleanFavoritePlaces(value) {
+  if (!Array.isArray(value) || value.length > 50) {
+    throw new HttpsError(
+        "invalid-argument",
+        "Favorite places must be a list of 50 places or fewer.",
+    );
+  }
+  return value.map((place) => {
+    const raw = place && typeof place === "object" ? place : {};
+    const name = String(raw.name ?? "").trim();
+    const id = String(raw.id ?? favoritePlaceId(name)).trim();
+    if (!id || id.length > 128 || !name || name.length > 160) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Favorite places must include a valid id and name.",
+      );
+    }
+    return {
+      id,
+      name,
+      description: String(raw.description ?? "").trim().slice(0, 500),
+      imageUrl: String(raw.imageUrl ?? "").trim().slice(0, 1000),
+      tags: safeShortStrings(raw.tags, {limit: 12, maxLength: 40}),
+    };
+  });
+}
+
+function cleanFavoriteTripIds(value) {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new HttpsError(
+        "invalid-argument",
+        "Favorite trips must be a list of 100 trips or fewer.",
+    );
+  }
+  return [...new Set(
+      value
+          .map((item) => String(item ?? "").trim())
+          .filter((item) =>
+            item.length > 0 && item.length <= 128 && !item.includes("/"),
+          ),
+  )].sort();
+}
+
 async function requireTripEditor(request, tripId) {
   const uid = requireAuthenticatedUid(
       request,
@@ -1758,6 +1809,33 @@ exports.recommendDestinations = onCall(
       logContext: "OpenAI destination recommendations failed",
       publicMessage: "AI recommendations are unavailable.",
     });
+  },
+);
+
+exports.saveUserFavorites = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const uid = requireAuthenticatedUid(
+        request,
+        "Sign in to update favorites.",
+    );
+    const favoritePlaces = cleanFavoritePlaces(request.data?.favoritePlaces);
+    const favoriteTripIds = cleanFavoriteTripIds(
+        request.data?.favoriteTripIds,
+    );
+
+    await admin.firestore().collection("travel_users").doc(uid).set({
+      favoritePlaces,
+      favoriteTripIds,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, {merge: true});
+
+    return {
+      favoritePlaceCount: favoritePlaces.length,
+      favoriteTripCount: favoriteTripIds.length,
+    };
   },
 );
 

@@ -614,6 +614,7 @@ class AccountAuthService {
       'settings': {
         'onboardingRequired': !completedOnboarding,
         'onboardingCompleted': completedOnboarding,
+        'tutorialCompleted': false,
       },
       'updatedAt': FieldValue.serverTimestamp(),
     };

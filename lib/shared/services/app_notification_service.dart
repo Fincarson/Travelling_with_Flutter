@@ -136,11 +136,17 @@ class AppNotificationService {
 
   bool _isCurrentChatNotification(Map<String, dynamic> data) {
     final type = data['type']?.toString();
-    if (type != 'group_chat' && type != 'group_member_joined') return false;
+    if (type != 'group_chat' &&
+        type != 'group_member_joined' &&
+        type != 'group_member_left' &&
+        type != 'group_member_removed') {
+      return false;
+    }
     final chatId = data['chatId']?.toString();
     return chatId != null &&
         chatId.isNotEmpty &&
         chatId == _activeChatId?.call();
+
   }
 
   Future<void> _openRemoteMessage(RemoteMessage message) {
