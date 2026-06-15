@@ -1,253 +1,308 @@
-import 'package:flutter/material.dart';
+part of travel_agent_app;
 
-import '../../../../core/constants/app_routes.dart';
-import '../../../../core/localization/app_localizations_extension.dart';
-import '../../../../shared/widgets/app_button.dart';
-import '../../../../shared/widgets/refreshable_page.dart';
-import '../../../auth/domain/entities/user_profile.dart';
-import '../../data/repositories/profile_repository.dart';
-import '../widgets/profile_edit_section.dart';
-import '../widgets/profile_view_section.dart';
+class ProfileScreen extends StatelessWidget {
+  const ProfileScreen({
+    required this.account,
+    required this.user,
+    this.trips = const [],
+    this.memories = const [],
+    this.onOpenTrip,
+    this.onToggleFavoriteTrip,
+    super.key,
+  });
 
-enum ProfileMode {
-  viewing,
-  editing,
-}
-
-class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
-
-  @override
-  State<ProfilePage> createState() => _ProfilePageState();
-}
-
-class _ProfilePageState extends State<ProfilePage> {
-  final _repository = ProfileRepository();
-  final _displayNameController = TextEditingController();
-  final _bioController = TextEditingController();
-
-  ProfileMode _mode = ProfileMode.viewing;
-  UserProfile _profile = const UserProfile(displayName: 'User123', bio: '');
-  bool _isLoading = true;
-  bool _isSyncingControllers = false;
-
-  bool get _isEditing => _mode == ProfileMode.editing;
-
-  bool get _hasChanges {
-    return _displayNameController.text.trim() != _profile.displayName ||
-        _bioController.text.trim() != _profile.bio;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _loadProfile();
-    _displayNameController.addListener(_handleProfileDraftChanged);
-    _bioController.addListener(_handleProfileDraftChanged);
-  }
-
-  @override
-  void dispose() {
-    _displayNameController.dispose();
-    _bioController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadProfile() async {
-    final profile = await _repository.loadCurrentProfile();
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _profile = profile;
-      _isLoading = false;
-      _syncControllersWithProfile();
-    });
-  }
-
-  Future<void> _refreshProfile() async {
-    final profile = await _repository.loadCurrentProfile();
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _profile = profile;
-      _mode = ProfileMode.viewing;
-      _syncControllersWithProfile();
-    });
-  }
-
-  void _syncControllersWithProfile() {
-    _isSyncingControllers = true;
-    _displayNameController.text = _profile.displayName;
-    _bioController.text = _profile.bio;
-    _isSyncingControllers = false;
-  }
-
-  void _handleProfileDraftChanged() {
-    if (_isEditing && !_isSyncingControllers) {
-      setState(() {});
-    }
-  }
-
-  void _startEditing() {
-    setState(() {
-      _syncControllersWithProfile();
-      _mode = ProfileMode.editing;
-    });
-  }
-
-  Future<void> _handleBackFromEdit() async {
-    if (!_hasChanges) {
-      _discardChanges();
-      return;
-    }
-
-    final shouldSave = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        final l10n = context.l10n;
-
-        return AlertDialog(
-          title: Text(l10n.saveChangesQuestion),
-          content: Text(l10n.saveProfileChangesMessage),
-          actions: [
-            Row(
-              children: [
-                Expanded(
-                  child: AppButton(
-                    text: l10n.yes,
-                    onPressed: () => Navigator.of(context).pop(true),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: AppButton.outlined(
-                    text: l10n.no,
-                    onPressed: () => Navigator.of(context).pop(false),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        );
-      },
-    );
-
-    if (shouldSave == true) {
-      _saveChanges();
-    } else if (shouldSave == false) {
-      _discardChanges();
-    }
-  }
-
-  void _discardChanges() {
-    setState(() {
-      _mode = ProfileMode.viewing;
-      _syncControllersWithProfile();
-    });
-  }
-
-  void _saveChanges() {
-    setState(() {
-      _profile = _profile.copyWith(
-        displayName: _displayNameController.text.trim().isEmpty
-            ? 'User123'
-            : _displayNameController.text.trim(),
-        bio: _bioController.text.trim(),
-      );
-      _mode = ProfileMode.viewing;
-      _syncControllersWithProfile();
-    });
-  }
-
-  void _showProfilePhoto() {
-    final photoUrl = _profile.photoUrl;
-    if (photoUrl == null) {
-      return;
-    }
-
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.78),
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.all(32),
-          child: GestureDetector(
-            onTap: () => Navigator.of(context).pop(),
-            child: CircleAvatar(
-              radius: 132,
-              backgroundImage: NetworkImage(photoUrl),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _openSettings() {
-    Navigator.of(context).pushNamed(AppRoutes.settings);
-  }
+  final AuthenticatedAccount account;
+  final UserProfile user;
+  final List<Trip> trips;
+  final List<TripMemory> memories;
+  final ValueChanged<Trip>? onOpenTrip;
+  final ValueChanged<Trip>? onToggleFavoriteTrip;
 
   @override
   Widget build(BuildContext context) {
-    final l10n = context.l10n;
+    final photoUrl = user.photoUrl?.trim().isNotEmpty == true
+        ? user.photoUrl
+        : account.photoUrl;
+    final displayName = user.name.trim().isNotEmpty ? user.name : account.name;
+    final favoriteTrips = trips
+        .where((trip) => user.favoriteTripIds.contains(trip.id))
+        .toList();
+    final favoriteMemories = memories
+        .where((memory) => user.favoriteTripIds.contains(memory.id))
+        .toList();
 
-    return RefreshablePage(
-      onRefresh: _refreshProfile,
-      child: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    if (_isEditing)
-                      IconButton(
-                        tooltip: l10n.back,
-                        onPressed: _handleBackFromEdit,
-                        icon: const Icon(Icons.arrow_back),
+    return ScreenScaffold(
+      bottomPadding: 92,
+      child: ListView(
+        padding: _responsivePagePadding(context, top: 22, bottom: 112),
+        children: [
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final avatar = CircleAvatar(
+                radius: 46,
+                backgroundColor: _accent.withValues(alpha: .35),
+                backgroundImage: photoUrl == null
+                    ? null
+                    : NetworkImage(photoUrl),
+                child: photoUrl == null
+                    ? const Icon(
+                        Icons.person_rounded,
+                        size: 50,
+                        color: _primary,
                       )
-                    else
-                      const Spacer(),
-                    if (!_isEditing)
-                      IconButton(
-                        tooltip: l10n.settings,
-                        onPressed: _openSettings,
-                        icon: const Icon(Icons.settings_outlined),
-                      ),
-                  ],
+                    : null,
+              );
+              final details = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    displayName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    account.contactLabel,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _secondary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              );
+
+              if (constraints.maxWidth < 330) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [avatar, const SizedBox(height: 16), details],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  avatar,
+                  const SizedBox(width: 18),
+                  Expanded(child: details),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 28),
+          GlassPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, 'Travel interests'),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
                 const SizedBox(height: 8),
-                if (_isEditing)
-                  ProfileEditSection(
-                    profile: _profile,
-                    displayNameController: _displayNameController,
-                    bioController: _bioController,
-                    onPhotoPressed: _showProfilePhoto,
+                if (user.interests.isEmpty)
+                  Text(
+                    appText(context, 'No interests added yet.'),
+                    style: const TextStyle(
+                      color: _secondary,
+                      fontWeight: FontWeight.w700,
+                    ),
                   )
                 else
-                  ProfileViewSection(
-                    profile: _profile,
-                    onPhotoPressed: _showProfilePhoto,
-                  ),
-                const SizedBox(height: 28),
-                if (_isEditing)
-                  AppButton(
-                    text: l10n.confirm,
-                    onPressed: _hasChanges ? _saveChanges : null,
-                  )
-                else
-                  AppButton.outlined(
-                    text: l10n.editProfile,
-                    onPressed: _startEditing,
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final interest in user.interests)
+                        Chip(
+                          label: Text(appText(context, interest)),
+                          avatar: const Icon(Icons.explore_rounded, size: 18),
+                        ),
+                    ],
                   ),
               ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          _ProfileCollection(
+            title: 'Favorite places',
+            icon: Icons.favorite_rounded,
+            emptyMessage: 'Places you like will appear here.',
+            children: [
+              for (final place in user.favoritePlaces)
+                _FavoritePlaceTile(place: place),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _ProfileCollection(
+            title: 'Favorite trips',
+            icon: Icons.luggage_rounded,
+            emptyMessage: 'Favorite an upcoming or past trip to keep it here.',
+            children: [
+              for (final trip in favoriteTrips)
+                _FavoriteTripTile(
+                  title: trip.destination,
+                  subtitle: '${trip.startDate} to ${trip.endDate}',
+                  imageUrl: trip.images.isEmpty
+                      ? destinations.first.image
+                      : trip.images.first,
+                  onTap: onOpenTrip == null ? null : () => onOpenTrip!(trip),
+                  onRemove: onToggleFavoriteTrip == null
+                      ? null
+                      : () => onToggleFavoriteTrip!(trip),
+                ),
+              for (final memory in favoriteMemories)
+                _FavoriteTripTile(
+                  title: memory.title,
+                  subtitle: memory.rating == null
+                      ? 'Past trip'
+                      : 'Past trip · ${memory.rating}/5 stars',
+                  imageUrl: memory.imageUrls.isEmpty
+                      ? destinations.first.image
+                      : memory.imageUrls.first,
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileCollection extends StatelessWidget {
+  const _ProfileCollection({
+    required this.title,
+    required this.icon,
+    required this.emptyMessage,
+    required this.children,
+  });
+
+  final String title;
+  final IconData icon;
+  final String emptyMessage;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: _primary),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (children.isEmpty)
+            Text(
+              emptyMessage,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+              ),
+            )
+          else
+            ...children,
+        ],
+      ),
+    );
+  }
+}
+
+class _FavoritePlaceTile extends StatelessWidget {
+  const _FavoritePlaceTile({required this.place});
+
+  final FavoritePlace place;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          place.imageUrl,
+          width: 52,
+          height: 52,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => const ColoredBox(
+            color: Color(0xFFE6F1F8),
+            child: SizedBox(
+              width: 52,
+              height: 52,
+              child: Icon(Icons.place_rounded, color: _primary),
+            ),
+          ),
+        ),
+      ),
+      title: Text(place.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        place.tags.take(2).join(' · '),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+}
+
+class _FavoriteTripTile extends StatelessWidget {
+  const _FavoriteTripTile({
+    required this.title,
+    required this.subtitle,
+    required this.imageUrl,
+    this.onTap,
+    this.onRemove,
+  });
+
+  final String title;
+  final String subtitle;
+  final String imageUrl;
+  final VoidCallback? onTap;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      onTap: onTap,
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          imageUrl,
+          width: 52,
+          height: 52,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => const ColoredBox(
+            color: Color(0xFFE6F1F8),
+            child: SizedBox(
+              width: 52,
+              height: 52,
+              child: Icon(Icons.luggage_rounded, color: _primary),
+            ),
+          ),
+        ),
+      ),
+      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: onRemove == null
+          ? null
+          : IconButton(
+              tooltip: 'Remove from favorites',
+              onPressed: onRemove,
+              icon: const Icon(Icons.favorite_rounded, color: _primary),
             ),
     );
   }

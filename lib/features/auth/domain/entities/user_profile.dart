@@ -9,11 +9,7 @@ class UserProfile {
   final String bio;
   final String? photoUrl;
 
-  UserProfile copyWith({
-    String? displayName,
-    String? bio,
-    String? photoUrl,
-  }) {
+  UserProfile copyWith({String? displayName, String? bio, String? photoUrl}) {
     return UserProfile(
       displayName: displayName ?? this.displayName,
       bio: bio ?? this.bio,

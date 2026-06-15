@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/localization/app_text.dart';
+import '../../../../shared/widgets/responsive_page.dart';
 import '../../domain/usecases/login_user.dart';
 
 class LoginPage extends StatefulWidget {
@@ -37,28 +39,35 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Login')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-              controller: emailController,
-              decoration: const InputDecoration(labelText: 'Email'),
-            ),
-            TextField(
-              controller: passwordController,
-              decoration: const InputDecoration(labelText: 'Password'),
-              obscureText: true,
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: login,
-              child: const Text('Login'),
-            ),
-            const SizedBox(height: 16),
-            Text(result),
-          ],
+      appBar: AppBar(title: Text(appText(context, 'Login'))),
+      body: ResponsivePage(
+        maxContentWidth: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: emailController,
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Email'),
+                ),
+              ),
+              TextField(
+                controller: passwordController,
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Password'),
+                ),
+                obscureText: true,
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: login,
+                child: Text(appText(context, 'Login')),
+              ),
+              const SizedBox(height: 16),
+              Text(result),
+            ],
+          ),
         ),
       ),
     );

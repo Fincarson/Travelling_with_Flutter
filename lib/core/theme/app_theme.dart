@@ -9,6 +9,146 @@ class AppColors {
   static const Color signalCyan = Color(0xff62f4ff);
 }
 
+class TravelAgentColors {
+  static const Color primary = Color(0xFF355872);
+  static const Color secondary = Color(0xFF7AAACE);
+  static const Color accent = Color(0xFF9CD5FF);
+  static const Color background = Color(0xFFF7F8F0);
+}
+
+class AppFontSource {
+  static const String assetDirectory = 'assets/fonts/';
+
+  // Keep null to use Flutter's default platform font. Add a font family in
+  // pubspec.yaml and set this value when a custom asset font is available.
+  static const String? family = null;
+}
+
+class TravelAgentTheme {
+  static ThemeData light() {
+    final colorScheme =
+        ColorScheme.fromSeed(
+          seedColor: TravelAgentColors.primary,
+          brightness: Brightness.light,
+          primary: TravelAgentColors.primary,
+          secondary: TravelAgentColors.secondary,
+          surface: Colors.white,
+        ).copyWith(
+          surfaceContainerLowest: Colors.white,
+          surfaceContainerLow: const Color(0xFFFCFDF8),
+          surfaceContainer: const Color(0xFFF5F7F2),
+          surfaceContainerHigh: const Color(0xFFEDF2F3),
+          surfaceContainerHighest: const Color(0xFFE3EBEE),
+          outlineVariant: const Color(0xFFD9E2E5),
+        );
+    return _build(
+      colorScheme: colorScheme,
+      scaffoldBackground: TravelAgentColors.background,
+    );
+  }
+
+  static ThemeData dark() {
+    final colorScheme =
+        ColorScheme.fromSeed(
+          seedColor: TravelAgentColors.accent,
+          brightness: Brightness.dark,
+        ).copyWith(
+          primary: const Color(0xFF9CD5FF),
+          onPrimary: const Color(0xFF082A3A),
+          primaryContainer: const Color(0xFF244A61),
+          onPrimaryContainer: const Color(0xFFD8EEFF),
+          secondary: const Color(0xFF9DC8E8),
+          onSecondary: const Color(0xFF102C3B),
+          surface: const Color(0xFF101A20),
+          onSurface: const Color(0xFFEAF2F6),
+          onSurfaceVariant: const Color(0xFFB8C8D0),
+          surfaceContainerLowest: const Color(0xFF0B1419),
+          surfaceContainerLow: const Color(0xFF18242B),
+          surfaceContainer: const Color(0xFF1D2B33),
+          surfaceContainerHigh: const Color(0xFF263740),
+          surfaceContainerHighest: const Color(0xFF30434D),
+          outline: const Color(0xFF82949D),
+          outlineVariant: const Color(0xFF3C505A),
+        );
+    return _build(
+      colorScheme: colorScheme,
+      scaffoldBackground: const Color(0xFF101A20),
+    );
+  }
+
+  static ThemeData _build({
+    required ColorScheme colorScheme,
+    required Color scaffoldBackground,
+  }) {
+    final base = ThemeData(
+      useMaterial3: true,
+      brightness: colorScheme.brightness,
+      colorScheme: colorScheme,
+      scaffoldBackgroundColor: scaffoldBackground,
+      canvasColor: colorScheme.surface,
+      fontFamily: AppFontSource.family,
+    );
+    final fieldBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(20),
+      borderSide: BorderSide(color: colorScheme.outlineVariant),
+    );
+
+    return base.copyWith(
+      textTheme: base.textTheme.apply(
+        bodyColor: colorScheme.onSurface,
+        displayColor: colorScheme.onSurface,
+      ),
+      iconTheme: IconThemeData(color: colorScheme.onSurface),
+      appBarTheme: AppBarTheme(
+        elevation: 0,
+        backgroundColor: scaffoldBackground,
+        foregroundColor: colorScheme.onSurface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: colorScheme.surface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: colorScheme.surfaceContainerLow,
+        surfaceTintColor: Colors.transparent,
+      ),
+      cardTheme: CardThemeData(
+        color: colorScheme.surfaceContainerLow,
+        surfaceTintColor: Colors.transparent,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: colorScheme.surfaceContainerLow,
+        labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+        hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+        prefixIconColor: colorScheme.onSurfaceVariant,
+        suffixIconColor: colorScheme.onSurfaceVariant,
+        border: fieldBorder,
+        enabledBorder: fieldBorder,
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: BorderSide(color: colorScheme.primary, width: 2),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: colorScheme.onSurface,
+          side: BorderSide(color: colorScheme.outline),
+          minimumSize: const Size.fromHeight(50),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+        ),
+      ),
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: colorScheme.inverseSurface,
+        contentTextStyle: TextStyle(color: colorScheme.onInverseSurface),
+      ),
+    );
+  }
+}
+
 class MaterialTheme {
   const MaterialTheme(this.textTheme);
 
@@ -85,6 +225,7 @@ class MaterialTheme {
       colorScheme: colorScheme,
       scaffoldBackgroundColor: colorScheme.surface,
       canvasColor: colorScheme.surface,
+      fontFamily: AppFontSource.family,
       textTheme: textTheme.apply(
         bodyColor: colorScheme.onSurface,
         displayColor: colorScheme.onSurface,
@@ -127,9 +268,7 @@ class MaterialTheme {
           backgroundColor: colorScheme.primary,
           foregroundColor: colorScheme.onPrimary,
           minimumSize: const Size.fromHeight(48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
@@ -137,23 +276,16 @@ class MaterialTheme {
           backgroundColor: colorScheme.primary,
           foregroundColor: colorScheme.onPrimary,
           minimumSize: const Size.fromHeight(48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: colorScheme.surfaceContainerLow,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(
-            color: colorScheme.primary,
-            width: 2,
-          ),
+          borderSide: BorderSide(color: colorScheme.primary, width: 2),
         ),
       ),
       cardTheme: CardThemeData(

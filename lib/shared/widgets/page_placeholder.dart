@@ -3,10 +3,7 @@ import 'package:flutter/material.dart';
 import 'responsive_page.dart';
 
 class PagePlaceholder extends StatelessWidget {
-  const PagePlaceholder({
-    required this.title,
-    super.key,
-  });
+  const PagePlaceholder({required this.title, super.key});
 
   final String title;
 

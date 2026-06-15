@@ -1,49 +1,81 @@
-import 'package:flutter/material.dart';
+part of travel_agent_app;
 
-import '../../core/localization/app_localizations_extension.dart';
-import 'app_navigation_destination.dart';
-
-class AppNavigationShell extends StatefulWidget {
-  const AppNavigationShell({super.key});
-
-  @override
-  State<AppNavigationShell> createState() => _AppNavigationShellState();
-}
-
-class _AppNavigationShellState extends State<AppNavigationShell> {
-  int _selectedIndex = 0;
+class _BottomNav extends StatelessWidget {
+  const _BottomNav({required this.tab, required this.onSelect});
+  final _NavTab tab;
+  final ValueChanged<_NavTab> onSelect;
 
   @override
   Widget build(BuildContext context) {
-    const destinations = AppNavigationDestinations.items;
-    final l10n = context.l10n;
-
-    return Scaffold(
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: [
-          for (final destination in destinations) destination.page,
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() => _selectedIndex = index);
-        },
-        destinations: [
-          for (final destination in destinations)
-            NavigationDestination(
-              icon: Icon(destination.icon),
-              selectedIcon: Icon(destination.selectedIcon),
-              label: switch (destination.label) {
-                AppNavigationLabel.home => l10n.home,
-                AppNavigationLabel.search => l10n.search,
-                AppNavigationLabel.itinerary => l10n.itinerary,
-                AppNavigationLabel.chat => l10n.chat,
-                AppNavigationLabel.profile => l10n.profile,
-              },
+    final colorScheme = Theme.of(context).colorScheme;
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: Container(
+        height: 88,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerLow,
+          border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            Expanded(
+              child: NavItem(
+                icon: Icons.home_rounded,
+                label: 'Home',
+                active: tab == _NavTab.home,
+                onTap: () => onSelect(_NavTab.home),
+              ),
             ),
-        ],
+            Expanded(
+              child: NavItem(
+                icon: Icons.work_rounded,
+                label: 'Trips',
+                active: tab == _NavTab.trips,
+                onTap: () => onSelect(_NavTab.trips),
+              ),
+            ),
+            Expanded(
+              child: Center(
+                child: Transform.translate(
+                  offset: const Offset(0, -18),
+                  child: FloatingActionButton(
+                    heroTag: 'add-trip',
+                    backgroundColor: colorScheme.primary,
+                    foregroundColor: colorScheme.onPrimary,
+                    shape: CircleBorder(
+                      side: BorderSide(
+                        color: colorScheme.surfaceContainerLow,
+                        width: 4,
+                      ),
+                    ),
+                    onPressed: () => onSelect(_NavTab.add),
+                    child: const Icon(Icons.add_rounded, size: 34),
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: NavItem(
+                icon: Icons.chat_bubble_rounded,
+                label: 'Chat',
+                active: tab == _NavTab.chat,
+                onTap: () => onSelect(_NavTab.chat),
+              ),
+            ),
+            Expanded(
+              child: NavItem(
+                icon: Icons.person_rounded,
+                label: 'Profile',
+                active: tab == _NavTab.profile,
+                onTap: () => onSelect(_NavTab.profile),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
