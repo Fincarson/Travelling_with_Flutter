@@ -116,19 +116,19 @@ void main() {
     );
     expect(tester.takeException(), isNull);
 
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-    await tester.pumpWidget(page());
-    await tester.pump();
-    final templateOption = find.widgetWithText(
-      CreateOptionCard,
-      'Use a Template',
+    await tester.tap(find.byIcon(Icons.arrow_back_rounded).first);
+    await tester.pumpAndSettle();
+    final templateOption = find.byKey(
+      const ValueKey('create-trip-template-option'),
     );
     await tester.ensureVisible(templateOption);
     await tester.pump();
     tester.widget<CreateOptionCard>(templateOption).onTap();
     await tester.pumpAndSettle();
-    expect(find.text('Trip templates'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('create-trip-template-page')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

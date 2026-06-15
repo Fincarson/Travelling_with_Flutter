@@ -425,6 +425,17 @@ class _AnimatedGlobeState extends State<AnimatedGlobe> {
     final useEarthRenderer =
         kReleaseMode && kIsWasm && settings.heavyVisualEffects;
     final shouldAnimate = settings.animationsEnabled && useEarthRenderer;
+    if (!useEarthRenderer) {
+      return const SizedBox(
+        height: 260,
+        child: CustomPaint(
+          painter: _GlobePainter(.18),
+          child: Center(
+            child: Icon(Icons.public_rounded, size: 92, color: _primary),
+          ),
+        ),
+      );
+    }
     if (useEarthRenderer && _earthController == null) {
       _earthController = FlutterEarthGlobeController(
         surface: const AssetImage('assets/globe/earth_day.jpg'),

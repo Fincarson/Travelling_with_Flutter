@@ -153,7 +153,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   ];
 
   static const _currencyOptions = ['USD', 'TWD', 'IDR', 'JPY', 'EUR'];
-  static const _groupOptions = ['Solo', 'Couple', 'Friends', 'Family', 'Tour'];
+  static const _groupOptions = ['Friends', 'Family', 'Tour'];
   static const _twdToIdrFallbackRate = 562.0;
 
   static const _planningGoals = [
@@ -480,16 +480,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   void _syncBudgetTextState() {
-    if (!mounted) return;
     final hasText = _budget.text.trim().isNotEmpty;
     setState(() => _hasBudgetText = hasText);
-  }
-
-  void _openPlanningMode(int mode) {
-    setState(() {
-      _mode = mode;
-      _formError = null;
-    });
   }
 
   Future<void> _loadDeviceContext() async {
@@ -996,7 +988,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   void _startAiChat() {
-    _openPlanningMode(3);
+    setState(() {
+      _mode = 3;
+      _formError = null;
+    });
   }
 
   Future<void> _sendCreateTripChat([String? value]) async {
@@ -1005,10 +1000,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       final rangeText = await _pickCreateTripChatDateRange();
       if (rangeText == null) return;
       text = rangeText;
-    }
-    if (text == _customBudgetValue) {
-      await _editPendingDraft();
-      return;
     }
     if (text.isEmpty || _isThinking || _isGenerating) return;
 
@@ -2291,13 +2282,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                   labelText: appText(context, 'Who is coming'),
                                 ),
                                 items:
-                                    const [
-                                          'Solo',
-                                          'Couple',
-                                          'Family',
-                                          'Friends',
-                                          'Tour',
-                                        ]
+                                    const ['Solo', 'Family', 'Friends', 'Tour']
                                         .map(
                                           (item) => DropdownMenuItem(
                                             value: item,
@@ -2554,7 +2539,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             preferences: _aiGenerationPreferences,
             currency: _currency,
             airline: _airline.text.trim(),
-            flightCode: _flightCode.text.trim(),
             flightConfirmation: _flightConfirmation.text.trim(),
             profileLanguage: widget.profileLanguage,
             appContext: generationContext,
@@ -2794,7 +2778,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             preferences: _aiGenerationPreferences,
             currency: _currency,
             airline: _airline.text.trim(),
-            flightCode: _flightCode.text.trim(),
             flightConfirmation: _flightConfirmation.text.trim(),
             profileLanguage: widget.profileLanguage,
             appContext: generationContext,
@@ -4033,86 +4016,41 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
 
     if (_mode == 0) {
-      final performance = PerformanceScope.settingsOf(context);
       return ScreenScaffold(
         child: ListView(
-          key: const ValueKey('create-trip-landing-list'),
           padding: _responsivePagePadding(context, top: 18),
           children: [
             TopBar(title: 'How do you want to start?', onBack: widget.onBack),
             const SizedBox(height: 18),
-            GlassPanel(
-              padding: EdgeInsets.all(performance.heavyVisualEffects ? 22 : 16),
-              child: Column(
-                children: [
-                  const TravelGlobePreview(),
-                  const SizedBox(height: 8),
-                  Text(
-                    appText(context, 'Choose how to shape your next journey'),
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final twoColumns =
-                          performance.heavyVisualEffects &&
-                          constraints.maxWidth >= 620;
-                      final width = twoColumns
-                          ? (constraints.maxWidth - 12) / 2
-                          : constraints.maxWidth;
-                      return Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: [
-                          SizedBox(
-                            width: width,
-                            child: CreateOptionCard(
-                              icon: Icons.explore_rounded,
-                              title: 'AI Trip Builder',
-                              text:
-                                  'Set the essentials and generate a complete route.',
-                              onTap: () => _openPlanningMode(1),
-                            ),
-                          ),
-                          SizedBox(
-                            width: width,
-                            child: CreateOptionCard(
-                              icon: Icons.auto_awesome_rounded,
-                              title: 'AI Chat Planner',
-                              text:
-                                  'Describe the feeling of the trip in a conversation.',
-                              onTap: _startAiChat,
-                            ),
-                          ),
-                          SizedBox(
-                            width: width,
-                            child: CreateOptionCard(
-                              icon: Icons.edit_note_rounded,
-                              title: 'Create Manually',
-                              text:
-                                  'Build the dates, budget, people, and stops yourself.',
-                              onTap: () => _openPlanningMode(2),
-                            ),
-                          ),
-                          SizedBox(
-                            width: width,
-                            child: CreateOptionCard(
-                              icon: Icons.work_rounded,
-                              title: 'Use a Template',
-                              text:
-                                  'Start from a past trip or a recommended structure.',
-                              onTap: _openTemplatePicker,
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ],
-              ),
+            const AnimatedGlobe(),
+            const SizedBox(height: 22),
+            CreateOptionCard(
+              icon: Icons.explore_rounded,
+              title: 'AI Trip Builder',
+              text: 'Fill the essentials, then let AI create the route.',
+              onTap: () => setState(() => _mode = 1),
+            ),
+            const SizedBox(height: 12),
+            CreateOptionCard(
+              icon: Icons.auto_awesome_rounded,
+              title: 'AI Chat Planner',
+              text: 'Describe the trip in chat and let AI shape the draft.',
+              onTap: _startAiChat,
+            ),
+            const SizedBox(height: 12),
+            CreateOptionCard(
+              icon: Icons.edit_note_rounded,
+              title: 'Create Manually',
+              text: 'Enter destination, dates, budget, people, and tags.',
+              onTap: () => setState(() => _mode = 2),
+            ),
+            const SizedBox(height: 12),
+            CreateOptionCard(
+              key: const ValueKey('create-trip-template-option'),
+              icon: Icons.work_rounded,
+              title: 'Use Saved Trip Template',
+              text: 'Pick from past trips or UI-only online recommendations.',
+              onTap: _openTemplatePicker,
             ),
           ],
         ),
@@ -4123,7 +4061,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       final pastTemplates = _pastTripTemplates;
       return ScreenScaffold(
         child: ListView(
-          key: const ValueKey('create-trip-template-list'),
+          key: const ValueKey('create-trip-template-page'),
           padding: _responsivePagePadding(context, top: 18),
           children: [
             TopBar(
@@ -4177,7 +4115,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                 padding: _responsivePagePadding(context, top: 10, bottom: 18),
                 children: [
                   if (isChatFresh) ...[
-                    const TravelGlobePreview(),
+                    const AnimatedGlobe(),
                     const SizedBox(height: 16),
                     Text(
                       appText(context, 'Hello, where would you like to go?'),
@@ -5197,76 +5135,75 @@ class _AiPreviewImageTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final image = ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.network(
-            this.image,
-            fit: BoxFit.cover,
-            filterQuality: filterQuality,
-            errorBuilder: (context, error, stackTrace) => Container(
-              color: const Color(0xFFF4F8FA),
-              child: Icon(
-                Icons.image_not_supported_rounded,
-                color: const Color(0xFFACCBE0),
-                size: large ? 48 : 28,
-              ),
-            ),
-          ),
-          if (selected)
-            DecoratedBox(
-              decoration: BoxDecoration(
-                border: Border.all(color: _accent, width: 3),
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-          Positioned(
-            left: 10,
-            bottom: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: .92),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    selected
-                        ? Icons.check_circle_rounded
-                        : Icons.touch_app_rounded,
-                    color: _primary,
-                    size: 15,
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    appText(context, selected ? 'Cover' : 'Select'),
-                    style: const TextStyle(
-                      color: _primary,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-    final callback = onTap;
-    if (callback == null) return image;
-
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: callback,
-        child: image,
+        onTap: onTap,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.network(
+                image,
+                fit: BoxFit.cover,
+                filterQuality: filterQuality,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  color: const Color(0xFFF4F8FA),
+                  child: Icon(
+                    Icons.image_not_supported_rounded,
+                    color: const Color(0xFFACCBE0),
+                    size: large ? 48 : 28,
+                  ),
+                ),
+              ),
+              if (selected)
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: _accent, width: 3),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+              Positioned(
+                left: 10,
+                bottom: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .92),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        selected
+                            ? Icons.check_circle_rounded
+                            : Icons.touch_app_rounded,
+                        color: _primary,
+                        size: 15,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        appText(context, selected ? 'Cover' : 'Select'),
+                        style: const TextStyle(
+                          color: _primary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

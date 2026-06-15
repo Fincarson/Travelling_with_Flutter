@@ -127,7 +127,7 @@ function travelerCountFromGroupType(value) {
 
 const travelAssistantInstructions = [
   "You are a concise travel planning assistant inside a mobile app.",
-  "Help with itinerary order, budget tradeoffs, packing, food, transit,",
+  "Help with schedule order, budget tradeoffs, packing, food, transit,",
   "and practical destination advice. Keep replies friendly and short.",
   "Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset",
   "as the source of truth for today, tomorrow, and relative dates.",
@@ -135,13 +135,13 @@ const travelAssistantInstructions = [
 ].join(" ");
 
 const tripPlanInstructions = [
-  "Generate a practical travel itinerary for a mobile travel app.",
-  "Use realistic attraction names, reasonable pacing, and approximate costs.",
+  "Generate a practical travel schedule as strict JSON only.",
+  "Use current attraction names for the destination.",
+  "Keep costs realistic but approximate.",
   "Treat selected tags and custom preference tags as concrete itinerary requirements, not decorative labels.",
   "For each distinctive tag, include at least one matching schedule item, venue area, event search, food stop, accessibility choice, or practical constraint.",
   "For example, anime should trigger anime convention/event-calendar research when dates match, or anime districts, stores, themed cafes, arcades, museums, or pop-culture stops when no convention is current.",
   "Halal food should trigger halal restaurants or Muslim-friendly food areas. Wheelchair access should trigger accessible transit and step-free venues.",
-  "Keep activities suitable for the destination, dates, budget, number of travelers, and tags.",
   "Use appContext.localDate and appContext.timeZoneOffset as today's context.",
   "Use startLocation as the trip origin when provided. If startLocation is missing, use appContext.location when available.",
   "If startLocation has an address, use that address as the origin reference; do not show raw coordinates in user-facing itinerary text.",
@@ -162,14 +162,15 @@ const tripPlanInstructions = [
   "Use current-known attraction names, transportation options, ticket prices, and local food costs.",
   "Use specific real place names or clearly named local areas. Do not use generic stop titles like \"signature landmark visit\", \"historic district walk\", \"scenic viewpoint stop\", or \"local scene stop\" unless the title also includes the actual venue or district name.",
   "When the destination name has multiple comma-separated parts, keep enough administrative context to avoid choosing a different city with the same name.",
-  "For mappable sightseeing, food, shopping, museum, cafe, beach, hiking, and temple stops, include address, latitude, longitude, and imageUrl when known; use null only for non-place reminders, uncertain transport, or unknown coordinates.",
+  "For mappable sightseeing, food, shopping, museum, cafe, beach, hiking, and temple stops, include address, latitude, longitude, and imageUrl when you can; use null only for non-place reminders, uncertain transport, or unknown coordinates.",
   "When live data may vary, mark times, prices, and operator details as approximate and tell the user to confirm before departure.",
   "Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.",
+  "Return no markdown and no explanation.",
 ].join(" ");
 
 const createTripInstructions = [
   "You are the Create Trip assistant inside a mobile travel app.",
-  "Interpret the user message and update the trip draft.",
+  "Actually interpret the user message and update the trip draft.",
   "Preserve the exact destination name as provided by the user, especially for well-known cities like Tokyo, Taipei, Osaka, Seoul, Bangkok, Singapore, etc. Do not shorten or alter city names.",
   "Ask for exactly one missing important field at a time.",
   "When useful, create a tappable widget with 2 to 4 options.",
@@ -179,8 +180,8 @@ const createTripInstructions = [
   "Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.",
   "Required final fields: destination, startDate, endDate, budget, numOfTravelers.",
   "Dates must be ISO yyyy-MM-dd. numOfTravelers must be an integer from 1 to 99.",
-  "Preserve groupType as Solo, Couple, Friends, Family, or Tour when the user identifies the party type.",
-  "If the user names a currency, set currency to its three-letter ISO 4217 code.",
+  "If the user names a currency, set currency to USD, TWD, IDR, JPY, or EUR.",
+  "Return only JSON matching the schema.",
 ].join(" ");
 
 function aiLanguageName(profileLanguage, outputLanguage) {
@@ -216,14 +217,6 @@ function aiLanguageName(profileLanguage, outputLanguage) {
     default:
       return "English";
   }
-}
-
-function outputLanguageInstructions(profileLanguage, outputLanguage) {
-  const language = aiLanguageName(profileLanguage, outputLanguage);
-  return [
-    `Write all user-facing text in ${language}.`,
-    "Do not infer language from currency; currency only controls money values.",
-  ].join(" ");
 }
 
 const tripPlanFormat = {
@@ -344,7 +337,6 @@ const createTripReplyFormat = {
           budget: {type: ["string", "null"]},
           currency: {type: ["string", "null"]},
           numOfTravelers: {type: ["integer", "null"]},
-          groupType: {type: ["string", "null"]},
           preferences: {
             type: "array",
             items: {type: "string"},
@@ -357,7 +349,6 @@ const createTripReplyFormat = {
           "budget",
           "currency",
           "numOfTravelers",
-          "groupType",
           "preferences",
         ],
       },
@@ -1202,10 +1193,14 @@ async function generateTripPlanFromRequest(data, options = {}) {
   const numOfTravelers = data.numOfTravelers == null ?
     travelerCountFromGroupType(data.groupType) :
     safeTravelerCount(data.numOfTravelers);
-  const languageInstructions = outputLanguageInstructions(
-    data.profileLanguage,
-    data.outputLanguage,
+  const outputLanguage = aiLanguageName(
+      data.profileLanguage,
+      data.outputLanguage,
   );
+  const languageInstructions = [
+    `Write all user-facing itinerary text in ${outputLanguage}.`,
+    "Do not infer language from currency; currency only controls money.",
+  ].join(" ");
 
   const plan = await createStructuredResponse({
     instructions: `${tripPlanInstructions} ${languageInstructions}`,
@@ -1218,12 +1213,11 @@ async function generateTripPlanFromRequest(data, options = {}) {
       },
       startDate,
       endDate,
-      budget,
+      budgetUsd: budget,
       currency: String(data.currency ?? "USD"),
       profileLanguage: String(data.profileLanguage ?? "en"),
-      outputLanguage: aiLanguageName(data.profileLanguage, data.outputLanguage),
+      outputLanguage,
       numOfTravelers,
-      groupType: String(data.groupType ?? ""),
       preferences: safeShortStrings(data.preferences),
       flight: {
         airline: String(data.airline ?? ""),
@@ -1236,6 +1230,31 @@ async function generateTripPlanFromRequest(data, options = {}) {
       },
       startLocation: data.startLocation ?? null,
       appContext: data.appContext ?? null,
+      schema: {
+        items: [{
+          day: 1,
+          time: "09:00 AM",
+          activity: "Activity name",
+          type: "place|food|walk|museum|beach|shopping|train",
+          cost: 25,
+          address: "Venue address or null",
+          latitude: -6.9175,
+          longitude: 107.6191,
+          imageUrl: "https://example.com/photo.jpg or null",
+        }],
+        bookings: [{
+          title: "Hotel or transport booking",
+          date: "YYYY-MM-DD",
+          time: "15:00",
+          reference: "short reference",
+          cost: 300,
+          type: "hotel|flight|train|place",
+        }],
+        checklist: [{
+          category: "Essentials",
+          items: ["Passport"],
+        }],
+      },
     },
     format: tripPlanFormat,
     logContext: "OpenAI itinerary generation failed",
@@ -1764,11 +1783,11 @@ exports.generateScheduleStop = onCall(
 
     const item = await createStructuredResponse({
       instructions: [
-        "Generate exactly one practical schedule stop for a mobile travel app.",
+        "Generate exactly one practical schedule stop as strict JSON only.",
         "Fit it into the requested trip day without duplicating existing stops.",
-        "Use current local time and location only if the request asks for nearby or location-aware help.",
-        "Keep the activity title concise, specific, and useful during the trip.",
-        "Return only JSON matching the schema.",
+        "Use current local time and location only if the user asks for nearby or location-aware help.",
+        "Keep the activity title concise and specific.",
+        "Return no markdown and no explanation.",
       ].join(" "),
       input: {
         destination,
@@ -1975,10 +1994,14 @@ exports.createTripReply = onCall(
       throw new HttpsError("invalid-argument", "Message is too long.");
     }
 
-    const languageInstructions = outputLanguageInstructions(
-      request.data?.profileLanguage,
-      request.data?.outputLanguage,
+    const outputLanguage = aiLanguageName(
+        request.data?.profileLanguage,
+        request.data?.outputLanguage,
     );
+    const languageInstructions = [
+      `Write message, widget title, widget labels, widget descriptions, and preferences in ${outputLanguage}.`,
+      "Do not infer language from currency; currency only controls money.",
+    ].join(" ");
 
     const reply = await createStructuredResponse({
       model: openAiChatModel,
@@ -1991,10 +2014,7 @@ exports.createTripReply = onCall(
           : [],
         today: request.data?.today ?? null,
         profileLanguage: String(request.data?.profileLanguage ?? "en"),
-        outputLanguage: aiLanguageName(
-          request.data?.profileLanguage,
-          request.data?.outputLanguage,
-        ),
+        outputLanguage,
         appContext: request.data?.appContext ?? null,
       },
       format: createTripReplyFormat,
