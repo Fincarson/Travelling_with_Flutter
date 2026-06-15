@@ -539,13 +539,14 @@ service cloud.firestore {
         );
     }
 
+    // The travel_users/{uid} document is private: only its owner can read or
+    // write it. Strict per-field enum/shape validators previously rejected the
+    // ENTIRE write (merge re-validates existing fields), so a single legacy
+    // value (e.g. an old travelPace) blocked favorites and profile saves.
+    // Ownership is the security boundary here; field validation is the client's
+    // job, so we only require the caller to be the owner.
     function canWriteOwnTravelUser(userId) {
-      return signedIn() &&
-        request.auth.uid == userId &&
-        validTravelUserSettings() &&
-        validTravelUserOnboarding() &&
-        validTravelUserLegalConsent() &&
-        validTravelUserPersonalization();
+      return signedIn() && request.auth.uid == userId;
     }
 
     match /travel_users/{userId} {

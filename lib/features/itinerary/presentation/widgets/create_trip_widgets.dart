@@ -908,7 +908,7 @@ class _GeneratingStepState extends State<_GeneratingStep>
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  widget.text,
+                  appText(context, widget.text),
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,

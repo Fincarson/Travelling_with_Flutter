@@ -706,7 +706,13 @@ class GroupChatRepository {
     }, SetOptions(merge: true));
     batch.set(
       _chatDoc(chatId).collection('members').doc(memberId),
-      {'status': GroupChatMemberStatus.left.name, 'updatedAt': now},
+      {
+        'status': GroupChatMemberStatus.left.name,
+        // Marks a kick (vs a self-initiated leave) so the membership trigger
+        // can post "X was removed" instead of "X left".
+        if (!isLeaving) 'removedBy': actorId,
+        'updatedAt': now,
+      },
       SetOptions(merge: true),
     );
     batch.set(_membershipsRef(memberId).doc(chatId), {

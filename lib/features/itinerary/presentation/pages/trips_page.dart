@@ -1,5 +1,7 @@
 part of travel_agent_app;
 
+const _tripsColumnsPrefKey = 'travel_agent.layout.trips_columns';
+
 enum _TripsTab { upcoming, past }
 
 enum _TripSort {
@@ -47,6 +49,30 @@ class _TripsScreenState extends State<TripsScreen> {
   _TripSort _sort = _TripSort.dateAscending;
   int? _travelerFilter;
   bool _filtersExpanded = false;
+  int _columns = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadColumns());
+  }
+
+  Future<void> _loadColumns() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getInt(_tripsColumnsPrefKey);
+    if (!mounted || stored == null) return;
+    setState(() => _columns = stored == 2 ? 2 : 1);
+  }
+
+  void _setColumns(int value) {
+    if (_columns == value) return;
+    setState(() => _columns = value);
+    unawaited(
+      SharedPreferences.getInstance().then(
+        (prefs) => prefs.setInt(_tripsColumnsPrefKey, value),
+      ),
+    );
+  }
 
   List<Trip> get _tabTrips {
     final trips = widget.trips
@@ -205,6 +231,16 @@ class _TripsScreenState extends State<TripsScreen> {
                     setState(() => _filtersExpanded = !_filtersExpanded),
                 onSelected: (tab) => setState(() => _selectedTab = tab),
               ),
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: LayoutColumnsToggle(
+                    columns: _columns,
+                    onChanged: _setColumns,
+                  ),
+                ),
+              ),
               AnimatedSize(
                 duration: duration,
                 curve: Curves.easeOutCubic,
@@ -234,71 +270,87 @@ class _TripsScreenState extends State<TripsScreen> {
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeOutCubic,
                 child: hasResults
-                    ? Column(
+                    ? LayoutBuilder(
                         key: ValueKey(
-                          '${_selectedTab.name}-${_travelerFilter ?? 'all'}-${_sort.name}-${_searchController.text}',
+                          '${_selectedTab.name}-${_travelerFilter ?? 'all'}-${_sort.name}-${_searchController.text}-$_columns',
                         ),
-                        children: [
-                          for (final trip in trips)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 16),
-                              child: trip.isOwner
-                                  ? _SwipeToDeleteTrip(
-                                      trip: trip,
-                                      confirmDelete: () => _confirmDelete(trip),
-                                      child: TripListCard(
-                                        trip: trip,
-                                        onTap: () => widget.onOpenTrip(trip),
-                                        onStart: () => widget.onStartTrip(trip),
-                                        favorite: widget.favoriteTripIds
-                                            .contains(trip.id),
-                                        onToggleFavorite:
-                                            widget.onToggleFavoriteTrip == null
-                                            ? null
-                                            : () =>
-                                                  widget.onToggleFavoriteTrip!(
-                                                    trip,
-                                                  ),
-                                      ),
-                                    )
-                                  : TripListCard(
-                                      trip: trip,
-                                      onTap: () => widget.onOpenTrip(trip),
-                                      onStart: trip.canEdit
-                                          ? () => widget.onStartTrip(trip)
-                                          : null,
-                                      canDelete: false,
-                                      favorite: widget.favoriteTripIds.contains(
-                                        trip.id,
-                                      ),
-                                      onToggleFavorite:
-                                          widget.onToggleFavoriteTrip == null
-                                          ? null
-                                          : () => widget.onToggleFavoriteTrip!(
-                                              trip,
-                                            ),
-                                    ),
-                            ),
-                          if (memories.isNotEmpty) ...[
-                            const Padding(
-                              padding: EdgeInsets.fromLTRB(2, 8, 2, 12),
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: LabelText('Trip memories'),
-                              ),
-                            ),
-                            for (final memory in memories)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 14),
-                                child: _TripMemoryCard(
-                                  memory: memory,
-                                  onRate: widget.onRateMemory == null
-                                      ? null
-                                      : () => _rateMemory(memory),
+                        builder: (context, constraints) {
+                          const spacing = 16.0;
+                          final cellWidth = _columns == 2
+                              ? (constraints.maxWidth - spacing) / 2
+                              : constraints.maxWidth;
+                          return Wrap(
+                            spacing: spacing,
+                            runSpacing: 16,
+                            children: [
+                              for (final trip in trips)
+                                SizedBox(
+                                  width: cellWidth,
+                                  child: trip.isOwner
+                                      ? _SwipeToDeleteTrip(
+                                          trip: trip,
+                                          confirmDelete: () =>
+                                              _confirmDelete(trip),
+                                          child: TripListCard(
+                                            trip: trip,
+                                            onTap: () => widget.onOpenTrip(trip),
+                                            onStart: () =>
+                                                widget.onStartTrip(trip),
+                                            favorite: widget.favoriteTripIds
+                                                .contains(trip.id),
+                                            onToggleFavorite:
+                                                widget.onToggleFavoriteTrip ==
+                                                    null
+                                                ? null
+                                                : () => widget
+                                                      .onToggleFavoriteTrip!(
+                                                        trip,
+                                                      ),
+                                          ),
+                                        )
+                                      : TripListCard(
+                                          trip: trip,
+                                          onTap: () => widget.onOpenTrip(trip),
+                                          onStart: trip.canEdit
+                                              ? () => widget.onStartTrip(trip)
+                                              : null,
+                                          canDelete: false,
+                                          favorite: widget.favoriteTripIds
+                                              .contains(trip.id),
+                                          onToggleFavorite:
+                                              widget.onToggleFavoriteTrip == null
+                                              ? null
+                                              : () =>
+                                                    widget.onToggleFavoriteTrip!(
+                                                      trip,
+                                                    ),
+                                        ),
                                 ),
-                              ),
-                          ],
-                        ],
+                              if (memories.isNotEmpty) ...[
+                                const SizedBox(
+                                  width: double.infinity,
+                                  child: Padding(
+                                    padding: EdgeInsets.fromLTRB(2, 8, 2, 0),
+                                    child: Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: LabelText('Trip memories'),
+                                    ),
+                                  ),
+                                ),
+                                for (final memory in memories)
+                                  SizedBox(
+                                    width: cellWidth,
+                                    child: _TripMemoryCard(
+                                      memory: memory,
+                                      onRate: widget.onRateMemory == null
+                                          ? null
+                                          : () => _rateMemory(memory),
+                                    ),
+                                  ),
+                              ],
+                            ],
+                          );
+                        },
                       )
                     : _TripsEmptyState(
                         key: ValueKey(

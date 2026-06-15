@@ -114,10 +114,23 @@ class AppTextController {
   }
 
   static bool _isTranslatableUiText(String source) {
-    return source.isNotEmpty &&
-        source.length <= 500 &&
-        (_zhHantTwText.containsKey(source) ||
-            _additionalTranslatableUiText.contains(source));
+    final trimmed = source.trim();
+    if (trimmed.isEmpty || trimmed.length > 500) return false;
+    // Curated strings are always eligible.
+    if (_zhHantTwText.containsKey(source) ||
+        _additionalTranslatableUiText.contains(source)) {
+      return true;
+    }
+    // Otherwise translate anything that reads like human text: it must contain
+    // letters and not be a URL/asset path. This lets every appText-wrapped
+    // string translate on demand instead of only the hand-listed ones.
+    if (!RegExp(r'[A-Za-z]').hasMatch(trimmed)) return false;
+    if (trimmed.contains('://') ||
+        trimmed.startsWith('http') ||
+        trimmed.startsWith('assets/')) {
+      return false;
+    }
+    return true;
   }
 
   static void _scheduleBatch() {

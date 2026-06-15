@@ -2944,6 +2944,9 @@ exports.notifyGroupChatMembers = onDocumentCreated(
     async (event) => {
       const message = event.data?.data();
       if (!message) return;
+      // System messages (join/leave/removed) are posted and notified by the
+      // member-document trigger; skip them here to avoid double notifications.
+      if (String(message.type || "") === "system") return;
 
       const db = admin.firestore();
       const chatId = String(event.params.chatId);
@@ -2982,38 +2985,98 @@ exports.notifyGroupChatMemberJoined = onDocumentWritten(
     async (event) => {
       const before = event.data?.before.data();
       const after = event.data?.after.data();
-      if (!after || after.status !== "active" || before?.status === "active") {
-        return;
-      }
+      if (!after) return;
+
+      const becameActive =
+        after.status === "active" && before?.status !== "active";
+      const becameLeft = after.status === "left" && before?.status !== "left";
+      if (!becameActive && !becameLeft) return;
 
       const db = admin.firestore();
       const chatId = String(event.params.chatId);
-      const joinedMemberId = String(event.params.memberId);
+      const memberId = String(event.params.memberId);
       const chatSnapshot = await db.collection("chat_groups").doc(chatId).get();
       if (!chatSnapshot.exists) return;
 
       const chat = chatSnapshot.data() || {};
-      const memberIds = Array.isArray(chat.memberIds)
-        ? chat.memberIds
-            .map(String)
-            .filter((id) => id && id !== joinedMemberId)
-        : [];
-      if (!memberIds.length) return;
-
-      const joinedName = String(
+      const memberName = String(
           after.displayNameSnapshot || "Someone",
       ).trim() || "Someone";
+
+      let text;
+      let eventType;
+      if (becameActive) {
+        text = `${memberName} joined the group.`;
+        eventType = "group_member_joined";
+      } else {
+        const removedBy = String(after.removedBy || "").trim();
+        if (removedBy && removedBy !== memberId) {
+          text = `${memberName} was removed from the group.`;
+          eventType = "group_member_removed";
+        } else {
+          text = `${memberName} left the group.`;
+          eventType = "group_member_left";
+        }
+      }
+
+      // Post the in-chat system message (admin SDK bypasses security rules).
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const messageRef = db
+          .collection("chat_groups")
+          .doc(chatId)
+          .collection("messages")
+          .doc();
+      await messageRef.set({
+        senderId: memberId,
+        senderNameSnapshot: "",
+        senderPhotoUrlSnapshot: null,
+        text,
+        type: "system",
+        attachments: [],
+        poll: null,
+        createdAt: now,
+        editedAt: null,
+      });
+      await db.collection("chat_groups").doc(chatId).set({
+        lastMessageText: text,
+        lastMessageAt: now,
+        updatedAt: now,
+      }, {merge: true});
+
+      const memberIds = Array.isArray(chat.memberIds)
+        ? chat.memberIds.map(String).filter((id) => id && id !== memberId)
+        : [];
+      // Keep the chat-list preview in sync for remaining members.
+      await Promise.all(
+          memberIds.map((id) =>
+            db
+                .collection("travel_users")
+                .doc(id)
+                .collection("chatMemberships")
+                .doc(chatId)
+                .set({
+                  chatId,
+                  titleSnapshot: String(chat.title || "Group chat"),
+                  lastMessageText: text,
+                  lastMessageAt: now,
+                  updatedAt: now,
+                }, {merge: true})
+                .catch(() => {}),
+          ),
+      );
+      if (!memberIds.length) return;
+
       const title = String(chat.title || "Group chat");
       await sendNotificationToUsers({
         db,
         userIds: memberIds,
         title,
-        body: `${joinedName} joined the group.`,
+        body: text,
         chatId,
         data: {
           chatId,
-          memberId: joinedMemberId,
-          type: "group_member_joined",
+          memberId,
+          type: eventType,
           tag: `group-member-${chatId}`,
           targetPath: `/chat/${encodeURIComponent(chatId)}`,
         },

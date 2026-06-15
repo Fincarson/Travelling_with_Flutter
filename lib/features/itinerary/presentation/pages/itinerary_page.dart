@@ -275,13 +275,23 @@ class _TripDetailSliverAppBar extends StatelessWidget {
       surfaceTintColor: Colors.transparent,
       foregroundColor: _primary,
       automaticallyImplyLeading: false,
+      leadingWidth: 60,
       leading: Padding(
         padding: const EdgeInsets.only(left: 8),
-        child: IconButton(
-          tooltip: appText(context, 'Back'),
-          onPressed: onBack,
-          icon: const Icon(Icons.arrow_back_rounded),
-          color: _primary,
+        child: Center(
+          child: IconButton.filled(
+            tooltip: appText(context, 'Back'),
+            style: IconButton.styleFrom(
+              backgroundColor:
+                  Theme.of(context).colorScheme.surfaceContainerHigh,
+              foregroundColor: Theme.of(context).colorScheme.onSurface,
+              shape: const CircleBorder(),
+              fixedSize: const Size(44, 44),
+              padding: EdgeInsets.zero,
+            ),
+            onPressed: onBack,
+            icon: const Icon(Icons.chevron_left_rounded),
+          ),
         ),
       ),
       flexibleSpace: _TripDetailFlexibleBanner(trip: trip),

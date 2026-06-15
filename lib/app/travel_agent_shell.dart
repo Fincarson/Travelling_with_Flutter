@@ -40,6 +40,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   var _currencyLocationCheckInFlight = false;
   var _isChatRoomOpen = false;
   var _isAppForeground = true;
+  var _planeTransition = false;
   var _screen = _Screen.dashboard;
   var _tab = _NavTab.home;
   var _tripDetailInitialTab = 0;
@@ -399,13 +400,43 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     } else {
       places.removeAt(existing);
     }
-    await _saveProfile(_user.copyWith(favoritePlaces: places));
+    await _persistFavorites(_user.copyWith(favoritePlaces: places));
   }
 
   Future<void> _toggleFavoriteTrip(Trip trip) async {
     final ids = {..._user.favoriteTripIds};
     if (!ids.add(trip.id)) ids.remove(trip.id);
-    await _saveProfile(_user.copyWith(favoriteTripIds: ids.toList()..sort()));
+    await _persistFavorites(
+      _user.copyWith(favoriteTripIds: ids.toList()..sort()),
+    );
+  }
+
+  // Favorites use a minimal Firestore write (not the full profile) so an
+  // unrelated legacy field can't get the whole save rejected by the rules.
+  Future<void> _persistFavorites(UserProfile updated) async {
+    final previous = _user;
+    setState(() {
+      _user = updated;
+      _loadError = null;
+    });
+    final accountId = _accountId ?? widget.account.uid;
+    await _saveLocalProfile(accountId, updated);
+    try {
+      await _repository.saveFavorites(
+        accountId,
+        favoritePlaces: updated.favoritePlaces,
+        favoriteTripIds: updated.favoriteTripIds,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      final message = appText(context, 'Could not update favorite.');
+      setState(() => _user = previous);
+      unawaited(_saveLocalProfile(accountId, previous));
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
   Future<void> _rateTripMemory(
@@ -594,6 +625,11 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     await _refreshTripsFromBackend(selectTripId: trip.id);
     if (!mounted) return;
     _router.go(_tripLocation(trip.id));
+    // Play the plane reveal over the freshly-loaded itinerary page. Skipped
+    // when motion is disabled in performance settings.
+    if (PerformanceScope.maybeSettingsOf(context).animationsEnabled) {
+      setState(() => _planeTransition = true);
+    }
   }
 
   Future<void> _startTrip(Trip trip) async {
@@ -857,16 +893,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
                           top: 12,
                           child: SyncBanner(message: _loadError!),
                         ),
-                      Positioned(
-                        right: 14,
-                        bottom: 94,
-                        child: FloatingActionButton.small(
-                          heroTag: 'global-help',
-                          tooltip: 'App help',
-                          onPressed: () => setState(() => _helpOpen = true),
-                          child: const Icon(Icons.help_outline_rounded),
-                        ),
-                      ),
                       if (_helpOpen ||
                           (_user.onboardingCompleted &&
                               !_user.tutorialCompleted &&
@@ -874,6 +900,16 @@ class _TravelAgentAppState extends State<TravelAgentApp>
                         Positioned.fill(
                           child: _AppTutorialOverlay(
                             onClose: () => unawaited(_closeTutorial()),
+                          ),
+                        ),
+                      if (_planeTransition)
+                        Positioned.fill(
+                          child: _PlaneRevealTransition(
+                            onCompleted: () {
+                              if (mounted) {
+                                setState(() => _planeTransition = false);
+                              }
+                            },
                           ),
                         ),
                     ],
@@ -1116,6 +1152,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       onOpenPerformance: () => context.go('/profile/performance'),
       archivedItemCount: _tripMemories.length + _archivedNotificationIds.length,
       onOpenArchived: () => context.go('/profile/archived'),
+      onShowTutorial: () => setState(() => _helpOpen = true),
     );
   }
 
@@ -1367,6 +1404,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
           archivedItemCount:
               _tripMemories.length + _archivedNotificationIds.length,
           onOpenArchived: () => setState(() => _screen = _Screen.archived),
+          onShowTutorial: () => setState(() => _helpOpen = true),
         );
       case _Screen.linkedAccounts:
         return LinkedAccountsScreen(
@@ -1867,6 +1905,93 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Full-screen reveal played after a trip is created. A solid cover (matching
+/// the page background) peels upward off the top edge, uncovering the
+/// already-loaded itinerary page below, while a screen-wide plane rides the
+/// peeling edge from offscreen-bottom to offscreen-top.
+class _PlaneRevealTransition extends StatefulWidget {
+  const _PlaneRevealTransition({required this.onCompleted});
+
+  final VoidCallback onCompleted;
+
+  @override
+  State<_PlaneRevealTransition> createState() => _PlaneRevealTransitionState();
+}
+
+class _PlaneRevealTransitionState extends State<_PlaneRevealTransition>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addStatusListener((status) {
+      if (status == AnimationStatus.completed) widget.onCompleted();
+    });
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final coverColor = Theme.of(context).scaffoldBackgroundColor;
+    final planeColor = Theme.of(context).colorScheme.primary;
+    // Block input on the page below while the reveal plays.
+    return AbsorbPointer(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final height = constraints.maxHeight;
+          final width = constraints.maxWidth;
+          // Oversize so the plane's wings reach the screen edges.
+          final planeSize = width * 1.25;
+          return AnimatedBuilder(
+            animation: _controller,
+            builder: (context, _) {
+              final t = Curves.easeInOutCubic.transform(_controller.value);
+              final coverHeight = (height * (1 - t)).clamp(0.0, height);
+              // Plane sweeps from fully offscreen-bottom to fully offscreen-top,
+              // crossing the lifting cover's edge midway so it reads as pulling
+              // the page up.
+              final planeCenterY =
+                  (height + planeSize / 2) - t * (height + planeSize);
+              return Stack(
+                children: [
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: coverHeight,
+                    child: ColoredBox(color: coverColor),
+                  ),
+                  Positioned(
+                    left: (width - planeSize) / 2,
+                    top: planeCenterY - planeSize / 2,
+                    width: planeSize,
+                    height: planeSize,
+                    child: Icon(
+                      Icons.flight_rounded,
+                      size: planeSize,
+                      color: planeColor,
+                    ),
+                  ),
+                ],
+              );
+            },
+          );
+        },
       ),
     );
   }

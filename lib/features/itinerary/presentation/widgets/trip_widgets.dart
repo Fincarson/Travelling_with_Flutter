@@ -1,5 +1,51 @@
 part of travel_agent_app;
 
+/// Two-option view toggle: 1 card per row or 2 cards per row.
+class LayoutColumnsToggle extends StatelessWidget {
+  const LayoutColumnsToggle({
+    required this.columns,
+    required this.onChanged,
+    super.key,
+  });
+
+  final int columns;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    Widget button(int value, IconData icon, String tooltip) {
+      final selected = columns == value;
+      return IconButton(
+        tooltip: appText(context, tooltip),
+        isSelected: selected,
+        onPressed: selected ? null : () => onChanged(value),
+        icon: Icon(icon, size: 20),
+        style: IconButton.styleFrom(
+          backgroundColor: selected
+              ? scheme.primary
+              : scheme.surfaceContainerHigh,
+          foregroundColor: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          minimumSize: const Size(40, 40),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        button(1, Icons.view_agenda_rounded, 'One per row'),
+        const SizedBox(width: 8),
+        button(2, Icons.grid_view_rounded, 'Two per row'),
+      ],
+    );
+  }
+}
+
 class CurrentTripCard extends StatelessWidget {
   const CurrentTripCard({
     required this.trip,

@@ -57,6 +57,21 @@ class TravelDataRepository {
     return batch.commit();
   }
 
+  /// Minimal write for favorites only. Avoids re-sending onboarding/settings,
+  /// so a legacy/invalid field on the rest of the profile cannot reject the
+  /// favorite update under the security rules.
+  Future<void> saveFavorites(
+    String accountId, {
+    required List<FavoritePlace> favoritePlaces,
+    required List<String> favoriteTripIds,
+  }) {
+    return _userDoc(accountId).set({
+      'favoritePlaces': favoritePlaces.map((place) => place.toMap()).toList(),
+      'favoriteTripIds': favoriteTripIds,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   Future<void> completeOnboarding(String accountId) {
     return _userDoc(accountId).set({
       'settings': {'onboardingRequired': false, 'onboardingCompleted': true},

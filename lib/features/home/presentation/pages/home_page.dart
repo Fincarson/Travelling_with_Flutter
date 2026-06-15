@@ -1,5 +1,7 @@
 part of travel_agent_app;
 
+const _homeColumnsPrefKey = 'travel_agent.layout.home_columns';
+
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({
     required this.user,
@@ -42,11 +44,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Destination> _recommendations = const [];
   final Map<String, bool> _pendingFavoriteStates = {};
   var _recommendationsLoading = true;
+  var _columns = 1;
 
   @override
   void initState() {
     super.initState();
     _loadRecommendations();
+    unawaited(_loadColumns());
+  }
+
+  Future<void> _loadColumns() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getInt(_homeColumnsPrefKey);
+    if (!mounted || stored == null) return;
+    setState(() => _columns = stored == 2 ? 2 : 1);
+  }
+
+  void _setColumns(int value) {
+    if (_columns == value) return;
+    setState(() => _columns = value);
+    unawaited(
+      SharedPreferences.getInstance().then(
+        (prefs) => prefs.setInt(_homeColumnsPrefKey, value),
+      ),
+    );
   }
 
   @override
@@ -193,20 +214,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
             action: _recommendationsLoading ? 'Personalizing...' : 'Refresh',
             onTap: _recommendationsLoading ? null : _loadRecommendations,
           ),
-          const SizedBox(height: 12),
-          for (final destination in _recommendations) ...[
-            _RecommendedPlaceCard(
-              destination: destination,
-              favorite: _isFavorite(destination),
-              favoriteBusy: _pendingFavoriteStates.containsKey(
-                _favoritePlaceId(destination.name),
-              ),
-              onFavorite: () => _toggleFavorite(destination),
-              onDetails: () => _showDestinationDetails(destination),
-              onAdd: () => widget.onAddPlaceToTrip?.call(destination),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: LayoutColumnsToggle(
+              columns: _columns,
+              onChanged: _setColumns,
             ),
-            const SizedBox(height: 12),
-          ],
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const spacing = 12.0;
+              final cellWidth = _columns == 2
+                  ? (constraints.maxWidth - spacing) / 2
+                  : constraints.maxWidth;
+              return Wrap(
+                spacing: spacing,
+                runSpacing: 12,
+                children: [
+                  for (final destination in _recommendations)
+                    SizedBox(
+                      width: cellWidth,
+                      child: _RecommendedPlaceCard(
+                        destination: destination,
+                        favorite: _isFavorite(destination),
+                        favoriteBusy: _pendingFavoriteStates.containsKey(
+                          _favoritePlaceId(destination.name),
+                        ),
+                        onFavorite: () => _toggleFavorite(destination),
+                        onDetails: () => _showDestinationDetails(destination),
+                        onAdd: () => widget.onAddPlaceToTrip?.call(destination),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
         ],
       ),
     );
@@ -228,12 +272,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       await callback(destination);
     } catch (_) {
       if (!mounted) return;
-      setState(() => _pendingFavoriteStates.remove(id));
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(content: Text('Could not update favorite place.')),
         );
+    } finally {
+      // Always drop the optimistic flag so the card reflects the real saved
+      // state (widget.user.favoritePlaces); leaving it set masks unlikes and
+      // desyncs from the profile favorites list.
+      if (mounted) setState(() => _pendingFavoriteStates.remove(id));
     }
   }
 

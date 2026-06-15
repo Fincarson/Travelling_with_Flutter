@@ -205,8 +205,15 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
   @override
   Widget build(BuildContext context) {
     final performance = PerformanceScope.settingsOf(context);
-    final title = _mainPageTitle(widget.location);
-    final headerAction = _headerAction(context, widget.location);
+    // Page titles are intentionally removed; the header now only carries
+    // actions (profile settings, chat buttons) when a page has any.
+    final headerAction = widget.location == '/profile'
+        ? IconButton(
+            tooltip: appText(context, 'Settings'),
+            onPressed: () => context.go('/profile/settings'),
+            icon: const Icon(Icons.settings_rounded),
+          )
+        : _headerAction(context, widget.location);
     _slideController.duration = performance.transitionDuration;
 
     return Stack(
@@ -228,17 +235,8 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
                   ),
               child: Column(
                 children: [
-                  if (title != null)
-                    _MainPageHeader(
-                      title: title,
-                      action: widget.location == '/profile'
-                          ? IconButton(
-                              tooltip: appText(context, 'Settings'),
-                              onPressed: () => context.go('/profile/settings'),
-                              icon: const Icon(Icons.settings_rounded),
-                            )
-                          : headerAction,
-                    ),
+                  if (headerAction != null)
+                    _MainPageHeader(action: headerAction),
                   Expanded(
                     child: widget.appState._performanceBoundary(
                       widget.navigationShell,
@@ -296,14 +294,6 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     return true;
   }
 
-  String? _mainPageTitle(String location) {
-    if (location == '/') return 'Home';
-    if (location == '/trips') return 'Trips';
-    if (location == '/trips/new') return 'New Plan';
-    if (location == '/profile') return 'Profile';
-    if (location == '/chat' && !widget.appState._isChatRoomOpen) return 'Chats';
-    return null;
-  }
 
   _NavTab get _tabForIndex {
     return switch (widget.navigationShell.currentIndex) {
@@ -442,13 +432,12 @@ String? _parentLocation(String location) {
 }
 
 class _MainPageHeader extends StatelessWidget {
-  const _MainPageHeader({required this.title, this.action});
+  const _MainPageHeader({required this.action});
 
   static const height = 40.0;
   static const verticalPadding = 8.0;
 
-  final String title;
-  final Widget? action;
+  final Widget action;
 
   @override
   Widget build(BuildContext context) {
@@ -468,28 +457,7 @@ class _MainPageHeader extends StatelessWidget {
           color: pageColor,
           child: SizedBox(
             height: height,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Positioned.fill(
-                  left: 92,
-                  right: 92,
-                  child: Center(
-                    child: Text(
-                      appText(context, title),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-                if (action != null)
-                  Align(alignment: Alignment.centerRight, child: action!),
-              ],
-            ),
+            child: Align(alignment: Alignment.centerRight, child: action),
           ),
         ),
       ),
