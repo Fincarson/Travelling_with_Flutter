@@ -119,6 +119,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     LabelText(appText(context, 'Welcome Back')),
+                  
+                    
                     Text(
                       '${widget.user.name.isEmpty ? 'Explorer' : widget.user.name}!',
                       style: Theme.of(context).textTheme.headlineSmall
@@ -168,9 +170,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (trip == null) ...[
             _EmptyTripCard(onCreate: widget.onCreate),
           ] else ...[
-            LabelText(
-              appText(context, 'Current trip'),
-            ), // TODO make responsive: show current/past/upcoming trip
+            Text(
+              appText(context, "Current Trip").toUpperCase(),
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.2,
+              ),
+            ),
             const SizedBox(height: 8),
             CurrentTripCard(
               trip: trip,
@@ -178,31 +185,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onStart: trip.status == TripStatus.ongoing
                   ? null
                   : () => widget.onStartTrip(trip),
-            ),
-            const SizedBox(height: 22),
-            ResponsiveActionWrap(
-              children: [
-                QuickAction(
-                  icon: Icons.info_outline_rounded,
-                  label: 'Info',
-                  onTap: widget.onOpenInfo,
-                ),
-                QuickAction(
-                  icon: Icons.map_rounded,
-                  label: 'Map',
-                  onTap: widget.onOpenMap,
-                ),
-                QuickAction(
-                  icon: Icons.translate_rounded,
-                  label: 'Translate',
-                  onTap: widget.onOpenTranslate,
-                ),
-                QuickAction(
-                  icon: Icons.auto_awesome_rounded,
-                  label: 'AI',
-                  onTap: () => widget.onAskAi(_dailyTripPrompt(trip)),
-                ),
-              ],
             ),
           ],
           const SizedBox(height: 28),
