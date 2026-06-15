@@ -129,7 +129,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final trip =
         widget.activeTrip ?? (widget.trips.isEmpty ? null : widget.trips.first);
     return ScreenScaffold(
-      bottomPadding: 92,
       child: ListView(
         padding: _responsivePagePadding(context, top: 12, bottom: 112),
         children: [
@@ -140,8 +139,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     LabelText(appText(context, 'Welcome Back')),
-                  
-                    
+
                     Text(
                       '${widget.user.name.isEmpty ? 'Explorer' : widget.user.name}!',
                       style: Theme.of(context).textTheme.headlineSmall

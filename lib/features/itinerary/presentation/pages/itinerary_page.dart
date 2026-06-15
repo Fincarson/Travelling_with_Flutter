@@ -7,6 +7,7 @@ class TripDetailScreen extends StatelessWidget {
     required this.onOpenChat,
     required this.onOpenBudget,
     required this.onOpenPacking,
+    required this.onOpenSettings,
     required this.onUpdateTrip,
     required this.accountId,
     required this.repository,
@@ -20,6 +21,7 @@ class TripDetailScreen extends StatelessWidget {
   final VoidCallback onOpenChat;
   final VoidCallback onOpenBudget;
   final VoidCallback onOpenPacking;
+  final VoidCallback onOpenSettings;
   final ValueChanged<Trip> onUpdateTrip;
   final String accountId;
   final TravelDataRepository repository;
@@ -33,6 +35,7 @@ class TripDetailScreen extends StatelessWidget {
       trip: trip,
       onBack: onBack,
       onOpenChat: onOpenChat,
+      onOpenSettings: onOpenSettings,
       onUpdateTrip: onUpdateTrip,
       accountId: accountId,
       repository: repository,
@@ -48,6 +51,7 @@ class _EditableTripDetailScreen extends StatefulWidget {
     required this.trip,
     required this.onBack,
     required this.onOpenChat,
+    required this.onOpenSettings,
     required this.onUpdateTrip,
     required this.accountId,
     required this.repository,
@@ -59,6 +63,7 @@ class _EditableTripDetailScreen extends StatefulWidget {
   final Trip trip;
   final VoidCallback onBack;
   final VoidCallback onOpenChat;
+  final VoidCallback onOpenSettings;
   final ValueChanged<Trip> onUpdateTrip;
   final String accountId;
   final TravelDataRepository repository;
@@ -106,7 +111,6 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
     final selectedIndex = _selectedSectionIndex.clamp(0, sections.length - 1);
 
     return ScreenScaffold(
-      bottomPadding: 92,
       child: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           _TripDetailSliverAppBar(
@@ -115,6 +119,7 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
             selectedIndex: selectedIndex,
             forceElevated: innerBoxIsScrolled,
             onBack: widget.onBack,
+            onOpenSettings: widget.onOpenSettings,
             onSelect: (index) => setState(() => _selectedSectionIndex = index),
           ),
         ],
@@ -249,6 +254,7 @@ class _TripDetailSliverAppBar extends StatelessWidget {
     required this.selectedIndex,
     required this.forceElevated,
     required this.onBack,
+    required this.onOpenSettings,
     required this.onSelect,
   });
 
@@ -257,6 +263,7 @@ class _TripDetailSliverAppBar extends StatelessWidget {
   final int selectedIndex;
   final bool forceElevated;
   final VoidCallback onBack;
+  final VoidCallback onOpenSettings;
   final ValueChanged<int> onSelect;
 
   @override
@@ -278,22 +285,30 @@ class _TripDetailSliverAppBar extends StatelessWidget {
       leadingWidth: 60,
       leading: Padding(
         padding: const EdgeInsets.only(left: 8),
-        child: Center(
-          child: IconButton.filled(
-            tooltip: appText(context, 'Back'),
-            style: IconButton.styleFrom(
-              backgroundColor:
-                  Theme.of(context).colorScheme.surfaceContainerHigh,
-              foregroundColor: Theme.of(context).colorScheme.onSurface,
-              shape: const CircleBorder(),
-              fixedSize: const Size(44, 44),
-              padding: EdgeInsets.zero,
-            ),
-            onPressed: onBack,
-            icon: const Icon(Icons.chevron_left_rounded),
+        child: IconButton(
+          tooltip: appText(context, 'Back'),
+          onPressed: onBack,
+          icon: const Icon(Icons.arrow_back_rounded),
+          color: _primary,
+          style: IconButton.styleFrom(
+            backgroundColor: Colors.white.withValues(alpha: .88),
           ),
         ),
       ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: IconButton(
+            tooltip: appText(context, 'Trip settings'),
+            onPressed: onOpenSettings,
+            icon: const Icon(Icons.settings_rounded),
+            color: _primary,
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white.withValues(alpha: .88),
+            ),
+          ),
+        ),
+      ],
       flexibleSpace: _TripDetailFlexibleBanner(trip: trip),
       bottom: _TripSectionTabBar(
         sections: sections,

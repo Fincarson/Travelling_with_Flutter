@@ -76,6 +76,14 @@ class AppRouter {
                           ),
                       routes: [
                         GoRoute(
+                          path: 'settings',
+                          builder: (context, state) =>
+                              appState._buildTripSettingsScreen(
+                                context,
+                                state.pathParameters['tripId'] ?? '',
+                              ),
+                        ),
+                        GoRoute(
                           path: 'map',
                           builder: (context, state) =>
                               appState._buildTripMapScreen(
@@ -198,6 +206,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
 
   @override
   void dispose() {
+    widget.appState._setBottomNav(null);
     _slideController.dispose();
     super.dispose();
   }
@@ -205,15 +214,9 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
   @override
   Widget build(BuildContext context) {
     final performance = PerformanceScope.settingsOf(context);
-    // Page titles are intentionally removed; the header now only carries
-    // actions (profile settings, chat buttons) when a page has any.
-    final headerAction = widget.location == '/profile'
-        ? IconButton(
-            tooltip: appText(context, 'Settings'),
-            onPressed: () => context.go('/profile/settings'),
-            icon: const Icon(Icons.settings_rounded),
-          )
-        : _headerAction(context, widget.location);
+    final title = _mainPageTitle(widget.location);
+    final headerAction = _headerAction(context, widget.location);
+    _publishBottomNav();
     _slideController.duration = performance.transitionDuration;
 
     return Stack(
@@ -235,8 +238,17 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
                   ),
               child: Column(
                 children: [
-                  if (headerAction != null)
-                    _MainPageHeader(action: headerAction),
+                  if (title != null)
+                    _MainPageHeader(
+                      title: title,
+                      action: widget.location == '/profile'
+                          ? IconButton(
+                              tooltip: appText(context, 'Settings'),
+                              onPressed: () => context.go('/profile/settings'),
+                              icon: const Icon(Icons.settings_rounded),
+                            )
+                          : headerAction,
+                    ),
                   Expanded(
                     child: widget.appState._performanceBoundary(
                       widget.navigationShell,
@@ -305,9 +317,9 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     };
   }
 
-  void _select(BuildContext context, _NavTab tab) {
+  void _select(_NavTab tab) {
     if (tab == _NavTab.add) {
-      context.push('/trips/new');
+      widget.appState._push('/trips/new');
       return;
     }
 
@@ -374,7 +386,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     if (parent == null) return;
     _runNavigationAnimation(
       incomingFromRight: false,
-      navigate: () => context.go(parent),
+      navigate: () => widget.appState._go(parent),
     );
   }
 

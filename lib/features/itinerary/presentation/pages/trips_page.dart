@@ -214,7 +214,6 @@ class _TripsScreenState extends State<TripsScreen> {
     final hasResults = trips.isNotEmpty || memories.isNotEmpty;
 
     return ScreenScaffold(
-      bottomPadding: 92,
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1080),
