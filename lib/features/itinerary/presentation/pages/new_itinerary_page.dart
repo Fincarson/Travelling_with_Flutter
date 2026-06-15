@@ -2091,6 +2091,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _createManualTrip() async {
+    if (_isCreatingTrip) return;
     final budget = _parsedBudget();
     if (budget <= 0) {
       setState(() => _formError = 'Enter a budget greater than zero.');
@@ -2103,34 +2104,47 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       return;
     }
 
-    final generationContext = await _deviceContextService.load(
-      requestLocation: _startLocation.text.trim().isEmpty,
-    );
-    if (!mounted) return;
-    final startLocation = await _startLocationWithResolvedAddress(
-      _startLocationForGeneration(generationContext),
-    );
-    if (!mounted) return;
-    final plan = _manualStarterPlan(
-      place: place,
-      startLocation: startLocation,
-      currency: _currency,
-    );
-
-    setState(() {
-      _deviceContext = generationContext;
-      _tripStartLocation = startLocation;
-      if (startLocation != null && _canReplaceStartLocationText()) {
-        _startLocation.text = startLocation.displayLabel;
+    try {
+      // Location is best-effort: never block trip creation if it fails.
+      AppDeviceContext generationContext;
+      try {
+        generationContext = await _deviceContextService.load(
+          requestLocation: _startLocation.text.trim().isEmpty,
+        );
+      } catch (_) {
+        generationContext = await _deviceContextService.load(
+          requestLocation: false,
+        );
       }
-      _formError = null;
-    });
-    await _createTripFromPlan(
-      place: place,
-      budget: budget,
-      plan: plan,
-      startLocation: startLocation,
-    );
+      if (!mounted) return;
+      final startLocation = await _startLocationWithResolvedAddress(
+        _startLocationForGeneration(generationContext),
+      );
+      if (!mounted) return;
+      final plan = _manualStarterPlan(
+        place: place,
+        startLocation: startLocation,
+        currency: _currency,
+      );
+
+      setState(() {
+        _deviceContext = generationContext;
+        _tripStartLocation = startLocation;
+        if (startLocation != null && _canReplaceStartLocationText()) {
+          _startLocation.text = startLocation.displayLabel;
+        }
+        _formError = null;
+      });
+      await _createTripFromPlan(
+        place: place,
+        budget: budget,
+        plan: plan,
+        startLocation: startLocation,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _formError = 'Could not create the trip: $error');
+    }
   }
 
   Future<void> _editPendingDraft() async {
@@ -2270,6 +2284,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                               TextField(
                                 controller: budget,
                                 keyboardType: TextInputType.number,
+                                inputFormatters: const [
+                                  _GroupedNumberInputFormatter(),
+                                ],
                                 decoration: InputDecoration(
                                   labelText: appText(context, 'Total budget'),
                                   prefixText: '\$ ',
@@ -3044,7 +3061,19 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
     if (!mounted || confirmed != true) return;
     sheetNavigator.pop();
-    widget.onGenerate(_tripFromTemplate(template.trip));
+    if (_isCreatingTrip) return;
+    setState(() {
+      _isCreatingTrip = true;
+      _formError = null;
+    });
+    try {
+      await widget.onGenerate(_tripFromTemplate(template.trip));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _formError = 'Could not create the trip: $error');
+    } finally {
+      if (mounted) setState(() => _isCreatingTrip = false);
+    }
   }
 
   Future<void> _showTemplatePreview(_TripTemplate template) async {
@@ -3992,7 +4021,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                               _ManualFooterActions(
                                 onCancel: () => setState(() => _mode = 0),
                                 onCreate: _createManualTrip,
-                                isCreating: _isGenerating,
+                                isCreating: _isCreatingTrip || _isGenerating,
                               ),
                             ],
                           ),
@@ -4020,6 +4049,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         child: ListView(
           padding: _responsivePagePadding(context, top: 18),
           children: [
+            TopBar(title: 'Create trip', onBack: widget.onBack),
+            const SizedBox(height: 18),
             Text(
               appText(context, 'How do you want to start?'),
               style: Theme.of(
@@ -9302,6 +9333,9 @@ class _ManualFooterActions extends StatelessWidget {
 class _GroupedNumberInputFormatter extends TextInputFormatter {
   const _GroupedNumberInputFormatter();
 
+  // Maximum number of digits (separators excluded) the field accepts.
+  static const _maxDigits = 9;
+
   @override
   TextEditingValue formatEditUpdate(
     TextEditingValue oldValue,
@@ -9314,6 +9348,9 @@ class _GroupedNumberInputFormatter extends TextInputFormatter {
         selection: TextSelection.collapsed(offset: 0),
       );
     }
+
+    // Reject input beyond the digit cap by keeping the previous value.
+    if (digits.length > _maxDigits) return oldValue;
 
     final formatted = _formatDigits(digits);
     return TextEditingValue(

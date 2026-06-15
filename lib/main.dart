@@ -23,11 +23,9 @@ Future<void> main() async {
   // replace an otherwise usable page.
   FlutterError.onError = (_) {};
   PlatformDispatcher.instance.onError = (_, _) => true;
-  ErrorWidget.builder = (details) {
-    return PageErrorFallback(
-      error: AppErrorData.from(details.exception, details.stack),
-    );
-  };
+  // Error page disabled: render nothing instead of swapping in an error
+  // screen when a widget fails to build. PageErrorFallback is kept for reuse.
+  ErrorWidget.builder = (details) => const SizedBox.shrink();
 
   try {
     await Firebase.initializeApp(
