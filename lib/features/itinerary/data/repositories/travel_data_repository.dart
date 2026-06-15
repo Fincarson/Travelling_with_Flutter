@@ -80,6 +80,19 @@ class TravelDataRepository {
     ).snapshots().map((snapshot) => _memoriesFromDocs(snapshot.docs));
   }
 
+  Future<void> saveTripMemoryFeedback(
+    String accountId, {
+    required String tripId,
+    required int rating,
+    required String feedback,
+  }) {
+    return _memoriesRef(accountId).doc(tripId).set({
+      'rating': rating.clamp(1, 5),
+      'feedback': feedback.trim(),
+      'feedbackUpdatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   Future<void> archiveExpiredTrips(String accountId, {DateTime? now}) async {
     await migrateLegacyTrips(accountId);
     final memberships = await _membershipsRef(accountId).get();
@@ -89,9 +102,12 @@ class TravelDataRepository {
     for (final trip in trips) {
       if (!_shouldArchiveExpiredTrip(trip, current)) continue;
       try {
-        await _memoriesRef(
-          accountId,
-        ).doc(trip.id).set(TripMemory.fromTrip(trip, now: current).toMap());
+        await _memoriesRef(accountId)
+            .doc(trip.id)
+            .set(
+              TripMemory.fromTrip(trip, now: current).toMap(),
+              SetOptions(merge: true),
+            );
       } on FirebaseException catch (error) {
         if (error.code != 'permission-denied') rethrow;
       }

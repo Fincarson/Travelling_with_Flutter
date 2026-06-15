@@ -6,12 +6,14 @@ class CreateTripScreen extends StatefulWidget {
     required this.onGenerate,
     required this.profileLanguage,
     required this.savedTrips,
+    this.initialDestination,
     super.key,
   });
   final VoidCallback onBack;
   final Future<void> Function(Trip trip) onGenerate;
   final String profileLanguage;
   final List<Trip> savedTrips;
+  final String? initialDestination;
 
   @override
   State<CreateTripScreen> createState() => _CreateTripScreenState();
@@ -63,8 +65,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   static const _createTripChatTurnTimeout = Duration(seconds: 35);
   static const _tripGenerationTurnTimeout = Duration(seconds: 38);
 
-  final _places = GeoapifyPlacesService();
-  final _assistant = TravelAssistantService();
+  GeoapifyPlacesService? _placesService;
+  TravelAssistantService? _assistantService;
   final _deviceContextService = AppDeviceContextService();
   final _destination = TextEditingController();
   final _budget = TextEditingController();
@@ -107,6 +109,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   String? _selectedImage;
   final Set<String> _preferences = {'Culture', 'Food'};
   final Set<String> _planningGoalIds = {};
+
+  GeoapifyPlacesService get _places =>
+      _placesService ??= GeoapifyPlacesService();
+
+  TravelAssistantService get _assistant =>
+      _assistantService ??= TravelAssistantService();
 
   static const _preferenceOptions = [
     'Culture',
@@ -401,7 +409,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   void initState() {
     super.initState();
     _budget.addListener(_syncBudgetTextState);
-    unawaited(_loadDeviceContext());
+    final initialDestination = widget.initialDestination?.trim();
+    if (initialDestination != null && initialDestination.isNotEmpty) {
+      _destination.text = initialDestination;
+      _mode = 1;
+      _aiExpandedStep = 1;
+    }
   }
 
   @override
@@ -437,35 +450,16 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   void _syncBudgetTextState() {
+    if (!mounted) return;
     final hasText = _budget.text.trim().isNotEmpty;
     setState(() => _hasBudgetText = hasText);
   }
 
-  Future<void> _loadDeviceContext() async {
-    final context = await _deviceContextService.load();
-    if (!mounted) return;
-    final oldToday = _today();
-    final newToday = context.today;
+  void _openPlanningMode(int mode) {
     setState(() {
-      _deviceContext = context;
-      _tripStartLocation ??= TripStartLocation.fromContext(context);
-      if (_tripStartLocation?.isCurrentLocation == true &&
-          _startLocation.text.trim().isEmpty) {
-        _startLocation.text = 'Finding nearby address...';
-      }
-      if (_startDate.difference(oldToday).inDays == 0 &&
-          _endDate.difference(oldToday).inDays == 5) {
-        _startDate = newToday;
-        _endDate = newToday.add(const Duration(days: 5));
-      }
+      _mode = mode;
+      _formError = null;
     });
-    final start = _tripStartLocation;
-    if (start?.isCurrentLocation == true &&
-        start!.hasCoordinates &&
-        start.address == null &&
-        _startLocation.text.trim() == 'Finding nearby address...') {
-      unawaited(_resolveCurrentStartLocationAddress(start));
-    }
   }
 
   DateTime _today() {
@@ -861,10 +855,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   void _startAiChat() {
-    setState(() {
-      _mode = 3;
-      _formError = null;
-    });
+    _openPlanningMode(3);
   }
 
   Future<void> _sendCreateTripChat([String? value]) async {
@@ -3488,8 +3479,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
 
     if (_mode == 0) {
+      final performance = PerformanceScope.settingsOf(context);
       return ScreenScaffold(
         child: ListView(
+          key: const ValueKey('create-trip-landing-list'),
           padding: _responsivePagePadding(context, top: 18),
           children: [
             Text(
@@ -3499,34 +3492,78 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 18),
-            const AnimatedGlobe(),
-            const SizedBox(height: 22),
-            CreateOptionCard(
-              icon: Icons.explore_rounded,
-              title: 'AI Trip Builder',
-              text: 'Fill the essentials, then let AI create the route.',
-              onTap: () => setState(() => _mode = 1),
-            ),
-            const SizedBox(height: 12),
-            CreateOptionCard(
-              icon: Icons.auto_awesome_rounded,
-              title: 'AI Chat Planner',
-              text: 'Describe the trip in chat and let AI shape the draft.',
-              onTap: _startAiChat,
-            ),
-            const SizedBox(height: 12),
-            CreateOptionCard(
-              icon: Icons.edit_note_rounded,
-              title: 'Create Manually',
-              text: 'Enter destination, dates, budget, people, and tags.',
-              onTap: () => setState(() => _mode = 2),
-            ),
-            const SizedBox(height: 12),
-            CreateOptionCard(
-              icon: Icons.work_rounded,
-              title: 'Use Saved Trip Template',
-              text: 'Pick from past trips or UI-only online recommendations.',
-              onTap: _openTemplatePicker,
+            GlassPanel(
+              padding: EdgeInsets.all(performance.heavyVisualEffects ? 22 : 16),
+              child: Column(
+                children: [
+                  const TravelGlobePreview(),
+                  const SizedBox(height: 8),
+                  Text(
+                    appText(context, 'Choose how to shape your next journey'),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final twoColumns =
+                          performance.heavyVisualEffects &&
+                          constraints.maxWidth >= 620;
+                      final width = twoColumns
+                          ? (constraints.maxWidth - 12) / 2
+                          : constraints.maxWidth;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          SizedBox(
+                            width: width,
+                            child: CreateOptionCard(
+                              icon: Icons.explore_rounded,
+                              title: 'AI Trip Builder',
+                              text:
+                                  'Set the essentials and generate a complete route.',
+                              onTap: () => _openPlanningMode(1),
+                            ),
+                          ),
+                          SizedBox(
+                            width: width,
+                            child: CreateOptionCard(
+                              icon: Icons.auto_awesome_rounded,
+                              title: 'AI Chat Planner',
+                              text:
+                                  'Describe the feeling of the trip in a conversation.',
+                              onTap: _startAiChat,
+                            ),
+                          ),
+                          SizedBox(
+                            width: width,
+                            child: CreateOptionCard(
+                              icon: Icons.edit_note_rounded,
+                              title: 'Create Manually',
+                              text:
+                                  'Build the dates, budget, people, and stops yourself.',
+                              onTap: () => _openPlanningMode(2),
+                            ),
+                          ),
+                          SizedBox(
+                            width: width,
+                            child: CreateOptionCard(
+                              icon: Icons.work_rounded,
+                              title: 'Use a Template',
+                              text:
+                                  'Start from a past trip or a recommended structure.',
+                              onTap: _openTemplatePicker,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -3537,6 +3574,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       final pastTemplates = _pastTripTemplates;
       return ScreenScaffold(
         child: ListView(
+          key: const ValueKey('create-trip-template-list'),
           padding: _responsivePagePadding(context, top: 18),
           children: [
             TopBar(
@@ -3590,7 +3628,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                 padding: _responsivePagePadding(context, top: 10, bottom: 18),
                 children: [
                   if (isChatFresh) ...[
-                    const AnimatedGlobe(),
+                    const TravelGlobePreview(),
                     const SizedBox(height: 16),
                     Text(
                       appText(context, 'Hello, where would you like to go?'),
@@ -7977,23 +8015,53 @@ class _ManualFooterActions extends StatelessWidget {
           top: BorderSide(color: const Color(0xFFC2C7CC).withValues(alpha: .3)),
         ),
       ),
-      child: FilledButton.icon(
-        style: FilledButton.styleFrom(
-          backgroundColor: const Color(0xFF355872),
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(999),
-          ),
-        ),
-        onPressed: isCreating ? null : onCreate,
-        icon: isCreating
-            ? const SizedBox.square(
-                dimension: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.arrow_forward_rounded, size: 18),
-        label: Text(appText(context, isCreating ? 'CREATING' : 'CREATE TRIP')),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final cancel = TextButton(
+            onPressed: onCancel,
+            child: Text(
+              appText(context, 'Cancel'),
+              style: const TextStyle(
+                color: Color(0xFF42474C),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          );
+          final create = FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF355872),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            onPressed: isCreating ? null : onCreate,
+            icon: isCreating
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.arrow_forward_rounded, size: 18),
+            label: Text(
+              appText(context, isCreating ? 'Creating' : 'Create manually'),
+            ),
+          );
+
+          if (constraints.maxWidth < 390) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [create, const SizedBox(height: 8), cancel],
+            );
+          }
+          return Row(
+            children: [
+              cancel,
+              const Spacer(),
+              Flexible(child: create),
+            ],
+          );
+        },
       ),
     );
   }

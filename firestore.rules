@@ -475,10 +475,77 @@ service cloud.firestore {
         );
     }
 
+    function validTravelUserOnboarding() {
+      return !request.resource.data.keys().hasAny(['onboarding']) ||
+        (
+          request.resource.data.onboarding is map &&
+          (
+            !request.resource.data.onboarding.keys().hasAny(['ageRange']) ||
+            request.resource.data.onboarding.ageRange == null ||
+            request.resource.data.onboarding.ageRange in
+              ['Under 18', '18-24', '25-34', '35-44', '45-54', '55+']
+          ) &&
+          (
+            !request.resource.data.onboarding.keys().hasAny(['travelPace']) ||
+            request.resource.data.onboarding.travelPace in
+              ['Relaxed', 'Balanced', 'Fast']
+          )
+        );
+    }
+
+    function validTravelUserLegalConsent() {
+      return !request.resource.data.keys().hasAny(['legalConsent']) ||
+        (
+          request.resource.data.legalConsent is map &&
+          request.resource.data.legalConsent.termsVersion is string &&
+          request.resource.data.legalConsent.termsVersion.size() > 0 &&
+          request.resource.data.legalConsent.acceptedAt is timestamp &&
+          request.resource.data.legalConsent.draftTerms is bool
+        );
+    }
+
+    function validTravelUserPersonalization() {
+      return (
+          !request.resource.data.keys().hasAny(['favoritePlaces']) ||
+          (
+            request.resource.data.favoritePlaces is list &&
+            request.resource.data.favoritePlaces.size() <= 50
+          )
+        ) &&
+        (
+          !request.resource.data.keys().hasAny(['favoriteTripIds']) ||
+          (
+            request.resource.data.favoriteTripIds is list &&
+            request.resource.data.favoriteTripIds.size() <= 100
+          )
+        );
+    }
+
+    function validTripMemory() {
+      return (
+          !request.resource.data.keys().hasAny(['rating']) ||
+          (
+            request.resource.data.rating is int &&
+            request.resource.data.rating >= 1 &&
+            request.resource.data.rating <= 5
+          )
+        ) &&
+        (
+          !request.resource.data.keys().hasAny(['feedback']) ||
+          (
+            request.resource.data.feedback is string &&
+            request.resource.data.feedback.size() <= 400
+          )
+        );
+    }
+
     function canWriteOwnTravelUser(userId) {
       return signedIn() &&
         request.auth.uid == userId &&
-        validTravelUserSettings();
+        validTravelUserSettings() &&
+        validTravelUserOnboarding() &&
+        validTravelUserLegalConsent() &&
+        validTravelUserPersonalization();
     }
 
     match /travel_users/{userId} {
@@ -507,8 +574,10 @@ service cloud.firestore {
       }
 
       match /tripMemories/{memoryId} {
-        allow read, create, update, delete: if signedIn() &&
-          request.auth.uid == userId;
+        allow read, delete: if signedIn() && request.auth.uid == userId;
+        allow create, update: if signedIn() &&
+          request.auth.uid == userId &&
+          validTripMemory();
       }
 
       match /notificationTokens/{tokenId} {

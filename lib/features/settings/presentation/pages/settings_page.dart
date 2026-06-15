@@ -138,6 +138,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     currencyUpdateMode: _currencyUpdateMode,
     themeMode: _themeMode,
     currencySettingsVersion: 1,
+    ageRange: widget.user.ageRange,
+    travelPace: widget.user.travelPace,
+    termsAcceptedVersion: widget.user.termsAcceptedVersion,
+    termsAcceptedAt: widget.user.termsAcceptedAt,
     performanceSettings: widget.user.performanceSettings,
   );
 

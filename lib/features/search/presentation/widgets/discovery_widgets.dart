@@ -103,6 +103,27 @@ class AlertRail extends StatelessWidget {
   }
 }
 
+class TravelGlobePreview extends StatelessWidget {
+  const TravelGlobePreview({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = PerformanceScope.maybeSettingsOf(context);
+    if (kReleaseMode && kIsWasm && settings.heavyVisualEffects) {
+      return const AnimatedGlobe();
+    }
+    return const SizedBox(
+      height: 180,
+      child: CustomPaint(
+        painter: _GlobePainter(.18),
+        child: Center(
+          child: Icon(Icons.public_rounded, size: 76, color: _primary),
+        ),
+      ),
+    );
+  }
+}
+
 class AnimatedGlobe extends StatefulWidget {
   const AnimatedGlobe({super.key});
 
@@ -110,12 +131,8 @@ class AnimatedGlobe extends StatefulWidget {
   State<AnimatedGlobe> createState() => _AnimatedGlobeState();
 }
 
-class _AnimatedGlobeState extends State<AnimatedGlobe>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 8),
-  );
+class _AnimatedGlobeState extends State<AnimatedGlobe> {
+  FlutterEarthGlobeController? _earthController;
 
   @override
   void didChangeDependencies() {
@@ -125,49 +142,69 @@ class _AnimatedGlobeState extends State<AnimatedGlobe>
 
   @override
   void dispose() {
-    _controller.dispose();
+    final earthController = _earthController;
+    if (earthController?.isReady == true) {
+      earthController!.dispose();
+    } else {
+      earthController?.onLoaded = null;
+    }
     super.dispose();
   }
 
   void _syncController() {
     final settings = PerformanceScope.maybeSettingsOf(context);
     final shouldAnimate =
-        settings.animationsEnabled && settings.heavyVisualEffects;
-    if (!shouldAnimate) {
-      _controller.stop();
-      return;
+        kReleaseMode &&
+        kIsWasm &&
+        settings.animationsEnabled &&
+        settings.heavyVisualEffects;
+    final earthController = _earthController;
+    if (earthController != null) {
+      if (!earthController.isReady) {
+        earthController.isRotating = shouldAnimate;
+      } else if (shouldAnimate) {
+        earthController.startRotation(rotationSpeed: .04);
+      } else {
+        earthController.stopRotation();
+      }
     }
-
-    if (_controller.duration != settings.globeAnimationDuration) {
-      _controller.duration = settings.globeAnimationDuration;
-      if (_controller.isAnimating) _controller.repeat();
-    }
-    if (!_controller.isAnimating) _controller.repeat();
   }
 
   @override
   Widget build(BuildContext context) {
     final settings = PerformanceScope.settingsOf(context);
-    final shouldAnimate =
-        settings.animationsEnabled && settings.heavyVisualEffects;
+    final useEarthRenderer =
+        kReleaseMode && kIsWasm && settings.heavyVisualEffects;
+    final shouldAnimate = settings.animationsEnabled && useEarthRenderer;
+    if (useEarthRenderer && _earthController == null) {
+      _earthController = FlutterEarthGlobeController(
+        surface: const AssetImage('assets/globe/earth_day.jpg'),
+        nightSurface: const AssetImage('assets/globe/earth_night.jpg'),
+        background: const AssetImage('assets/globe/stars.jpg'),
+        rotationSpeed: .04,
+        isRotating: shouldAnimate,
+        zoom: .1,
+        minZoom: -.6,
+        maxZoom: 1.4,
+        atmosphereOpacity: .42,
+        zoomToMousePosition: true,
+      );
+      _earthController!.onLoaded = () {
+        if (!mounted) return;
+        final current = PerformanceScope.maybeSettingsOf(context);
+        if (current.animationsEnabled && current.heavyVisualEffects) {
+          _earthController?.startRotation(rotationSpeed: .04);
+        }
+      };
+    }
     return SizedBox(
-      height: 180,
-      child: shouldAnimate
-          ? AnimatedBuilder(
-              animation: _controller,
-              builder: (_, __) => CustomPaint(
-                painter: _GlobePainter(_controller.value),
-                child: const Center(
-                  child: Icon(Icons.public_rounded, size: 76, color: _primary),
-                ),
-              ),
-            )
-          : const CustomPaint(
-              painter: _GlobePainter(.18),
-              child: Center(
-                child: Icon(Icons.public_rounded, size: 76, color: _primary),
-              ),
-            ),
+      height: 260,
+      child: LayoutBuilder(
+        builder: (context, constraints) => FlutterEarthGlobe(
+          radius: math.min(122, constraints.maxWidth * .34),
+          controller: _earthController!,
+        ),
+      ),
     );
   }
 }

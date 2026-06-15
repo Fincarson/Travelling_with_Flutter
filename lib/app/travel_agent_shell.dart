@@ -1,9 +1,14 @@
 part of travel_agent_app;
 
 class TravelAgentApp extends StatefulWidget {
-  const TravelAgentApp({required this.account, super.key});
+  const TravelAgentApp({
+    required this.account,
+    this.startupOnboarding,
+    super.key,
+  });
 
   final AuthenticatedAccount account;
+  final PreAccountOnboardingData? startupOnboarding;
 
   @override
   State<TravelAgentApp> createState() => _TravelAgentAppState();
@@ -55,10 +60,13 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   Trip? _selectedTrip;
   Trip? _activeTrip;
   String? _pendingTripAiPrompt;
+  String? _suggestedDestination;
   String? _accountId;
   String? _activeChatId;
   String? _pendingNotificationPath;
   String? _loadError;
+  var _helpOpen = false;
+  var _tutorialDismissedForSession = false;
 
   int get _cachedTabIndex => switch (_tab) {
     _NavTab.home => 0,
@@ -130,6 +138,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       }
     }
 
+    user = widget.startupOnboarding?.applyToProfile(user) ?? user;
+
     if (!mounted) return;
     setState(() {
       _accountId = accountId;
@@ -200,13 +210,16 @@ class _TravelAgentAppState extends State<TravelAgentApp>
         .listen(
           (profile) {
             if (!mounted || profile == null) return;
-            final normalized = profile.currencySettingsVersion < 1
+            final normalizedRemote = profile.currencySettingsVersion < 1
                 ? profile.copyWith(
                     displayCurrencyCode: AppCurrency.fallbackCurrencyCode,
                     currencyUpdateMode: CurrencyUpdateMode.automatic,
                     currencySettingsVersion: 1,
                   )
                 : profile;
+            final normalized =
+                widget.startupOnboarding?.applyToProfile(normalizedRemote) ??
+                normalizedRemote;
             setState(() {
               _user = normalized;
               _loadError = null;
@@ -220,7 +233,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             );
             unawaited(_saveLocalProfile(accountId, normalized));
             if (profile.currencySettingsVersion < 1) {
-              unawaited(_repository.saveUser(accountId, normalized));
+              unawaited(_repository.saveUser(accountId, normalizedRemote));
             }
           },
           onError: (Object error) {
@@ -385,6 +398,64 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       );
       rethrow;
     }
+  }
+
+  Future<void> _toggleFavoritePlace(Destination destination) async {
+    final id = _favoritePlaceId(destination.name);
+    final places = [..._user.favoritePlaces];
+    final existing = places.indexWhere((place) => place.id == id);
+    if (existing == -1) {
+      places.add(FavoritePlace.fromDestination(destination));
+    } else {
+      places.removeAt(existing);
+    }
+    await _saveProfile(_user.copyWith(favoritePlaces: places));
+  }
+
+  Future<void> _toggleFavoriteTrip(Trip trip) async {
+    final ids = {..._user.favoriteTripIds};
+    if (!ids.add(trip.id)) ids.remove(trip.id);
+    await _saveProfile(_user.copyWith(favoriteTripIds: ids.toList()..sort()));
+  }
+
+  Future<void> _rateTripMemory(
+    TripMemory memory,
+    int rating,
+    String feedback,
+  ) async {
+    final accountId = _accountId ?? widget.account.uid;
+    await _repository.saveTripMemoryFeedback(
+      accountId,
+      tripId: memory.id,
+      rating: rating,
+      feedback: feedback,
+    );
+    if (!mounted) return;
+    setState(() {
+      final index = _tripMemories.indexWhere((item) => item.id == memory.id);
+      if (index != -1) {
+        _tripMemories[index] = memory.copyWith(
+          rating: rating,
+          feedback: feedback.trim(),
+        );
+      }
+    });
+  }
+
+  Future<void> _closeTutorial() async {
+    final shouldPersist = !_user.tutorialCompleted;
+    setState(() {
+      _helpOpen = false;
+      _tutorialDismissedForSession = true;
+    });
+    if (shouldPersist) {
+      await _saveProfile(_user.copyWith(tutorialCompleted: true));
+    }
+  }
+
+  void _createTripFromDestination(Destination destination) {
+    _suggestedDestination = destination.name;
+    context.go('/trips/new');
   }
 
   Future<UserProfile?> _loadLocalProfile(String accountId) async {
@@ -785,6 +856,25 @@ class _TravelAgentAppState extends State<TravelAgentApp>
                           top: 12,
                           child: SyncBanner(message: _loadError!),
                         ),
+                      Positioned(
+                        right: 14,
+                        bottom: 94,
+                        child: FloatingActionButton.small(
+                          heroTag: 'global-help',
+                          tooltip: 'App help',
+                          onPressed: () => setState(() => _helpOpen = true),
+                          child: const Icon(Icons.help_outline_rounded),
+                        ),
+                      ),
+                      if (_helpOpen ||
+                          (_user.onboardingCompleted &&
+                              !_user.tutorialCompleted &&
+                              !_tutorialDismissedForSession))
+                        Positioned.fill(
+                          child: _AppTutorialOverlay(
+                            onClose: () => unawaited(_closeTutorial()),
+                          ),
+                        ),
                     ],
                   ),
           ),
@@ -816,6 +906,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       user: _user,
       trips: _visibleTrips,
       activeTrip: _visibleActiveTrip,
+      memories: _tripMemories,
       onCreate: () => context.go('/trips/new'),
       onOpenTrip: (trip) => context.go(_tripLocation(trip.id)),
       onStartTrip: _startTrip,
@@ -827,7 +918,14 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       onOpenInfo: () => context.go('/tools/info'),
       onOpenTranslate: () => context.go('/tools/translate'),
       onOpenMap: () => context.go('/tools/map'),
-      onOpenNotifications: () => context.go('/notifications'),
+      onOpenNotifications: () {
+        context.go('/notifications');
+        if (!_user.notificationsEnabled) {
+          unawaited(_enableNotificationsFromDashboard());
+        }
+      },
+      onToggleFavoritePlace: _toggleFavoritePlace,
+      onAddPlaceToTrip: _createTripFromDestination,
     );
   }
 
@@ -863,6 +961,11 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       onOpenTrip: (trip) => context.go(_tripLocation(trip.id)),
       onStartTrip: _startTrip,
       onDeleteTrip: _deleteTrip,
+      favoriteTripIds: _user.favoriteTripIds,
+      onToggleFavoriteTrip: (trip) {
+        unawaited(_toggleFavoriteTrip(trip));
+      },
+      onRateMemory: _rateTripMemory,
     );
   }
 
@@ -870,8 +973,15 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     return CreateTripScreen(
       profileLanguage: _user.language,
       savedTrips: _trips,
-      onBack: () => context.go('/trips'),
-      onGenerate: _createTrip,
+      initialDestination: _suggestedDestination,
+      onBack: () {
+        _suggestedDestination = null;
+        context.go('/trips');
+      },
+      onGenerate: (trip) {
+        _suggestedDestination = null;
+        return _createTrip(trip);
+      },
     );
   }
 
@@ -965,7 +1075,16 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Widget _buildProfileScreen(BuildContext context) {
-    return ProfileScreen(account: widget.account, user: _user);
+    return ProfileScreen(
+      account: widget.account,
+      user: _user,
+      trips: _visibleTrips,
+      memories: _tripMemories,
+      onOpenTrip: (trip) => context.go(_tripLocation(trip.id)),
+      onToggleFavoriteTrip: (trip) {
+        unawaited(_toggleFavoriteTrip(trip));
+      },
+    );
   }
 
   void _setChatListAppBarActions(ChatListAppBarActions? actions) {
@@ -1545,4 +1664,159 @@ enum _Screen {
 
 class _TravelRouteRefresh extends ChangeNotifier {
   void notify() => notifyListeners();
+}
+
+class _AppTutorialOverlay extends StatefulWidget {
+  const _AppTutorialOverlay({required this.onClose});
+
+  final VoidCallback onClose;
+
+  @override
+  State<_AppTutorialOverlay> createState() => _AppTutorialOverlayState();
+}
+
+class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
+  final _controller = PageController();
+  var _page = 0;
+
+  static const _steps = [
+    (
+      Icons.home_rounded,
+      'Your travel dashboard',
+      'See your current trip, AI suggestions, saved places, and important alerts.',
+    ),
+    (
+      Icons.luggage_rounded,
+      'Trips in one place',
+      'Create plans, swipe to manage trips, and rate completed journeys.',
+    ),
+    (
+      Icons.forum_rounded,
+      'Plan together',
+      'Use group chat and the travel assistant while keeping every trip organized.',
+    ),
+    (
+      Icons.person_rounded,
+      'Your travel profile',
+      'Find favorite places and trips, settings, archives, and performance controls.',
+    ),
+  ];
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = PerformanceScope.maybeSettingsOf(context);
+    return Material(
+      color: Colors.black.withValues(alpha: .56),
+      child: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520, maxHeight: 560),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Material(
+                color: Theme.of(context).colorScheme.surface,
+                elevation: 16,
+                borderRadius: BorderRadius.circular(28),
+                clipBehavior: Clip.antiAlias,
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: IconButton(
+                          tooltip: 'Close tutorial',
+                          onPressed: widget.onClose,
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ),
+                      Expanded(
+                        child: PageView.builder(
+                          controller: _controller,
+                          physics: settings.animationsEnabled
+                              ? const PageScrollPhysics()
+                              : const NeverScrollableScrollPhysics(),
+                          itemCount: _steps.length,
+                          onPageChanged: (value) =>
+                              setState(() => _page = value),
+                          itemBuilder: (context, index) {
+                            final step = _steps[index];
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  IconBadge(icon: step.$1, size: 72),
+                                  const SizedBox(height: 24),
+                                  Text(
+                                    step.$2,
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineSmall
+                                        ?.copyWith(fontWeight: FontWeight.w900),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    step.$3,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                      height: 1.45,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          Text(
+                            '${_page + 1} of ${_steps.length}',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          const Spacer(),
+                          FilledButton(
+                            onPressed: () {
+                              if (_page == _steps.length - 1) {
+                                widget.onClose();
+                                return;
+                              }
+                              _controller.animateToPage(
+                                _page + 1,
+                                duration: settings.transitionDuration,
+                                curve: Curves.easeOutCubic,
+                              );
+                            },
+                            child: Text(
+                              _page == _steps.length - 1
+                                  ? 'Start exploring'
+                                  : 'Next',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

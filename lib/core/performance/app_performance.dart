@@ -226,8 +226,10 @@ class AppPerformanceSettings {
 class AppPerformanceController extends ChangeNotifier {
   static const _storageKey = 'app.performance.settings.v1';
 
-  AppPerformanceController()
-    : _settings = AppPerformanceSettings.forPreset(PerformancePreset.balanced);
+  AppPerformanceController({AppPerformanceSettings? initialSettings})
+    : _settings =
+          initialSettings ??
+          AppPerformanceSettings.forPreset(PerformancePreset.balanced);
 
   AppPerformanceSettings _settings;
   bool _loaded = false;
