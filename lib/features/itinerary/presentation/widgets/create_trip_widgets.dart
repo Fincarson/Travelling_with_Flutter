@@ -759,43 +759,168 @@ class DateRangeCard extends StatelessWidget {
   }
 }
 
-class GeneratingTripPanel extends StatelessWidget {
+class GeneratingTripPanel extends StatefulWidget {
   const GeneratingTripPanel({super.key});
 
   @override
+  State<GeneratingTripPanel> createState() => _GeneratingTripPanelState();
+}
+
+class _GeneratingTripPanelState extends State<GeneratingTripPanel> {
+  static const _steps = [
+    (icon: Icons.travel_explore, text: 'Connecting to AI travel agent...'),
+    (icon: Icons.location_on_outlined, text: 'Researching destination and local highlights...'),
+    (icon: Icons.calendar_today_outlined, text: 'Planning daily activities...'),
+    (icon: Icons.attach_money_outlined, text: 'Finding best prices and budgeting...'),
+    (icon: Icons.hotel_outlined, text: 'Building accommodation and booking suggestions...'),
+    (icon: Icons.directions_outlined, text: 'Mapping transportation routes...'),
+    (icon: Icons.checklist_outlined, text: 'Creating your packing checklist...'),
+    (icon: Icons.place_outlined, text: 'Searching for venue details and addresses...'),
+    (icon: Icons.photo_library_outlined, text: 'Finding photos for each stop...'),
+    (icon: Icons.auto_awesome_outlined, text: 'Finalizing your itinerary...'),
+  ];
+
+  static const _delaysMs = [0, 4000, 10000, 18000, 26000, 35000, 44000, 55000, 68000, 82000];
+
+  final List<bool> _visible = List.filled(_steps.length, false);
+  final List<Timer> _timers = [];
+
+  @override
+  void initState() {
+    super.initState();
+    for (var i = 0; i < _steps.length; i++) {
+      _timers.add(
+        Timer(Duration(milliseconds: _delaysMs[i]), () {
+          if (mounted) setState(() => _visible[i] = true);
+        }),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final t in _timers) {
+      t.cancel();
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final lastVisible = _visible.lastIndexWhere((v) => v);
     return GlassPanel(
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox.square(
-            dimension: 36,
-            child: CircularProgressIndicator(strokeWidth: 3),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          Row(
+            children: [
+              const SizedBox.square(
+                dimension: 36,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
                   appText(context, 'Generating schedule...'),
                   style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  appText(
-                    context,
-                    'AI is shaping the route, bookings, budget, and packing list.',
-                  ),
-                  style: const TextStyle(
-                    color: _secondary,
+              ),
+            ],
+          ),
+          for (var i = 0; i < _steps.length; i++)
+            AnimatedSize(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeOutCubic,
+              child: _visible[i]
+                  ? _GeneratingStep(
+                      icon: _steps[i].icon,
+                      text: _steps[i].text,
+                      isActive: i == lastVisible,
+                    )
+                  : const SizedBox.shrink(),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GeneratingStep extends StatefulWidget {
+  const _GeneratingStep({
+    required this.icon,
+    required this.text,
+    required this.isActive,
+  });
+
+  final IconData icon;
+  final String text;
+  final bool isActive;
+
+  @override
+  State<_GeneratingStep> createState() => _GeneratingStepState();
+}
+
+class _GeneratingStepState extends State<_GeneratingStep>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _opacity;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _opacity = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
+    _slide = Tween<Offset>(
+      begin: const Offset(0, 0.3),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: SlideTransition(
+        position: _slide,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(
+                widget.icon,
+                size: 15,
+                color: widget.isActive
+                    ? Theme.of(context).colorScheme.primary
+                    : _secondary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  widget.text,
+                  style: TextStyle(
                     fontSize: 12,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w600,
+                    color: widget.isActive
+                        ? Theme.of(context).colorScheme.primary
+                        : _secondary,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
