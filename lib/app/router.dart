@@ -260,13 +260,18 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
             ),
           ),
         ),
-        if (_showsBottomNav(widget.location))
-          _BottomNav(
-            tab: _tabForIndex,
-            onSelect: (tab) => _select(context, tab),
-          ),
       ],
     );
+  }
+
+  void _publishBottomNav() {
+    final controller = _showsBottomNav(widget.location)
+        ? _BottomNavController(tab: _tabForIndex, onSelect: _select)
+        : null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.appState._setBottomNav(controller);
+    });
   }
 
   Widget? _headerAction(BuildContext context, String location) {
@@ -305,7 +310,6 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     }
     return true;
   }
-
 
   _NavTab get _tabForIndex {
     return switch (widget.navigationShell.currentIndex) {
@@ -444,12 +448,13 @@ String? _parentLocation(String location) {
 }
 
 class _MainPageHeader extends StatelessWidget {
-  const _MainPageHeader({required this.action});
+  const _MainPageHeader({required this.title, this.action});
 
   static const height = 40.0;
   static const verticalPadding = 8.0;
 
-  final Widget action;
+  final String title;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -469,10 +474,34 @@ class _MainPageHeader extends StatelessWidget {
           color: pageColor,
           child: SizedBox(
             height: height,
-            child: Align(alignment: Alignment.centerRight, child: action),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    appText(context, title),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                if (action != null) action!,
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+}
+
+String? _mainPageTitle(String location) {
+  return switch (location) {
+    '/' => 'Home',
+    '/trips' => 'Trips',
+    '/chat' => 'Chat',
+    '/profile' => 'Profile',
+    _ => null,
+  };
 }
