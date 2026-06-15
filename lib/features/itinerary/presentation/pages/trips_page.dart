@@ -45,7 +45,7 @@ class _TripsScreenState extends State<TripsScreen> {
   final TextEditingController _searchController = TextEditingController();
   _TripsTab _selectedTab = _TripsTab.upcoming;
   _TripSort _sort = _TripSort.dateAscending;
-  String? _groupFilter;
+  int? _travelerFilter;
   bool _filtersExpanded = false;
 
   List<Trip> get _tabTrips {
@@ -63,7 +63,9 @@ class _TripsScreenState extends State<TripsScreen> {
   }
 
   List<TripMemory> get _visibleMemories {
-    if (_selectedTab != _TripsTab.past || _groupFilter != null) return const [];
+    if (_selectedTab != _TripsTab.past || _travelerFilter != null) {
+      return const [];
+    }
     final query = _searchController.text.trim().toLowerCase();
     final memories = widget.memories.where((memory) {
       if (query.isEmpty) return true;
@@ -83,10 +85,9 @@ class _TripsScreenState extends State<TripsScreen> {
     return memories;
   }
 
-  List<String> get _groupTypes {
+  List<int> get _travelerCounts {
     final values = widget.trips
-        .map((trip) => trip.groupType.trim())
-        .where((value) => value.isNotEmpty)
+        .map((trip) => trip.numOfTravelers.clamp(1, 99).toInt())
         .toSet()
         .toList();
     values.sort();
@@ -96,7 +97,7 @@ class _TripsScreenState extends State<TripsScreen> {
   int get _activeFilterCount {
     var count = 0;
     if (_searchController.text.trim().isNotEmpty) count++;
-    if (_groupFilter != null) count++;
+    if (_travelerFilter != null) count++;
     if (_sort != _TripSort.dateAscending) count++;
     return count;
   }
@@ -121,7 +122,7 @@ class _TripsScreenState extends State<TripsScreen> {
         !trip.title.toLowerCase().contains(query)) {
       return false;
     }
-    return _groupFilter == null || trip.groupType == _groupFilter;
+    return _travelerFilter == null || trip.numOfTravelers == _travelerFilter;
   }
 
   int _compareTrips(Trip a, Trip b) {
@@ -139,7 +140,7 @@ class _TripsScreenState extends State<TripsScreen> {
   void _clearFilters() {
     _searchController.clear();
     setState(() {
-      _groupFilter = null;
+      _travelerFilter = null;
       _sort = _TripSort.dateAscending;
     });
   }
@@ -213,13 +214,13 @@ class _TripsScreenState extends State<TripsScreen> {
                         padding: const EdgeInsets.only(top: 14),
                         child: _TripFilters(
                           searchController: _searchController,
-                          groupTypes: _groupTypes,
-                          selectedGroup: _groupFilter,
+                          travelerCounts: _travelerCounts,
+                          selectedTravelerCount: _travelerFilter,
                           selectedSort: _sort,
                           activeFilterCount: _activeFilterCount,
                           onSearchChanged: (_) => setState(() {}),
-                          onGroupSelected: (value) =>
-                              setState(() => _groupFilter = value),
+                          onTravelerCountSelected: (value) =>
+                              setState(() => _travelerFilter = value),
                           onSortSelected: (value) =>
                               setState(() => _sort = value),
                           onClear: _clearFilters,
@@ -235,7 +236,7 @@ class _TripsScreenState extends State<TripsScreen> {
                 child: hasResults
                     ? Column(
                         key: ValueKey(
-                          '${_selectedTab.name}-${_groupFilter ?? 'all'}-${_sort.name}-${_searchController.text}',
+                          '${_selectedTab.name}-${_travelerFilter ?? 'all'}-${_sort.name}-${_searchController.text}',
                         ),
                         children: [
                           for (final trip in trips)
@@ -556,23 +557,23 @@ class _TripsControlButton extends StatelessWidget {
 class _TripFilters extends StatelessWidget {
   const _TripFilters({
     required this.searchController,
-    required this.groupTypes,
-    required this.selectedGroup,
+    required this.travelerCounts,
+    required this.selectedTravelerCount,
     required this.selectedSort,
     required this.activeFilterCount,
     required this.onSearchChanged,
-    required this.onGroupSelected,
+    required this.onTravelerCountSelected,
     required this.onSortSelected,
     required this.onClear,
   });
 
   final TextEditingController searchController;
-  final List<String> groupTypes;
-  final String? selectedGroup;
+  final List<int> travelerCounts;
+  final int? selectedTravelerCount;
   final _TripSort selectedSort;
   final int activeFilterCount;
   final ValueChanged<String> onSearchChanged;
-  final ValueChanged<String?> onGroupSelected;
+  final ValueChanged<int?> onTravelerCountSelected;
   final ValueChanged<_TripSort> onSortSelected;
   final VoidCallback onClear;
 
@@ -639,10 +640,10 @@ class _TripFilters extends StatelessWidget {
                 );
               },
             ),
-            if (groupTypes.isNotEmpty) ...[
+            if (travelerCounts.isNotEmpty) ...[
               const SizedBox(height: 14),
               Text(
-                'TRAVEL GROUP',
+                'TRAVELERS',
                 style: TextStyle(
                   color: scheme.onSurfaceVariant,
                   fontSize: 10,
@@ -657,14 +658,14 @@ class _TripFilters extends StatelessWidget {
                 children: [
                   ChoiceChip(
                     label: const Text('All'),
-                    selected: selectedGroup == null,
-                    onSelected: (_) => onGroupSelected(null),
+                    selected: selectedTravelerCount == null,
+                    onSelected: (_) => onTravelerCountSelected(null),
                   ),
-                  for (final group in groupTypes)
+                  for (final count in travelerCounts)
                     ChoiceChip(
-                      label: Text(appText(context, group)),
-                      selected: selectedGroup == group,
-                      onSelected: (_) => onGroupSelected(group),
+                      label: Text(appText(context, _travelerCountLabel(count))),
+                      selected: selectedTravelerCount == count,
+                      onSelected: (_) => onTravelerCountSelected(count),
                     ),
                 ],
               ),

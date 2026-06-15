@@ -12,7 +12,7 @@ void main() {
     endDate: '2026-07-14',
     budget: 1200,
     spent: 450,
-    groupType: 'Solo',
+    numOfTravelers: 1,
     status: TripStatus.upcoming,
     images: [],
     items: [ScheduleItem(1, '09:00 AM', 'Taipei 101', Icons.place_rounded, 20)],
@@ -27,7 +27,7 @@ void main() {
     endDate: '2026-08-07',
     budget: 2400,
     spent: 900,
-    groupType: 'Friends',
+    numOfTravelers: 2,
     status: TripStatus.upcoming,
     images: [],
     items: [],
@@ -42,7 +42,7 @@ void main() {
     endDate: '2025-10-18',
     budget: 1800,
     spent: 1500,
-    groupType: 'Family',
+    numOfTravelers: 4,
     status: TripStatus.past,
     images: [],
     items: [],
@@ -95,17 +95,17 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('filters upcoming trips by travel group', (tester) async {
+  testWidgets('filters upcoming trips by traveler count', (tester) async {
     await pumpTrips(tester);
 
     await tester.tap(find.byKey(const ValueKey('trip-filter-button')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('trip-filter-panel')), findsOneWidget);
 
-    final friendsFilter = find.widgetWithText(ChoiceChip, 'Friends');
-    await tester.ensureVisible(friendsFilter);
+    final travelerFilter = find.widgetWithText(ChoiceChip, '2 travelers');
+    await tester.ensureVisible(travelerFilter);
     await tester.pumpAndSettle();
-    await tester.tap(friendsFilter);
+    await tester.tap(travelerFilter);
     await tester.pumpAndSettle();
 
     expect(find.text('Paris'), findsOneWidget);
@@ -189,7 +189,7 @@ class _DeleteTripsHostState extends State<_DeleteTripsHost> {
       endDate: '2026-07-14',
       budget: 1200,
       spent: 450,
-      groupType: 'Solo',
+      numOfTravelers: 1,
       status: TripStatus.upcoming,
       images: [],
       items: [],

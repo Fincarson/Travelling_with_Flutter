@@ -1506,6 +1506,30 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     );
   }
 
+  Future<void> _enableNotificationsFromDashboard() async {
+    try {
+      await _saveProfile(_user.copyWith(notificationsEnabled: true));
+      final result = await _syncPushTokenRegistrationResult(enabled: true);
+      if (!mounted || result.registered) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(appText(context, result.message))),
+        );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              appText(context, 'Could not enable notifications: $error'),
+            ),
+          ),
+        );
+    }
+  }
+
   void _queueTripAutomation(List<Trip> trips) {
     for (final trip in trips) {
       final key = _tripAutomationKey(trip);
