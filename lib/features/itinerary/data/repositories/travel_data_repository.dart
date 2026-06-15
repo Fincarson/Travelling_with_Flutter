@@ -3,6 +3,9 @@ part of travel_agent_app;
 class TravelDataRepository {
   const TravelDataRepository(this._firestore);
 
+  static const _visibleTripLimit = 100;
+  static const _visibleMemoryLimit = 100;
+
   final FirebaseFirestore _firestore;
 
   DocumentReference<Map<String, dynamic>> _userDoc(String accountId) =>
@@ -60,13 +63,17 @@ class TravelDataRepository {
 
   Future<List<Trip>> loadTrips(String accountId) async {
     await migrateLegacyTrips(accountId);
-    final memberships = await _membershipsRef(accountId).get();
+    final memberships = await _membershipsRef(
+      accountId,
+    ).orderBy('updatedAt', descending: true).limit(_visibleTripLimit).get();
     return _tripsFromMemberships(memberships.docs);
   }
 
   Future<List<TripMemory>> loadTripMemories(String accountId) async {
     try {
-      final snapshot = await _memoriesRef(accountId).get();
+      final snapshot = await _memoriesRef(
+        accountId,
+      ).limit(_visibleMemoryLimit).get();
       return _memoriesFromDocs(snapshot.docs);
     } on FirebaseException catch (error) {
       if (error.code == 'permission-denied') return const [];
@@ -75,9 +82,10 @@ class TravelDataRepository {
   }
 
   Stream<List<TripMemory>> watchTripMemories(String accountId) {
-    return _memoriesRef(
-      accountId,
-    ).snapshots().map((snapshot) => _memoriesFromDocs(snapshot.docs));
+    return _memoriesRef(accountId)
+        .limit(_visibleMemoryLimit)
+        .snapshots()
+        .map((snapshot) => _memoriesFromDocs(snapshot.docs));
   }
 
   Future<void> saveTripMemoryFeedback(
@@ -133,21 +141,25 @@ class TravelDataRepository {
       }
 
       if (controller.isClosed) return;
-      subscription = _membershipsRef(accountId).snapshots().listen(
-        (snapshot) async {
-          try {
-            final trips = await _tripsFromMemberships(snapshot.docs);
-            if (!controller.isClosed) controller.add(trips);
-          } catch (error, stackTrace) {
-            if (!controller.isClosed) {
-              controller.addError(error, stackTrace);
-            }
-          }
-        },
-        onError: (Object error, StackTrace stackTrace) {
-          if (!controller.isClosed) controller.addError(error, stackTrace);
-        },
-      );
+      subscription = _membershipsRef(accountId)
+          .orderBy('updatedAt', descending: true)
+          .limit(_visibleTripLimit)
+          .snapshots()
+          .listen(
+            (snapshot) async {
+              try {
+                final trips = await _tripsFromMemberships(snapshot.docs);
+                if (!controller.isClosed) controller.add(trips);
+              } catch (error, stackTrace) {
+                if (!controller.isClosed) {
+                  controller.addError(error, stackTrace);
+                }
+              }
+            },
+            onError: (Object error, StackTrace stackTrace) {
+              if (!controller.isClosed) controller.addError(error, stackTrace);
+            },
+          );
     });
 
     controller.onCancel = () => subscription?.cancel();
