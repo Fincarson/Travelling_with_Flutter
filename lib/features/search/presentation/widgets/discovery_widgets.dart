@@ -380,17 +380,24 @@ class AnimatedGlobe extends StatefulWidget {
   State<AnimatedGlobe> createState() => _AnimatedGlobeState();
 }
 
-class _AnimatedGlobeState extends State<AnimatedGlobe> {
+class _AnimatedGlobeState extends State<AnimatedGlobe>
+    with SingleTickerProviderStateMixin {
   FlutterEarthGlobeController? _earthController;
+  late final AnimationController _orbitController = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 12),
+  );
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _syncController();
+    _syncOrbit();
   }
 
   @override
   void dispose() {
+    _orbitController.dispose();
     final earthController = _earthController;
     if (earthController?.isReady == true) {
       earthController!.dispose();
@@ -398,6 +405,17 @@ class _AnimatedGlobeState extends State<AnimatedGlobe> {
       earthController?.onLoaded = null;
     }
     super.dispose();
+  }
+
+  // Drives the lightweight fallback globe (used on device / debug, where the
+  // WASM-only earth renderer is unavailable) so it still rotates.
+  void _syncOrbit() {
+    final settings = PerformanceScope.maybeSettingsOf(context);
+    if (settings.animationsEnabled) {
+      if (!_orbitController.isAnimating) _orbitController.repeat();
+    } else {
+      _orbitController.stop();
+    }
   }
 
   void _syncController() {
@@ -426,14 +444,26 @@ class _AnimatedGlobeState extends State<AnimatedGlobe> {
         kReleaseMode && kIsWasm && settings.heavyVisualEffects;
     final shouldAnimate = settings.animationsEnabled && useEarthRenderer;
     if (!useEarthRenderer) {
-      return const SizedBox(
+      _syncOrbit();
+      return SizedBox(
         height: 260,
-        child: CustomPaint(
-          painter: _GlobePainter(.18),
-          child: Center(
-            child: Icon(Icons.public_rounded, size: 92, color: _primary),
-          ),
-        ),
+        child: settings.animationsEnabled
+            ? AnimatedBuilder(
+                animation: _orbitController,
+                builder: (context, child) => CustomPaint(
+                  painter: _GlobePainter(_orbitController.value),
+                  child: child,
+                ),
+                child: const Center(
+                  child: Icon(Icons.public_rounded, size: 92, color: _primary),
+                ),
+              )
+            : const CustomPaint(
+                painter: _GlobePainter(.18),
+                child: Center(
+                  child: Icon(Icons.public_rounded, size: 92, color: _primary),
+                ),
+              ),
       );
     }
     if (useEarthRenderer && _earthController == null) {

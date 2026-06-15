@@ -587,13 +587,14 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Future<void> _createTrip(Trip trip) async {
-    final router = GoRouter.of(context);
+    // Use the shell's own router: this State sits above Router.withConfig, so
+    // GoRouter.of(context) here throws "No GoRouter found in context".
     final saved = await _saveTripOnline(trip);
     if (!saved || !mounted) return;
     setState(() => _selectedTrip = trip);
     await _refreshTripsFromBackend(selectTripId: trip.id);
-    if (!mounted || !context.mounted) return;
-    router.go(_tripLocation(trip.id));
+    if (!mounted) return;
+    _router.go(_tripLocation(trip.id));
   }
 
   Future<void> _startTrip(Trip trip) async {
@@ -722,6 +723,15 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       if (!mounted) return false;
       setState(() => _loadError = 'Could not save trip online: $error');
       _notifyRoutes();
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              appText(context, 'Could not save trip: $error'),
+            ),
+          ),
+        );
       return false;
     }
   }
