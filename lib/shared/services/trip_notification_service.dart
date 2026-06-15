@@ -1,8 +1,11 @@
 part of travel_agent_app;
 
 class TripNotificationService {
-  TripNotificationService({FlutterLocalNotificationsPlugin? notifications})
-    : _notifications = notifications ?? FlutterLocalNotificationsPlugin();
+  TripNotificationService({
+    FlutterLocalNotificationsPlugin? notifications,
+    Future<void> Function()? initializeNotifications,
+  }) : _notifications = notifications ?? FlutterLocalNotificationsPlugin(),
+       _initializeNotifications = initializeNotifications;
 
   static const _scheduledIdsKey = 'travel_agent.scheduled_activity_ids';
   static const _channelId = 'trip_activity_reminders';
@@ -12,6 +15,7 @@ class TripNotificationService {
   static const _maxScheduledActivities = 48;
 
   final FlutterLocalNotificationsPlugin _notifications;
+  final Future<void> Function()? _initializeNotifications;
   var _initialized = false;
   bool? _permissionsAllowed;
 
@@ -20,7 +24,7 @@ class TripNotificationService {
     required List<Trip> trips,
     required bool enabled,
   }) async {
-    if (browser_notifications.supportsBrowserNotifications) {
+    if (kIsWeb) {
       await _syncBrowserTripReminders(
         activeTrip: activeTrip,
         trips: trips,
@@ -28,6 +32,7 @@ class TripNotificationService {
       );
       return;
     }
+    if (!_supportsNativeNotifications) return;
 
     await _ensureInitialized();
 
@@ -107,9 +112,13 @@ class TripNotificationService {
   }
 
   Future<void> cancelTripReminders() async {
-    if (browser_notifications.supportsBrowserNotifications) {
+    if (kIsWeb) {
       final ids = await _loadScheduledIds();
       await browser_notifications.cancelBrowserNotifications(ids);
+      await _saveScheduledIds(const []);
+      return;
+    }
+    if (!_supportsNativeNotifications) {
       await _saveScheduledIds(const []);
       return;
     }
@@ -159,7 +168,10 @@ class TripNotificationService {
           notifyAt: dayBefore,
           title: '${trip.destination} starts tomorrow',
           body: 'Open your itinerary and start the trip when you are ready.',
-          payload: trip.id,
+          payload: _tripNotificationPayload(
+            type: 'trip_start',
+            tripId: trip.id,
+          ),
         );
         scheduledIds.add(id);
       }
@@ -172,7 +184,10 @@ class TripNotificationService {
           notifyAt: departureDay,
           title: '${trip.destination} starts today',
           body: 'Your trip is waiting. Tap Start trip to activate the agent.',
-          payload: trip.id,
+          payload: _tripNotificationPayload(
+            type: 'trip_start',
+            tripId: trip.id,
+          ),
         );
         scheduledIds.add(id);
       }
@@ -195,7 +210,10 @@ class TripNotificationService {
           notifyAt: notifyAt,
           title: '${activeTrip.destination} in 1 hour',
           body: '${item.time} - ${item.activity}',
-          payload: activeTrip.id,
+          payload: _tripNotificationPayload(
+            type: 'trip_activity',
+            tripId: activeTrip.id,
+          ),
         );
         scheduledIds.add(id);
       }
@@ -215,22 +233,39 @@ class TripNotificationService {
       tz.setLocalLocation(tz.local);
     }
 
-    const initializationSettings = InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-      iOS: DarwinInitializationSettings(
-        requestAlertPermission: false,
-        requestBadgePermission: false,
-        requestSoundPermission: false,
-      ),
-      macOS: DarwinInitializationSettings(
-        requestAlertPermission: false,
-        requestBadgePermission: false,
-        requestSoundPermission: false,
-      ),
-    );
-
-    await _notifications.initialize(settings: initializationSettings);
+    final initializeNotifications = _initializeNotifications;
+    if (initializeNotifications != null) {
+      await initializeNotifications();
+    } else {
+      const initializationSettings = InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        iOS: DarwinInitializationSettings(
+          requestAlertPermission: false,
+          requestBadgePermission: false,
+          requestSoundPermission: false,
+        ),
+        macOS: DarwinInitializationSettings(
+          requestAlertPermission: false,
+          requestBadgePermission: false,
+          requestSoundPermission: false,
+        ),
+        linux: LinuxInitializationSettings(defaultActionName: 'Open'),
+        windows: WindowsInitializationSettings(
+          appName: 'Travel Agent',
+          appUserModelId: 'IndieeGo.TravelAgent',
+          guid: '8e3b65d5-8b6d-4da2-8c6f-68a5e4e8d4c2',
+        ),
+      );
+      await _notifications.initialize(settings: initializationSettings);
+    }
     _initialized = true;
+  }
+
+  bool get _supportsNativeNotifications {
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.windows;
   }
 
   Future<bool> _ensurePermissions() async {
@@ -293,9 +328,10 @@ class TripNotificationService {
         ),
         iOS: DarwinNotificationDetails(),
         macOS: DarwinNotificationDetails(),
+        windows: WindowsNotificationDetails(),
       ),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      payload: trip.id,
+      payload: _tripNotificationPayload(type: 'trip_activity', tripId: trip.id),
     );
   }
 
@@ -323,9 +359,10 @@ class TripNotificationService {
         ),
         iOS: DarwinNotificationDetails(),
         macOS: DarwinNotificationDetails(),
+        windows: WindowsNotificationDetails(),
       ),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      payload: trip.id,
+      payload: _tripNotificationPayload(type: 'trip_start', tripId: trip.id),
     );
   }
 
@@ -351,6 +388,17 @@ class TripNotificationService {
       hash = 0x1fffffff & (hash * 37 + codeUnit);
     }
     return 100000 + ((hash + index) % 900000);
+  }
+
+  String _tripNotificationPayload({
+    required String type,
+    required String tripId,
+  }) {
+    return jsonEncode({
+      'type': type,
+      'tripId': tripId,
+      'targetPath': '/trips/${Uri.encodeComponent(tripId)}',
+    });
   }
 
   Future<List<int>> _loadScheduledIds() async {

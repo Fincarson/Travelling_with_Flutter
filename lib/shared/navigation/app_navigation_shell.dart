@@ -7,6 +7,7 @@ class _BottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Positioned(
       left: 0,
       right: 0,
@@ -14,9 +15,9 @@ class _BottomNav extends StatelessWidget {
       child: Container(
         height: 88,
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          border: Border(top: BorderSide(color: Color(0xFFEFF3F6))),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerLow,
+          border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -43,10 +44,13 @@ class _BottomNav extends StatelessWidget {
                   offset: const Offset(0, -18),
                   child: FloatingActionButton(
                     heroTag: 'add-trip',
-                    backgroundColor: _primary,
-                    foregroundColor: Colors.white,
-                    shape: const CircleBorder(
-                      side: BorderSide(color: Colors.white, width: 4),
+                    backgroundColor: colorScheme.primary,
+                    foregroundColor: colorScheme.onPrimary,
+                    shape: CircleBorder(
+                      side: BorderSide(
+                        color: colorScheme.surfaceContainerLow,
+                        width: 4,
+                      ),
                     ),
                     onPressed: () => onSelect(_NavTab.add),
                     child: const Icon(Icons.add_rounded, size: 34),

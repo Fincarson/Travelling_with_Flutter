@@ -170,16 +170,20 @@ class _TripMapTabState extends State<TripMapTab> {
           ),
         ),
         const SizedBox(height: 12),
-        if (runtime.todaysItems.isEmpty)
-          const _MapEmptyPanel()
-        else
+        if (runtime.todaysItems.isNotEmpty)
           for (final item in runtime.todaysItems)
             _MapSelectableScheduleTile(
               item: item,
+              currency: widget.trip.currency,
               stop: _stopForItem(item),
               selected: _selectedStop?.id == _stopForItem(item)?.id,
               onSelectStop: _selectStop,
-            ),
+            )
+        else if (widget.trip.items.isNotEmpty)
+          for (final item in widget.trip.items.take(6))
+            ScheduleTile(item: item, currency: widget.trip.currency)
+        else
+          const _MapEmptyPanel(),
       ],
     );
   }
@@ -454,12 +458,14 @@ class _MapStopCard extends StatelessWidget {
 class _MapSelectableScheduleTile extends StatelessWidget {
   const _MapSelectableScheduleTile({
     required this.item,
+    required this.currency,
     required this.stop,
     required this.selected,
     required this.onSelectStop,
   });
 
   final ScheduleItem item;
+  final String currency;
   final _MapItineraryStop? stop;
   final bool selected;
   final ValueChanged<_MapItineraryStop> onSelectStop;
@@ -467,7 +473,7 @@ class _MapSelectableScheduleTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mappedStop = stop;
-    if (mappedStop == null) return ScheduleTile(item: item);
+    if (mappedStop == null) return ScheduleTile(item: item, currency: currency);
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(26),
@@ -480,7 +486,7 @@ class _MapSelectableScheduleTile extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(26),
           onTap: () => onSelectStop(mappedStop),
-          child: ScheduleTile(item: item),
+          child: ScheduleTile(item: item, currency: currency),
         ),
       ),
     );

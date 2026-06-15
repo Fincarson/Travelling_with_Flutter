@@ -45,8 +45,8 @@ Thumbs.db
 *.env
 lib/core/config/local_api_keys.dart
 
-# Firebase configs
-android/app/google-services.json
+# Firebase Apple config stays local; Android config is committed so OAuth
+# client mappings for the registered package and SHA certificates are shared.
 ios/Runner/GoogleService-Info.plist
 web/firebase-push-config.json
 

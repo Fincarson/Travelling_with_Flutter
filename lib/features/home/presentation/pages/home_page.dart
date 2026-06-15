@@ -9,6 +9,9 @@ class DashboardScreen extends StatefulWidget {
     required this.onOpenTrip,
     required this.onStartTrip,
     required this.onAskAi,
+    required this.onOpenMap,
+    required this.onOpenInfo,
+    required this.onOpenTranslate,
     required this.onOpenNotifications,
     super.key,
   });
@@ -19,6 +22,9 @@ class DashboardScreen extends StatefulWidget {
   final ValueChanged<Trip> onOpenTrip;
   final ValueChanged<Trip> onStartTrip;
   final ValueChanged<String> onAskAi;
+  final VoidCallback onOpenMap;
+  final VoidCallback onOpenInfo;
+  final VoidCallback onOpenTranslate;
   final VoidCallback onOpenNotifications;
 
   @override
@@ -35,7 +41,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return ScreenScaffold(
       bottomPadding: 92,
       child: ListView(
-        padding: _responsivePagePadding(context, top: 24, bottom: 112),
+        padding: _responsivePagePadding(context, top: 12, bottom: 112),
         children: [
           Row(
             children: [
@@ -43,7 +49,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    LabelText(_profileText(widget.user.language, 'welcome')),
+                    LabelText(appText(context, 'Welcome Back')),
                     Text(
                       '${widget.user.name.isEmpty ? 'Explorer' : widget.user.name}!',
                       style: Theme.of(context).textTheme.headlineSmall
@@ -93,7 +99,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (trip == null) ...[
             _EmptyTripCard(onCreate: widget.onCreate),
           ] else ...[
-            LabelText(_profileText(widget.user.language, 'currentTrip')),
+            LabelText(
+              appText(context, 'Current trip'),
+            ), // TODO make responsive: show current/past/upcoming trip
             const SizedBox(height: 8),
             CurrentTripCard(
               trip: trip,
@@ -101,6 +109,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onStart: trip.status == TripStatus.ongoing
                   ? null
                   : () => widget.onStartTrip(trip),
+            ),
+            const SizedBox(height: 22),
+            ResponsiveActionWrap(
+              children: [
+                QuickAction(
+                  icon: Icons.info_outline_rounded,
+                  label: 'Info',
+                  onTap: widget.onOpenInfo,
+                ),
+                QuickAction(
+                  icon: Icons.map_rounded,
+                  label: 'Map',
+                  onTap: widget.onOpenMap,
+                ),
+                QuickAction(
+                  icon: Icons.translate_rounded,
+                  label: 'Translate',
+                  onTap: widget.onOpenTranslate,
+                ),
+                QuickAction(
+                  icon: Icons.auto_awesome_rounded,
+                  label: 'AI',
+                  onTap: () => widget.onAskAi(_dailyTripPrompt(trip)),
+                ),
+              ],
             ),
           ],
           const SizedBox(height: 28),
@@ -122,6 +155,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
+}
+
+String _dailyTripPrompt(Trip trip) {
+  if (trip.status != TripStatus.ongoing) {
+    return 'Help me prepare to start my ${trip.destination} trip.';
+  }
+  final runtime = _tripRuntimePlan(trip);
+  final next = runtime.nextItem;
+  final base =
+      'I am currently running my ${trip.destination} trip. Today is day ${runtime.currentDay} of ${runtime.totalDays}.';
+  if (next == null) {
+    return '$base Help me plan the rest of today based on my schedule, current time, and location if available.';
+  }
+  return '$base My next scheduled activity is "${next.activity}" at ${next.time}. Help me run today smoothly using current time and location if available.';
 }
 
 class _EmptyTripCard extends StatelessWidget {

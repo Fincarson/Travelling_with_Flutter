@@ -1,12 +1,36 @@
 part of travel_agent_app;
 
 class LoadingScreen extends StatelessWidget {
-  const LoadingScreen({super.key});
+  const LoadingScreen({required this.message, super.key});
+
+  final String message;
 
   @override
   Widget build(BuildContext context) {
-    return const ScreenScaffold(
-      child: Center(child: CircularProgressIndicator(color: _primary)),
+    return ScreenScaffold(
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(color: _primary),
+                const SizedBox(height: 22),
+                Text(
+                  appText(context, message),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -18,39 +42,14 @@ class SyncBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.transparent,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFF7ED),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFFED7AA)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .08),
-              blurRadius: 24,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.cloud_off_rounded, color: Color(0xFFB45309)),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                appText(context, message),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF92400E),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  height: 1.25,
-                ),
-              ),
-            ),
-          ],
+      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      elevation: 8,
+      borderRadius: BorderRadius.circular(22),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: UnexpectedErrorView(
+          error: AppErrorData.fromMessage(message),
+          compact: true,
         ),
       ),
     );
@@ -63,6 +62,19 @@ class FormNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (looksLikeTechnicalError(message)) {
+      return Material(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: UnexpectedErrorView(
+            error: AppErrorData.fromMessage(message),
+            compact: true,
+          ),
+        ),
+      );
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(

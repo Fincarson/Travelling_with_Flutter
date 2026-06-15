@@ -51,6 +51,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
   Future<void> _addScheduleStop(BuildContext context) async {
     final mode = await showModalBottomSheet<_ScheduleStopMode>(
       context: context,
+      useRootNavigator: true,
       backgroundColor: Colors.transparent,
       builder: (context) => SafeArea(
         child: Padding(
@@ -67,15 +68,20 @@ class _ScheduleTabState extends State<ScheduleTab> {
                 icon: Icons.edit_note_rounded,
                 title: 'Add manually',
                 text: 'Type the activity, time, day, and cost yourself.',
-                onTap: () =>
-                    Navigator.of(context).pop(_ScheduleStopMode.manual),
+                onTap: () => Navigator.of(
+                  context,
+                  rootNavigator: true,
+                ).pop(_ScheduleStopMode.manual),
               ),
               const SizedBox(height: 10),
               _AddStopModeCard(
                 icon: Icons.auto_awesome_rounded,
                 title: 'Add with AI',
                 text: 'Describe what you need and let AI suggest one stop.',
-                onTap: () => Navigator.of(context).pop(_ScheduleStopMode.ai),
+                onTap: () => Navigator.of(
+                  context,
+                  rootNavigator: true,
+                ).pop(_ScheduleStopMode.ai),
               ),
             ],
           ),
@@ -156,7 +162,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: Text(appText(context, 'Add schedule stop')),
+            title: Text(appText(context, 'Add destination')),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -194,11 +200,12 @@ class _ScheduleTabState extends State<ScheduleTab> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () =>
+                    Navigator.of(context, rootNavigator: true).pop(),
                 child: Text(appText(context, 'Cancel')),
               ),
               FilledButton(
-                onPressed: () => Navigator.of(context).pop(
+                onPressed: () => Navigator.of(context, rootNavigator: true).pop(
                   ScheduleItem(
                     day,
                     time.text.trim().isEmpty ? '10:00 AM' : time.text.trim(),
@@ -248,11 +255,12 @@ class _ScheduleTabState extends State<ScheduleTab> {
                     )
                     .timeout(const Duration(seconds: 20));
                 if (!context.mounted) return;
-                Navigator.of(context).pop(item);
+                Navigator.of(context, rootNavigator: true).pop(item);
               } catch (_) {
                 if (!context.mounted) return;
                 Navigator.of(
                   context,
+                  rootNavigator: true,
                 ).pop(_fallbackAiScheduleStop(trip, day, description.text));
               }
             }
@@ -298,7 +306,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
                 TextButton(
                   onPressed: isGenerating
                       ? null
-                      : () => Navigator.of(context).pop(),
+                      : () => Navigator.of(context, rootNavigator: true).pop(),
                   child: Text(appText(context, 'Cancel')),
                 ),
                 FilledButton.icon(
@@ -398,7 +406,6 @@ class _ScheduleTabState extends State<ScheduleTab> {
 
   @override
   Widget build(BuildContext context) {
-    final runtime = _tripRuntimePlan(trip);
     final grouped = <int, List<({int index, ScheduleItem item})>>{};
     for (var index = 0; index < trip.items.length; index++) {
       final item = trip.items[index];
@@ -423,44 +430,44 @@ class _ScheduleTabState extends State<ScheduleTab> {
         ),
         const SizedBox(height: 16),
         PrimaryButton(
-          label: 'Add schedule stop',
+          label: 'Add destination',
           icon: Icons.add_rounded,
-          onPressed: () => unawaited(_addScheduleStop(context)),
+          onPressed: () => _addScheduleStop(context),
         ),
         const SizedBox(height: 16),
-        if (trip.status == TripStatus.ongoing) ...[
-          GlassPanel(
-            child: Row(
-              children: [
-                const IconBadge(icon: Icons.auto_awesome_rounded, size: 44),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      LabelText(
-                        'Today is day ${runtime.currentDay} of ${runtime.totalDays}',
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        runtime.nextItem == null
-                            ? 'No more scheduled stops are waiting right now.'
-                            : 'Next: ${runtime.nextItem!.activity} at ${runtime.nextItem!.time}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _primary,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
+        // if (trip.status == TripStatus.ongoing) ...[
+        // GlassPanel(
+        //   child: Row(
+        //     children: [
+        //       const IconBadge(icon: Icons.auto_awesome_rounded, size: 44),
+        //       const SizedBox(width: 12),
+        //       Expanded(
+        //         child: Column(
+        //           crossAxisAlignment: CrossAxisAlignment.start,
+        //           children: [
+        //             LabelText(
+        //               'Today is day ${runtime.currentDay} of ${runtime.totalDays}',
+        //             ),
+        //             const SizedBox(height: 4),
+        //             Text(
+        //               runtime.nextItem == null
+        //                   ? 'No more scheduled stops are waiting right now.'
+        //                   : 'Next: ${runtime.nextItem!.activity} at ${runtime.nextItem!.time}',
+        //               maxLines: 2,
+        //               overflow: TextOverflow.ellipsis,
+        //               style: const TextStyle(
+        //                 color: _primary,
+        //                 fontWeight: FontWeight.w900,
+        //               ),
+        //             ),
+        //           ],
+        //         ),
+        //       ),
+        //     ],
+        //   ),
+        // ),
+        // const SizedBox(height: 16),
+        // ],
         if (grouped.isEmpty) ...[
           GlassPanel(
             child: Column(
@@ -489,7 +496,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
           ),
           const SizedBox(height: 12),
         ],
-        LabelText('${appText(context, 'Day')} $_selectedDay'),
+        // LabelText('${appText(context, 'Day')} $_selectedDay'),
         const SizedBox(height: 10),
         if (selectedEntries.isEmpty)
           _ScheduleAutofillPanel(
@@ -517,6 +524,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
               onDismissed: (_) => _removeScheduleStop(entry.index),
               child: ScheduleTile(
                 item: entry.item,
+                currency: widget.trip.currency,
                 onDelete: () => _removeScheduleStop(entry.index),
               ),
             ),

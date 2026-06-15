@@ -94,35 +94,13 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
       bottomPadding: 92,
       child: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
-          SliverToBoxAdapter(
-            child: Column(
-              children: [
-                Padding(
-                  padding: _responsivePagePadding(context, top: 18, bottom: 10),
-                  child: TopBar(
-                    title: _trip.destination,
-                    onBack: widget.onBack,
-                  ),
-                ),
-                SizedBox(
-                  height: MediaQuery.sizeOf(context).width < 340 ? 150 : 190,
-                  child: HeroTripCard(trip: _trip),
-                ),
-                const SizedBox(height: 12),
-                Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: _responsiveHorizontalPadding(context),
-                  ),
-                  child: _TripSectionButtonGrid(
-                    sections: sections,
-                    selectedIndex: selectedIndex,
-                    onSelect: (index) =>
-                        setState(() => _selectedSectionIndex = index),
-                  ),
-                ),
-                const SizedBox(height: 4),
-              ],
-            ),
+          _TripDetailSliverAppBar(
+            trip: _trip,
+            sections: sections,
+            selectedIndex: selectedIndex,
+            forceElevated: innerBoxIsScrolled,
+            onBack: widget.onBack,
+            onSelect: (index) => setState(() => _selectedSectionIndex = index),
           ),
         ],
         body: sections[selectedIndex].child,
@@ -187,54 +165,156 @@ class _TripDetailSection {
   final Widget child;
 }
 
-class _TripSectionButtonGrid extends StatelessWidget {
-  const _TripSectionButtonGrid({
+class _TripDetailSliverAppBar extends StatelessWidget {
+  const _TripDetailSliverAppBar({
+    required this.trip,
     required this.sections,
     required this.selectedIndex,
+    required this.forceElevated,
+    required this.onBack,
     required this.onSelect,
   });
 
-  static const _buttonSpacing = 10.0;
-  static const _minButtonWidth = 66.0;
-  static const _maxButtonWidth = 92.0;
-
+  final Trip trip;
   final List<_TripDetailSection> sections;
   final int selectedIndex;
+  final bool forceElevated;
+  final VoidCallback onBack;
   final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final bannerHeight = width < 340 ? 148.0 : (width < 700 ? 188.0 : 216.0);
+    final expandedHeight =
+        kToolbarHeight + bannerHeight + _TripSectionTabBar.height + 28;
+
+    return SliverAppBar(
+      pinned: true,
+      stretch: true,
+      forceElevated: forceElevated,
+      expandedHeight: expandedHeight,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      surfaceTintColor: Colors.transparent,
+      foregroundColor: _primary,
+      automaticallyImplyLeading: false,
+      leading: Padding(
+        padding: const EdgeInsets.only(left: 8),
+        child: IconButton(
+          tooltip: appText(context, 'Back'),
+          onPressed: onBack,
+          icon: const Icon(Icons.arrow_back_rounded),
+          color: _primary,
+        ),
+      ),
+      flexibleSpace: _TripDetailFlexibleBanner(trip: trip),
+      bottom: _TripSectionTabBar(
+        sections: sections,
+        selectedIndex: selectedIndex,
+        onSelect: onSelect,
+      ),
+    );
+  }
+}
+
+class _TripDetailFlexibleBanner extends StatelessWidget {
+  const _TripDetailFlexibleBanner({required this.trip});
+
+  final Trip trip;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final maxButtonsPerRow = math.max(
-          1,
-          ((constraints.maxWidth + _buttonSpacing) /
-                  (_minButtonWidth + _buttonSpacing))
-              .floor(),
+        const bannerBottom = _TripSectionTabBar.height;
+        final contentHeight = math.max(
+          0.0,
+          constraints.maxHeight - bannerBottom,
         );
-        final buttonsInRow = math.min(sections.length, maxButtonsPerRow);
-        final rawButtonWidth =
-            (constraints.maxWidth -
-                (_buttonSpacing * math.max(0, buttonsInRow - 1))) /
-            buttonsInRow;
-        final buttonWidth = rawButtonWidth
-            .clamp(_minButtonWidth, _maxButtonWidth)
-            .toDouble();
+        final contentOpacity = ((contentHeight - 126) / 120).clamp(0.0, 1.0);
+        final collapsedOpacity = (1.0 - ((contentHeight - 72) / 72)).clamp(
+          0.0,
+          1.0,
+        );
+        final imageOpacity = ((contentHeight - 72) / 120).clamp(0.0, 1.0);
+        final background = Theme.of(context).scaffoldBackgroundColor;
 
-        return Wrap(
-          alignment: WrapAlignment.center,
-          spacing: _buttonSpacing,
-          runSpacing: 10,
+        return Stack(
+          fit: StackFit.expand,
           children: [
-            for (var index = 0; index < sections.length; index++)
-              SizedBox(
-                width: buttonWidth,
-                child: _TripSectionButton(
-                  section: sections[index],
-                  selected: selectedIndex == index,
-                  onTap: () => onSelect(index),
+            Positioned.fill(
+              bottom: bannerBottom,
+              child: ColoredBox(color: background),
+            ),
+            Positioned.fill(
+              bottom: bannerBottom,
+              child: Opacity(
+                opacity: imageOpacity,
+                child: Image.network(
+                  trip.images.first,
+                  fit: BoxFit.cover,
+                  filterQuality: PerformanceScope.maybeSettingsOf(
+                    context,
+                  ).filterQuality,
+                  errorBuilder: (_, __, ___) =>
+                      const ColoredBox(color: _primary),
                 ),
               ),
+            ),
+            Positioned.fill(
+              bottom: bannerBottom,
+              child: Opacity(
+                opacity: imageOpacity,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        _primary.withValues(alpha: .86),
+                        _primary.withValues(alpha: .45),
+                        _primary.withValues(alpha: .9),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: _responsiveHorizontalPadding(context),
+              right: _responsiveHorizontalPadding(context),
+              bottom: bannerBottom + 18,
+              child: Opacity(
+                opacity: contentOpacity,
+                child: IgnorePointer(
+                  ignoring: contentOpacity == 0,
+                  child: _TripHeaderBannerContent(trip: trip),
+                ),
+              ),
+            ),
+            Positioned(
+              left: kToolbarHeight + 12,
+              right: 16,
+              top: MediaQuery.paddingOf(context).top,
+              height: kToolbarHeight,
+              child: Opacity(
+                opacity: collapsedOpacity,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    trip.destination,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _primary,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         );
       },
@@ -242,8 +322,213 @@ class _TripSectionButtonGrid extends StatelessWidget {
   }
 }
 
-class _TripSectionButton extends StatelessWidget {
-  const _TripSectionButton({
+class _TripHeaderBannerContent extends StatelessWidget {
+  const _TripHeaderBannerContent({required this.trip});
+
+  final Trip trip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          trip.destination,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: MediaQuery.sizeOf(context).width < 340 ? 24 : 30,
+            height: 1,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '${trip.startDate} ~ ${trip.endDate}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: .82),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Icon(
+              Icons.person_rounded,
+              color: Colors.white.withValues(alpha: .82),
+              size: 20,
+            ),
+            Flexible(
+              child: Text(
+                trip.numOfTravelers.toString(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.5,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _TripSectionTabBar extends StatefulWidget implements PreferredSizeWidget {
+  const _TripSectionTabBar({
+    required this.sections,
+    required this.selectedIndex,
+    required this.onSelect,
+  });
+
+  static const height = 76.0;
+
+  final List<_TripDetailSection> sections;
+  final int selectedIndex;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Size get preferredSize => const Size.fromHeight(height);
+
+  @override
+  State<_TripSectionTabBar> createState() => _TripSectionTabBarState();
+}
+
+class _TripSectionTabBarState extends State<_TripSectionTabBar> {
+  final _controller = ScrollController();
+  var _canScrollLeft = false;
+  var _canScrollRight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_refreshScrollHints);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshScrollHints());
+  }
+
+  @override
+  void didUpdateWidget(covariant _TripSectionTabBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshScrollHints());
+  }
+
+  @override
+  void dispose() {
+    _controller
+      ..removeListener(_refreshScrollHints)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _refreshScrollHints() {
+    if (!mounted || !_controller.hasClients) return;
+    final position = _controller.position;
+    final nextCanScrollLeft = position.pixels > 1;
+    final nextCanScrollRight = position.maxScrollExtent - position.pixels > 1;
+    if (nextCanScrollLeft == _canScrollLeft &&
+        nextCanScrollRight == _canScrollRight) {
+      return;
+    }
+    setState(() {
+      _canScrollLeft = nextCanScrollLeft;
+      _canScrollRight = nextCanScrollRight;
+    });
+  }
+
+  void _nudgeTabs(double direction) {
+    if (!_controller.hasClients) return;
+    final nextOffset = (_controller.offset + (direction * 168)).clamp(
+      0.0,
+      _controller.position.maxScrollExtent,
+    );
+    _controller.animateTo(
+      nextOffset,
+      duration: PerformanceScope.maybeSettingsOf(context).transitionDuration,
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final horizontalPadding = _responsiveHorizontalPadding(context);
+    final background = Theme.of(context).scaffoldBackgroundColor;
+
+    return Material(
+      color: background,
+      elevation: 8,
+      shadowColor: _primary.withValues(alpha: .08),
+      child: SizedBox(
+        height: _TripSectionTabBar.height,
+        child: Stack(
+          children: [
+            NotificationListener<ScrollMetricsNotification>(
+              onNotification: (_) {
+                WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => _refreshScrollHints(),
+                );
+                return false;
+              },
+              child: SingleChildScrollView(
+                controller: _controller,
+                scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.fromLTRB(
+                  horizontalPadding,
+                  10,
+                  horizontalPadding,
+                  12,
+                ),
+                child: Row(
+                  children: [
+                    for (
+                      var index = 0;
+                      index < widget.sections.length;
+                      index++
+                    ) ...[
+                      _TripSectionTab(
+                        section: widget.sections[index],
+                        selected: widget.selectedIndex == index,
+                        onTap: () => widget.onSelect(index),
+                      ),
+                      if (index != widget.sections.length - 1)
+                        const SizedBox(width: 8),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            if (_canScrollLeft)
+              _TripTabScrollHint(
+                alignment: Alignment.centerLeft,
+                icon: Icons.chevron_left_rounded,
+                background: background,
+                onTap: () => _nudgeTabs(-1),
+              ),
+            if (_canScrollRight)
+              _TripTabScrollHint(
+                alignment: Alignment.centerRight,
+                icon: Icons.chevron_right_rounded,
+                background: background,
+                onTap: () => _nudgeTabs(1),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TripSectionTab extends StatelessWidget {
+  const _TripSectionTab({
     required this.section,
     required this.selected,
     required this.onTap,
@@ -259,52 +544,117 @@ class _TripSectionButton extends StatelessWidget {
       button: true,
       selected: selected,
       label: appText(context, section.label),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: SizedBox(
-          height: 92,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: selected ? _primary : Colors.white,
-                  border: Border.all(
-                    color: selected ? _primary : const Color(0xFFEFF3F6),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 98, maxWidth: 126),
+        child: Material(
+          color: selected ? _primary : Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              height: 52,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: selected ? _primary : const Color(0xFFEFF3F6),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: _primary.withValues(alpha: selected ? .14 : .06),
+                    blurRadius: selected ? 18 : 12,
+                    offset: const Offset(0, 8),
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _primary.withValues(alpha: selected ? .14 : .06),
-                      blurRadius: selected ? 18 : 12,
-                      offset: const Offset(0, 8),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    section.icon,
+                    color: selected ? Colors.white : _primary,
+                    size: 21,
+                  ),
+                  const SizedBox(width: 7),
+                  Flexible(
+                    child: Text(
+                      appText(context, section.label),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected ? Colors.white : _secondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0,
+                      ),
                     ),
-                  ],
-                ),
-                child: Icon(
-                  section.icon,
-                  color: selected ? Colors.white : _primary,
-                  size: 25,
-                ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 7),
-              Text(
-                appText(context, section.label),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: selected ? _primary : _secondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                  height: 1.1,
-                  letterSpacing: 0,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TripTabScrollHint extends StatelessWidget {
+  const _TripTabScrollHint({
+    required this.alignment,
+    required this.icon,
+    required this.background,
+    required this.onTap,
+  });
+
+  final Alignment alignment;
+  final IconData icon;
+  final Color background;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLeft = alignment == Alignment.centerLeft;
+    return Positioned(
+      top: 0,
+      bottom: 0,
+      left: isLeft ? 0 : null,
+      right: isLeft ? null : 0,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          width: 48,
+          alignment: alignment,
+          padding: EdgeInsets.only(left: isLeft ? 8 : 0, right: isLeft ? 0 : 8),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: isLeft ? Alignment.centerLeft : Alignment.centerRight,
+              end: isLeft ? Alignment.centerRight : Alignment.centerLeft,
+              colors: [
+                background,
+                background.withValues(alpha: .92),
+                background.withValues(alpha: 0),
+              ],
+            ),
+          ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: _primary.withValues(alpha: .24),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
                 ),
-              ),
-            ],
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(icon, color: _primary, size: 22),
+            ),
           ),
         ),
       ),

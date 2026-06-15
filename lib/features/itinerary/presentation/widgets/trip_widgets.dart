@@ -27,96 +27,204 @@ class CurrentTripCard extends StatelessWidget {
         ? _runtimeDetail(trip, runtime)
         : '${trip.destination} / ${trip.startDate} to ${trip.endDate}';
 
-    return GlassPanel(
-      padding: const EdgeInsets.all(14),
-      child: Column(
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        color: _primary,
+        border: Border.all(color: Colors.white.withValues(alpha: .5)),
+        boxShadow: [
+          BoxShadow(
+            color: _primary.withValues(alpha: .16),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Stack(
         children: [
-          GestureDetector(
-            onTap: onTap,
-            child: ImageHero(
-              image: image,
-              height: 150,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  return FittedBox(
-                    alignment: Alignment.bottomLeft,
-                    fit: BoxFit.scaleDown,
-                    child: SizedBox(
-                      width: constraints.maxWidth,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            appText(context, eyebrow),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: _accent,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1.4,
+          Positioned.fill(
+            child: Image.network(
+              image,
+              fit: BoxFit.cover,
+              filterQuality: PerformanceScope.maybeSettingsOf(
+                context,
+              ).filterQuality,
+              errorBuilder: (_, __, ___) => const ColoredBox(color: _primary),
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    _primary.withValues(alpha: .28),
+                    _primary.withValues(alpha: .76),
+                    _primary.withValues(alpha: .95),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                GestureDetector(
+                  onTap: onTap,
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return FittedBox(
+                          alignment: Alignment.bottomLeft,
+                          fit: BoxFit.scaleDown,
+                          child: SizedBox(
+                            width: constraints.maxWidth,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  appText(context, eyebrow),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: _accent,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 1.4,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  appText(context, nextTitle),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 30,
+                                    fontWeight: FontWeight.w900,
+                                    height: .95,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  appText(context, nextDetail),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: .75),
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            appText(context, nextTitle),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 30,
-                              fontWeight: FontWeight.w900,
-                              height: .95,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            appText(context, nextDetail),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: .75),
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
+                        );
+                      },
                     ),
-                  );
-                },
-              ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                if (hasStarted) ...[
+                  _RuntimeDayStrip(runtime: runtime),
+                  const SizedBox(height: 14),
+                ],
+                ResponsiveSplit(
+                  children: [
+                    _CurrentTripOverlayStat(
+                      title: 'Booking',
+                      value: booking?.title ?? 'TBD',
+                      detail: booking == null
+                          ? 'No bookings yet'
+                          : '${booking.date} / confirmed',
+                    ),
+                    _CurrentTripOverlayStat(
+                      title: 'Budget',
+                      value: _displayMoney(context, trip.spent, trip.currency),
+                      detail:
+                          'of ${_displayMoney(context, trip.budget, trip.currency)}',
+                      trailing: Icons.add_rounded,
+                    ),
+                  ],
+                ),
+                if (onStart != null) ...[
+                  const SizedBox(height: 14),
+                  PrimaryButton(
+                    label: 'Start your trip',
+                    icon: Icons.play_arrow_rounded,
+                    onPressed: onStart!,
+                  ),
+                ],
+              ],
             ),
           ),
-          const SizedBox(height: 14),
-          if (hasStarted) ...[
-            _RuntimeDayStrip(runtime: runtime),
-            const SizedBox(height: 14),
-          ],
-          ResponsiveSplit(
-            children: [
-              StatCard(
-                title: 'Booking',
-                value: booking?.title ?? 'TBD',
-                detail: booking == null
-                    ? 'No bookings yet'
-                    : '${booking.date} / confirmed',
-              ),
-              StatCard(
-                title: 'Budget',
-                value: '${trip.currency} ${trip.spent}',
-                detail: 'of ${trip.currency} ${trip.budget}',
-                trailing: Icons.add_rounded,
-              ),
-            ],
-          ),
-          if (onStart != null) ...[
-            const SizedBox(height: 14),
-            PrimaryButton(
-              label: 'Start your trip',
-              icon: Icons.play_arrow_rounded,
-              onPressed: onStart!,
+        ],
+      ),
+    );
+  }
+}
+
+class _CurrentTripOverlayStat extends StatelessWidget {
+  const _CurrentTripOverlayStat({
+    required this.title,
+    required this.value,
+    required this.detail,
+    this.trailing,
+  });
+
+  final String title;
+  final String value;
+  final String detail;
+  final IconData? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .9),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: .7)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LabelText(title),
+                const SizedBox(height: 4),
+                Text(
+                  appText(context, value),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _primary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  appText(context, detail),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
             ),
+          ),
+          if (trailing != null) ...[
+            const SizedBox(width: 8),
+            Icon(trailing, color: _primary),
           ],
         ],
       ),
@@ -215,7 +323,7 @@ class HeroTripCard extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           Text(
-            trip.groupType.toUpperCase(),
+            _travelerCountLabel(trip.numOfTravelers).toUpperCase(),
             style: const TextStyle(
               color: _accent,
               fontWeight: FontWeight.w900,
@@ -535,7 +643,7 @@ class _TripListCardState extends State<TripListCard> {
             ),
             const SizedBox(height: 4),
             Text(
-              '${widget.trip.startDate} / ${appText(context, widget.trip.groupType)}',
+              '${widget.trip.startDate} / ${_travelerCountLabel(widget.trip.numOfTravelers)}',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -703,8 +811,14 @@ class _TripDeleteRevealBackground extends StatelessWidget {
 }
 
 class ScheduleTile extends StatelessWidget {
-  const ScheduleTile({required this.item, this.onDelete, super.key});
+  const ScheduleTile({
+    required this.item,
+    required this.currency,
+    this.onDelete,
+    super.key,
+  });
   final ScheduleItem item;
+  final String currency;
   final VoidCallback? onDelete;
 
   @override
@@ -738,16 +852,18 @@ class ScheduleTile extends StatelessWidget {
                 ],
               ),
             ),
-            Flexible(
-              fit: FlexFit.loose,
-              child: Text(
-                item.cost == 0 ? appText(context, 'Free') : '\$${item.cost}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.end,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
+            // Flexible(
+            //   fit: FlexFit.loose,
+            //   child: Text(
+            //     item.cost == 0
+            //         ? appText(context, 'Free')
+            //         : _displayMoney(context, item.cost, currency),
+            //     maxLines: 2,
+            //     overflow: TextOverflow.ellipsis,
+            //     textAlign: TextAlign.end,
+            //     style: const TextStyle(fontWeight: FontWeight.w900),
+            //   ),
+            // ),
             if (onDelete != null) ...[
               const SizedBox(width: 8),
               IconButton(
@@ -764,8 +880,9 @@ class ScheduleTile extends StatelessWidget {
 }
 
 class BookingTile extends StatelessWidget {
-  const BookingTile({required this.booking, super.key});
+  const BookingTile({required this.booking, required this.currency, super.key});
   final Booking booking;
+  final String currency;
 
   @override
   Widget build(BuildContext context) {
@@ -799,9 +916,17 @@ class BookingTile extends StatelessWidget {
                 ],
               ),
             ),
-            const Flexible(
+            Flexible(
               fit: FlexFit.loose,
-              child: SmallPill(label: 'Confirmed'),
+              child: booking.cost <= 0
+                  ? const SmallPill(label: 'Confirmed')
+                  : Text(
+                      _displayMoney(context, booking.cost, currency),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
             ),
           ],
         ),

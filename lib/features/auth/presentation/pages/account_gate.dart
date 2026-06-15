@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../../app/travel_agent_app.dart';
 import '../../../../core/localization/app_text.dart';
 import '../../../../core/performance/app_performance.dart';
+import '../../../../shared/widgets/app_error_widgets.dart';
 import '../../data/account_auth_service.dart';
 
 class AccountGate extends StatefulWidget {
@@ -87,8 +88,9 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
   var _mode = _AccountMode.email;
   var _isCreatingAccount = false;
   var _isBusy = false;
-  var _rememberMe = true;
-  String? _message;
+  var _emailAuthFailed = false;
+  var _phoneAuthFailed = false;
+  var _showPasswordReset = false;
   PhoneSignInSession? _phoneSession;
 
   @override
@@ -101,26 +103,94 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
     super.dispose();
   }
 
-  Future<void> _runAuth(Future<void> Function() action) async {
+  Future<void> _runAuth(
+    Future<void> Function() action, {
+    _AuthErrorTarget errorTarget = _AuthErrorTarget.none,
+  }) async {
     setState(() {
       _isBusy = true;
-      _message = null;
+      if (errorTarget == _AuthErrorTarget.email) {
+        _emailAuthFailed = false;
+      }
+      if (errorTarget == _AuthErrorTarget.phone) {
+        _phoneAuthFailed = false;
+      }
     });
 
     try {
       await action();
-    } on FirebaseAuthException catch (error) {
+    } on FirebaseAuthException catch (error, stackTrace) {
       if (!mounted) return;
-      setState(() => _message = _firebaseMessage(error));
-    } on AccountAuthException catch (error) {
+      if (_isUnexpectedFirebaseAuthError(error)) {
+        await showUnexpectedErrorDialog(context, error, stackTrace, error.code);
+        return;
+      }
+      _showAuthError(_firebaseMessage(error), errorTarget);
+    } on AccountAuthException catch (error, stackTrace) {
       if (!mounted) return;
-      setState(() => _message = error.message);
-    } catch (error) {
+      if (error.isUnexpected) {
+        await showUnexpectedErrorDialog(
+          context,
+          error.details ?? error,
+          stackTrace,
+          error.code,
+        );
+        return;
+      }
+      _showAuthError(error.message, errorTarget);
+    } catch (error, stackTrace) {
       if (!mounted) return;
-      setState(() => _message = 'Could not sign in. $error');
+      await showUnexpectedErrorDialog(context, error, stackTrace);
     } finally {
       if (mounted) setState(() => _isBusy = false);
     }
+  }
+
+  void _showAuthError(String message, _AuthErrorTarget target) {
+    setState(() {
+      if (target == _AuthErrorTarget.email) _emailAuthFailed = true;
+      if (target == _AuthErrorTarget.phone) _phoneAuthFailed = true;
+    });
+    _showNotice(message, isError: true);
+  }
+
+  void _showNotice(String message, {bool isError = false}) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            appText(context, message),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          duration: const Duration(seconds: 5),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: isError
+              ? const Color(0xFFB3261E)
+              : const Color(0xFF355872),
+        ),
+      );
+  }
+
+  void _clearEmailAuthError() {
+    if (_emailAuthFailed) setState(() => _emailAuthFailed = false);
+  }
+
+  void _clearPhoneAuthError() {
+    if (_phoneAuthFailed) setState(() => _phoneAuthFailed = false);
+  }
+
+  void _switchMode(_AccountMode mode) {
+    if (_isBusy || _mode == mode) return;
+    setState(() {
+      _mode = mode;
+      _isCreatingAccount = false;
+      _phoneSession = null;
+      _smsCode.clear();
+      _emailAuthFailed = false;
+      _phoneAuthFailed = false;
+    });
   }
 
   Future<void> _submitEmail() async {
@@ -140,31 +210,17 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
           password: _password.text,
         );
       }
-      await widget.authService.rememberCurrentSession(remember: _rememberMe);
-    });
-  }
-
-  Future<void> _sendReset() async {
-    final email = _email.text.trim();
-    if (!_looksLikeEmail(email)) {
-      setState(() => _message = 'Enter your email first.');
-      return;
-    }
-
-    await _runAuth(() async {
-      await widget.authService.sendPasswordReset(email);
-      if (mounted) {
-        setState(() => _message = 'Password reset email sent.');
-      }
-    });
+      await widget.authService.rememberCurrentSession(remember: true);
+    }, errorTarget: _AuthErrorTarget.email);
   }
 
   Future<void> _sendPhoneCode() async {
     final phone = _phone.text.trim();
     if (!phone.startsWith('+') || phone.length < 8) {
-      setState(() {
-        _message = 'Use international phone format, for example +15551234567.';
-      });
+      _showAuthError(
+        'Use international phone format, for example +15551234567.',
+        _AuthErrorTarget.phone,
+      );
       return;
     }
 
@@ -172,15 +228,15 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
       final session = await widget.authService.sendPhoneCode(phone);
       if (!mounted) return;
       if (session.autoVerified) {
-        await widget.authService.rememberCurrentSession(remember: _rememberMe);
+        await widget.authService.rememberCurrentSession(remember: true);
         return;
       }
       setState(() {
         _phoneSession = session;
         _smsCode.clear();
-        _message = 'SMS code sent.';
       });
-    });
+      _showNotice('SMS code sent.');
+    }, errorTarget: _AuthErrorTarget.phone);
   }
 
   Future<void> _confirmPhoneCode() async {
@@ -189,7 +245,7 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
 
     final session = _phoneSession;
     if (session == null) {
-      setState(() => _message = 'Send an SMS code first.');
+      _showAuthError('Send an SMS code first.', _AuthErrorTarget.phone);
       return;
     }
 
@@ -198,12 +254,49 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
         session: session,
         smsCode: _smsCode.text,
       );
-      await widget.authService.rememberCurrentSession(remember: _rememberMe);
+      await widget.authService.rememberCurrentSession(remember: true);
+    }, errorTarget: _AuthErrorTarget.phone);
+  }
+
+  Future<void> _signInWithGoogle() async {
+    GoogleAccountLinkRequiredException? pendingLink;
+    await _runAuth(() async {
+      try {
+        await widget.authService.signInWithGoogle();
+        await widget.authService.rememberCurrentSession(remember: true);
+      } on GoogleAccountLinkRequiredException catch (error) {
+        pendingLink = error;
+      }
     });
+
+    final link = pendingLink;
+    if (link == null || !mounted) return;
+    final password = await showDialog<String>(
+      context: context,
+      builder: (context) => _GoogleAccountLinkDialog(email: link.email),
+    );
+    if (password == null || !mounted) return;
+
+    await _runAuth(() async {
+      await widget.authService.completeGoogleAccountLink(
+        email: link.email,
+        password: password,
+        googleCredential: link.googleCredential,
+      );
+      await widget.authService.rememberCurrentSession(remember: true);
+    }, errorTarget: _AuthErrorTarget.email);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_showPasswordReset) {
+      return PasswordResetPage(
+        authService: widget.authService,
+        initialEmail: _email.text.trim(),
+        onBack: () => setState(() => _showPasswordReset = false),
+      );
+    }
+
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -220,7 +313,7 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             ),
             const SizedBox(height: 18),
             Text(
-              appText(context, 'Travelling with Flutter'),
+              appText(context, 'Travel Agent'),
               style: theme.textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.w900,
               ),
@@ -238,30 +331,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
               ),
             ),
             const SizedBox(height: 24),
-            SegmentedButton<_AccountMode>(
-              segments: [
-                ButtonSegment(
-                  value: _AccountMode.email,
-                  icon: const Icon(Icons.alternate_email_rounded),
-                  label: Text(appText(context, 'Email')),
-                ),
-                ButtonSegment(
-                  value: _AccountMode.phone,
-                  icon: const Icon(Icons.phone_iphone_rounded),
-                  label: Text(appText(context, 'Phone')),
-                ),
-              ],
-              selected: {_mode},
-              onSelectionChanged: _isBusy
-                  ? null
-                  : (selection) => setState(() {
-                      _mode = selection.first;
-                      _phoneSession = null;
-                      _smsCode.clear();
-                      _message = null;
-                    }),
-            ),
-            const SizedBox(height: 20),
             AnimatedSwitcher(
               duration: PerformanceScope.maybeSettingsOf(
                 context,
@@ -270,64 +339,59 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                   ? _buildEmailForm()
                   : _buildPhoneForm(),
             ),
-            const SizedBox(height: 10),
-            CheckboxListTile(
-              value: _rememberMe,
-              onChanged: _isBusy
-                  ? null
-                  : (value) => setState(() => _rememberMe = value ?? true),
-              controlAffinity: ListTileControlAffinity.leading,
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                appText(context, 'Remember me for 30 days'),
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-              subtitle: Text(
-                appText(
-                  context,
-                  'Useful while debugging. Sign out anytime from Profile.',
-                ),
-              ),
-            ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                const Expanded(child: Divider()),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Text(
-                    appText(context, 'or'),
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: const Color(0xFF7AAACE),
-                      fontWeight: FontWeight.w900,
+            if (!_isCreatingAccount) ...[
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  const Expanded(child: Divider()),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      appText(context, 'or continue with'),
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: const Color(0xFF7AAACE),
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ),
+                  const Expanded(child: Divider()),
+                ],
+              ),
+              const SizedBox(height: 18),
+              OutlinedButton.icon(
+                onPressed: _isBusy ? null : _signInWithGoogle,
+                icon: const Icon(Icons.g_mobiledata_rounded, size: 30),
+                label: Text(appText(context, 'Continue with Google')),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: _isBusy
+                    ? null
+                    : () => _switchMode(
+                        _mode == _AccountMode.email
+                            ? _AccountMode.phone
+                            : _AccountMode.email,
+                      ),
+                icon: Icon(
+                  _mode == _AccountMode.email
+                      ? Icons.phone_iphone_rounded
+                      : Icons.alternate_email_rounded,
                 ),
-                const Expanded(child: Divider()),
-              ],
-            ),
-            const SizedBox(height: 18),
-            OutlinedButton.icon(
-              onPressed: _isBusy
-                  ? null
-                  : () => _runAuth(() async {
-                      await widget.authService.signInWithGoogle();
-                      await widget.authService.rememberCurrentSession(
-                        remember: _rememberMe,
-                      );
-                    }),
-              icon: const Icon(Icons.g_mobiledata_rounded, size: 30),
-              label: Text(appText(context, 'Continue with Google')),
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: null,
-              icon: const Icon(Icons.facebook_rounded),
-              label: Text(appText(context, 'Facebook setup needed')),
-            ),
-            if (_message != null) ...[
-              const SizedBox(height: 16),
-              _StatusMessage(message: _message!),
+                label: Text(
+                  appText(
+                    context,
+                    _mode == _AccountMode.email
+                        ? 'Continue with phone number'
+                        : 'Continue with email',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: null,
+                icon: const Icon(Icons.facebook_rounded),
+                label: Text(appText(context, 'Facebook coming later')),
+              ),
             ],
           ],
         ),
@@ -360,9 +424,11 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             keyboardType: TextInputType.emailAddress,
             textInputAction: TextInputAction.next,
             autofillHints: const [AutofillHints.email],
-            decoration: InputDecoration(
+            onChanged: (_) => _clearEmailAuthError(),
+            decoration: _authFieldDecoration(
+              hasAuthError: _emailAuthFailed,
               labelText: appText(context, 'Email'),
-              prefixIcon: const Icon(Icons.alternate_email_rounded),
+              prefixIcon: Icons.alternate_email_rounded,
             ),
             validator: (value) {
               if (!_looksLikeEmail(value ?? '')) {
@@ -378,9 +444,11 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             obscureText: true,
             textInputAction: TextInputAction.done,
             autofillHints: const [AutofillHints.password],
-            decoration: InputDecoration(
+            onChanged: (_) => _clearEmailAuthError(),
+            decoration: _authFieldDecoration(
+              hasAuthError: _emailAuthFailed,
               labelText: appText(context, 'Password'),
-              prefixIcon: const Icon(Icons.lock_outline_rounded),
+              prefixIcon: Icons.lock_outline_rounded,
             ),
             validator: (value) {
               if ((value ?? '').length < 6) {
@@ -416,7 +484,7 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                 ? null
                 : () => setState(() {
                     _isCreatingAccount = !_isCreatingAccount;
-                    _message = null;
+                    _emailAuthFailed = false;
                   }),
             child: Text(
               appText(
@@ -429,7 +497,9 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
           ),
           if (!_isCreatingAccount)
             TextButton.icon(
-              onPressed: _isBusy ? null : _sendReset,
+              onPressed: _isBusy
+                  ? null
+                  : () => setState(() => _showPasswordReset = true),
               icon: const Icon(Icons.help_outline_rounded),
               label: Text(appText(context, 'Forgot password?')),
             ),
@@ -466,10 +536,12 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             enabled: !_isBusy && !hasSession,
             keyboardType: TextInputType.phone,
             autofillHints: const [AutofillHints.telephoneNumber],
-            decoration: InputDecoration(
+            onChanged: (_) => _clearPhoneAuthError(),
+            decoration: _authFieldDecoration(
+              hasAuthError: _phoneAuthFailed,
               labelText: appText(context, 'Phone number'),
               hintText: '+15551234567',
-              prefixIcon: const Icon(Icons.phone_iphone_rounded),
+              prefixIcon: Icons.phone_iphone_rounded,
             ),
             validator: (value) {
               final phone = (value ?? '').trim();
@@ -489,9 +561,11 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
               enabled: !_isBusy,
               keyboardType: TextInputType.number,
               textInputAction: TextInputAction.done,
-              decoration: InputDecoration(
+              onChanged: (_) => _clearPhoneAuthError(),
+              decoration: _authFieldDecoration(
+                hasAuthError: _phoneAuthFailed,
                 labelText: appText(context, 'SMS code'),
-                prefixIcon: const Icon(Icons.sms_outlined),
+                prefixIcon: Icons.sms_outlined,
               ),
               validator: (value) {
                 final code = (value ?? '').trim();
@@ -550,7 +624,7 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
                         : () => setState(() {
                             _phoneSession = null;
                             _smsCode.clear();
-                            _message = null;
+                            _phoneAuthFailed = false;
                           }),
                     child: Text(appText(context, 'Change phone')),
                   ),
@@ -560,6 +634,293 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
           ],
         ],
       ),
+    );
+  }
+}
+
+class PasswordResetPage extends StatefulWidget {
+  const PasswordResetPage({
+    required this.authService,
+    required this.initialEmail,
+    required this.onBack,
+    super.key,
+  });
+
+  final AccountAuthService authService;
+  final String initialEmail;
+  final VoidCallback onBack;
+
+  @override
+  State<PasswordResetPage> createState() => _PasswordResetPageState();
+}
+
+class _PasswordResetPageState extends State<PasswordResetPage> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _email = TextEditingController(
+    text: widget.initialEmail,
+  );
+  var _isSending = false;
+  var _emailSent = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_formKey.currentState?.validate() != true) return;
+    setState(() {
+      _isSending = true;
+      _error = null;
+    });
+    try {
+      await widget.authService.sendPasswordReset(_email.text);
+      if (!mounted) return;
+      setState(() => _emailSent = true);
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = _firebaseMessage(error));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not send the reset email. Try again.');
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      body: SafeArea(
+        child: ListView(
+          padding: _authPagePadding(context),
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                tooltip: appText(context, 'Back'),
+                onPressed: _isSending ? null : widget.onBack,
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Icon(
+              Icons.lock_reset_rounded,
+              color: Color(0xFF355872),
+              size: 48,
+            ),
+            const SizedBox(height: 18),
+            Text(
+              appText(context, 'Forgot password'),
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              appText(
+                context,
+                'Enter the email used for your password account. Firebase will send a secure reset link.',
+              ),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFF7AAACE),
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Form(
+              key: _formKey,
+              child: TextFormField(
+                controller: _email,
+                enabled: !_isSending,
+                autofocus: true,
+                keyboardType: TextInputType.emailAddress,
+                autofillHints: const [AutofillHints.email],
+                textInputAction: TextInputAction.done,
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Email'),
+                  prefixIcon: const Icon(Icons.alternate_email_rounded),
+                ),
+                validator: (value) => _looksLikeEmail(value ?? '')
+                    ? null
+                    : appText(context, 'Enter a valid email.'),
+                onFieldSubmitted: (_) => _submit(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _isSending ? null : _submit,
+              icon: _isSending
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.mark_email_read_outlined),
+              label: Text(
+                appText(
+                  context,
+                  _emailSent ? 'Resend reset email' : 'Send reset email',
+                ),
+              ),
+            ),
+            if (_emailSent) ...[
+              const SizedBox(height: 18),
+              _ResetEmailHelp(email: _email.text.trim()),
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 18),
+              _StatusMessage(message: _error!, isError: true),
+            ],
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: _isSending ? null : widget.onBack,
+              child: Text(appText(context, 'Return to sign in')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ResetEmailHelp extends StatelessWidget {
+  const _ResetEmailHelp({required this.email});
+
+  final String email;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF9CD5FF).withValues(alpha: .18),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFEFF3F6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            appText(context, 'Check your email'),
+            style: const TextStyle(
+              color: Color(0xFF355872),
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            appText(
+              context,
+              'If $email belongs to a password account, the reset link should arrive shortly.',
+            ),
+            style: const TextStyle(fontWeight: FontWeight.w700, height: 1.35),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            appText(
+              context,
+              'Check Spam, Junk, and Promotions. Also confirm the address is exactly the one used to create the account. Google-only accounts do not have an email password to reset.',
+            ),
+            style: const TextStyle(
+              color: Color(0xFF7AAACE),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GoogleAccountLinkDialog extends StatefulWidget {
+  const _GoogleAccountLinkDialog({required this.email});
+
+  final String email;
+
+  @override
+  State<_GoogleAccountLinkDialog> createState() =>
+      _GoogleAccountLinkDialogState();
+}
+
+class _GoogleAccountLinkDialogState extends State<_GoogleAccountLinkDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _password = TextEditingController();
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_formKey.currentState?.validate() != true) return;
+    Navigator.of(context).pop(_password.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(appText(context, 'Connect Google account')),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                appText(
+                  context,
+                  'An account already exists for ${widget.email}. Enter its password once to prove it is yours. Google will then be linked to the same account.',
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                initialValue: widget.email,
+                readOnly: true,
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Email'),
+                  prefixIcon: const Icon(Icons.alternate_email_rounded),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _password,
+                autofocus: true,
+                obscureText: true,
+                textInputAction: TextInputAction.done,
+                autofillHints: const [AutofillHints.password],
+                decoration: InputDecoration(
+                  labelText: appText(context, 'Existing password'),
+                  prefixIcon: const Icon(Icons.lock_outline_rounded),
+                ),
+                validator: (value) => (value ?? '').length < 6
+                    ? appText(context, 'Enter your existing password.')
+                    : null,
+                onFieldSubmitted: (_) => _submit(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(appText(context, 'Cancel')),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: Text(appText(context, 'Connect and sign in')),
+        ),
+      ],
     );
   }
 }
@@ -588,23 +949,28 @@ class _AuthLoading extends StatelessWidget {
 }
 
 class _StatusMessage extends StatelessWidget {
-  const _StatusMessage({required this.message});
+  const _StatusMessage({required this.message, this.isError = false});
 
   final String message;
+  final bool isError;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF9CD5FF).withValues(alpha: .22),
+        color: isError
+            ? const Color(0xFFB3261E).withValues(alpha: .1)
+            : const Color(0xFF9CD5FF).withValues(alpha: .22),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFEFF3F6)),
+        border: Border.all(
+          color: isError ? const Color(0xFFB3261E) : const Color(0xFFEFF3F6),
+        ),
       ),
       child: Text(
         appText(context, message),
-        style: const TextStyle(
-          color: Color(0xFF355872),
+        style: TextStyle(
+          color: isError ? const Color(0xFFB3261E) : const Color(0xFF355872),
           fontWeight: FontWeight.w800,
         ),
       ),
@@ -613,6 +979,29 @@ class _StatusMessage extends StatelessWidget {
 }
 
 enum _AccountMode { email, phone }
+
+enum _AuthErrorTarget { none, email, phone }
+
+InputDecoration _authFieldDecoration({
+  required bool hasAuthError,
+  required String labelText,
+  required IconData prefixIcon,
+  String? hintText,
+}) {
+  const errorColor = Color(0xFFB3261E);
+  final errorBorder = OutlineInputBorder(
+    borderRadius: BorderRadius.circular(20),
+    borderSide: const BorderSide(color: errorColor, width: 2),
+  );
+  return InputDecoration(
+    labelText: labelText,
+    hintText: hintText,
+    prefixIcon: Icon(prefixIcon, color: hasAuthError ? errorColor : null),
+    labelStyle: hasAuthError ? const TextStyle(color: errorColor) : null,
+    enabledBorder: hasAuthError ? errorBorder : null,
+    focusedBorder: hasAuthError ? errorBorder : null,
+  );
+}
 
 bool _looksLikeEmail(String value) {
   return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value.trim());
@@ -643,6 +1032,22 @@ String _firebaseMessage(FirebaseAuthException error) {
     'popup-closed-by-user' => 'The sign-in window was closed.',
     'invalid-verification-code' => 'The SMS code is not correct.',
     'invalid-phone-number' => 'Enter a valid phone number with country code.',
+    'credential-already-in-use' =>
+      'That sign-in method is already connected to another account.',
+    'account-exists-with-different-credential' =>
+      'That email already uses another sign-in method.',
+    'quota-exceeded' => 'The SMS limit has been reached. Try again later.',
     _ => error.message ?? 'Could not sign in. Please try again.',
   };
+}
+
+bool _isUnexpectedFirebaseAuthError(FirebaseAuthException error) {
+  return const {
+    'app-not-authorized',
+    'configuration-not-found',
+    'internal-error',
+    'missing-client-type',
+    'operation-not-allowed',
+    'web-context-cancelled',
+  }.contains(error.code);
 }

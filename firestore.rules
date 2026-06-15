@@ -79,6 +79,10 @@ service cloud.firestore {
       return /databases/$(database)/documents/chat_invites/$(inviteCode);
     }
 
+    function chatMessagePath(chatId, messageId) {
+      return /databases/$(database)/documents/chat_groups/$(chatId)/messages/$(messageId);
+    }
+
     function chatData(chatId) {
       return get(chatPath(chatId)).data;
     }
@@ -131,6 +135,12 @@ service cloud.firestore {
         chatData(chatId).roles[request.auth.uid] in ['owner', 'admin'];
     }
 
+    function isChatOwner(chatId) {
+      return isChatActiveMember(chatId, request.auth.uid) &&
+        chatData(chatId).ownerId == request.auth.uid &&
+        chatData(chatId).roles[request.auth.uid] == 'owner';
+    }
+
     function canInviteToChat(chatId) {
       return isChatActiveMember(chatId, request.auth.uid);
     }
@@ -143,6 +153,15 @@ service cloud.firestore {
         request.auth.uid in request.resource.data.memberIds &&
         request.resource.data.roles is map &&
         request.resource.data.roles[request.auth.uid] == 'owner';
+    }
+
+    function isOwnedChatBootstrapAfter(chatId, userId) {
+      return signedIn() &&
+        request.auth.uid == userId &&
+        existsAfter(chatPath(chatId)) &&
+        chatDataAfter(chatId).ownerId == userId &&
+        userId in chatDataAfter(chatId).memberIds &&
+        chatDataAfter(chatId).roles[userId] == 'owner';
     }
 
     function chatLastMessageFieldsOnly() {
@@ -161,6 +180,53 @@ service cloud.firestore {
       ]);
     }
 
+    function chatManagementFieldsOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'title',
+        'description',
+        'memberIds',
+        'roles',
+        'updatedAt',
+      ]);
+    }
+
+    function preservesChatOwner() {
+      return request.resource.data.ownerId == resource.data.ownerId &&
+        resource.data.ownerId in request.resource.data.memberIds &&
+        request.resource.data.roles[resource.data.ownerId] == 'owner';
+    }
+
+    function validManagedChatUpdate(chatId) {
+      return canManageChat(chatId) &&
+        chatManagementFieldsOnly() &&
+        preservesChatOwner();
+    }
+
+    function isLeavingChat(chatId, userId) {
+      return signedIn() &&
+        request.auth.uid == userId &&
+        isChatActiveMember(chatId, userId) &&
+        userId != resource.data.ownerId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'memberIds',
+          'roles',
+          'updatedAt',
+        ]) &&
+        request.resource.data.memberIds.size() ==
+          resource.data.memberIds.size() - 1 &&
+        !(userId in request.resource.data.memberIds) &&
+        request.resource.data.memberIds.toSet().hasOnly(
+          resource.data.memberIds
+        ) &&
+        request.resource.data.roles.diff(resource.data.roles)
+          .removedKeys().hasOnly([userId]) &&
+        request.resource.data.roles.diff(resource.data.roles)
+          .addedKeys().size() == 0 &&
+        request.resource.data.roles.diff(resource.data.roles)
+          .changedKeys().size() == 0 &&
+        preservesChatOwner();
+    }
+
     function validChatMessageCreate() {
       return request.resource.data.keys().hasOnly([
         'senderId',
@@ -169,14 +235,60 @@ service cloud.firestore {
         'text',
         'type',
         'attachments',
+        'poll',
         'createdAt',
         'editedAt',
       ]) &&
         request.resource.data.senderId == request.auth.uid &&
         request.resource.data.text is string &&
         request.resource.data.text.size() <= 10000 &&
-        request.resource.data.type in ['text', 'system', 'ai', 'trip_update'] &&
-        request.resource.data.attachments is list;
+        request.resource.data.type in [
+          'text',
+          'attachment',
+          'system',
+          'ai',
+          'trip_update',
+          'poll',
+        ] &&
+        request.resource.data.attachments is list &&
+        request.resource.data.attachments.size() <= 1 &&
+        (
+          request.resource.data.type != 'poll' ||
+          (
+            request.resource.data.attachments.size() == 0 &&
+            request.resource.data.poll is map &&
+            request.resource.data.poll.keys().hasOnly([
+              'question',
+              'options',
+            ]) &&
+            request.resource.data.poll.question is string &&
+            request.resource.data.poll.question.size() > 0 &&
+            request.resource.data.poll.question.size() <= 300 &&
+            request.resource.data.poll.options is list &&
+            request.resource.data.poll.options.size() >= 2 &&
+            request.resource.data.poll.options.size() <= 10
+          )
+        );
+    }
+
+    function validPollVote(chatId, messageId, userId) {
+      return signedIn() &&
+        request.auth.uid == userId &&
+        exists(chatMessagePath(chatId, messageId)) &&
+        get(chatMessagePath(chatId, messageId)).data.type == 'poll' &&
+        get(chatMessagePath(chatId, messageId)).data.poll is map &&
+        request.resource.data.keys().hasOnly([
+          'optionIndex',
+          'voterNameSnapshot',
+          'createdAt',
+          'updatedAt',
+        ]) &&
+        request.resource.data.optionIndex is int &&
+        request.resource.data.optionIndex >= 0 &&
+        request.resource.data.optionIndex <
+          get(chatMessagePath(chatId, messageId)).data.poll.options.size() &&
+        request.resource.data.voterNameSnapshot is string &&
+        request.resource.data.voterNameSnapshot.size() <= 120;
     }
 
     function validChatInviteCreate(inviteCode) {
@@ -241,7 +353,16 @@ service cloud.firestore {
     function validUserChatMembership(chatId) {
       return request.resource.data.chatId == chatId &&
         validChatRole(request.resource.data.role) &&
-        validChatMemberStatus(request.resource.data.status);
+        validChatMemberStatus(request.resource.data.status) &&
+        (
+          !request.resource.data.keys().hasAny(['mutedForever']) ||
+          request.resource.data.mutedForever is bool
+        ) &&
+        (
+          !request.resource.data.keys().hasAny(['mutedUntil']) ||
+          request.resource.data.mutedUntil == null ||
+          request.resource.data.mutedUntil is timestamp
+        );
     }
 
     function chatMembershipSnapshotFieldsOnly() {
@@ -253,6 +374,48 @@ service cloud.firestore {
         'unreadCount',
         'updatedAt',
       ]);
+    }
+
+    function chatMembershipPreferenceFieldsOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'mutedForever',
+        'mutedUntil',
+        'updatedAt',
+      ]);
+    }
+
+    function chatMembershipLeaveFieldsOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'status',
+        'updatedAt',
+      ]) &&
+        request.resource.data.status == 'left';
+    }
+
+    function chatMembershipManagementFieldsOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'role',
+        'status',
+        'updatedAt',
+      ]) &&
+        request.resource.data.role in ['admin', 'member'];
+    }
+
+    function chatMembershipInviteAcceptanceOnly() {
+      return resource.data.status == 'invited' &&
+        request.resource.data.status == 'active' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'chatId',
+          'role',
+          'status',
+          'titleSnapshot',
+          'lastMessageText',
+          'lastMessageAt',
+          'unreadCount',
+          'mutedUntil',
+          'mutedForever',
+          'updatedAt',
+        ]);
     }
 
     function editorTripFieldsOnly() {
@@ -269,7 +432,7 @@ service cloud.firestore {
         'spent',
         'currency',
         'status',
-        'groupType',
+        'numOfTravelers',
         'images',
         'preferences',
         'checklist',
@@ -277,8 +440,51 @@ service cloud.firestore {
       ]);
     }
 
+    function validTravelUserSettings() {
+      return !request.resource.data.keys().hasAny(['settings']) ||
+        (
+          request.resource.data.settings is map &&
+          (
+            !request.resource.data.settings.keys().hasAny(['onboardingRequired']) ||
+            request.resource.data.settings.onboardingRequired is bool
+          ) &&
+          (
+            !request.resource.data.settings.keys().hasAny(['onboardingCompleted']) ||
+            request.resource.data.settings.onboardingCompleted is bool
+          ) &&
+          (
+            !request.resource.data.settings.keys().hasAny(['notificationsEnabled']) ||
+            request.resource.data.settings.notificationsEnabled is bool
+          ) &&
+          (
+            !request.resource.data.settings.keys().hasAny(['displayCurrencyCode']) ||
+            (
+              request.resource.data.settings.displayCurrencyCode is string &&
+              request.resource.data.settings.displayCurrencyCode.size() == 3
+            )
+          ) &&
+          (
+            !request.resource.data.settings.keys().hasAny(['currencyUpdateMode']) ||
+            request.resource.data.settings.currencyUpdateMode in
+              ['automatic', 'manual']
+          ) &&
+          (
+            !request.resource.data.settings.keys().hasAny(['currencySettingsVersion']) ||
+            request.resource.data.settings.currencySettingsVersion is int
+          )
+        );
+    }
+
+    function canWriteOwnTravelUser(userId) {
+      return signedIn() &&
+        request.auth.uid == userId &&
+        validTravelUserSettings();
+    }
+
     match /travel_users/{userId} {
-      allow read, write: if signedIn() && request.auth.uid == userId;
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create, update: if canWriteOwnTravelUser(userId);
+      allow delete: if signedIn() && request.auth.uid == userId;
 
       match /tripMemberships/{tripId} {
         allow read: if signedIn() &&
@@ -327,6 +533,11 @@ service cloud.firestore {
           validUserChatMembership(chatId) &&
           (
             (
+              isOwnedChatBootstrapAfter(chatId, userId) &&
+              request.resource.data.role == 'owner' &&
+              request.resource.data.status == 'active'
+            ) ||
+            (
               request.auth.uid == userId &&
               (
                 isChatActiveMemberAfter(chatId, userId) ||
@@ -345,9 +556,16 @@ service cloud.firestore {
             (
               request.auth.uid == userId &&
               (
-                isChatActiveMemberAfter(chatId, userId) ||
-                isChatInvitedMemberAfter(chatId, userId) ||
-                request.resource.data.status == 'left'
+                (
+                  isChatActiveMember(chatId, userId) &&
+                  isChatActiveMemberAfter(chatId, userId) &&
+                  chatMembershipPreferenceFieldsOnly()
+                ) ||
+                chatMembershipInviteAcceptanceOnly() ||
+                (
+                  userId != chatData(chatId).ownerId &&
+                  chatMembershipLeaveFieldsOnly()
+                )
               )
             ) ||
             (
@@ -357,6 +575,11 @@ service cloud.firestore {
             (
               isChatActiveMember(chatId, request.auth.uid) &&
               chatMembershipSnapshotFieldsOnly()
+            ) ||
+            (
+              canManageChat(chatId) &&
+              userId != chatData(chatId).ownerId &&
+              chatMembershipManagementFieldsOnly()
             )
           );
         allow delete: if signedIn() &&
@@ -463,7 +686,8 @@ service cloud.firestore {
     match /chat_groups/{chatId} {
       allow read: if canReadChat(chatId);
       allow create: if canCreateOwnedChat();
-      allow update: if canManageChat(chatId) ||
+      allow update: if validManagedChatUpdate(chatId) ||
+        isLeavingChat(chatId, request.auth.uid) ||
         (
           isChatActiveMember(chatId, request.auth.uid) &&
           chatLastMessageFieldsOnly()
@@ -472,19 +696,31 @@ service cloud.firestore {
           isAcceptingChatInvite(chatId, request.auth.uid) &&
           chatMemberFieldsOnly()
         );
-      allow delete: if canManageChat(chatId) &&
-        resource.data.ownerId == request.auth.uid;
+      allow delete: if isChatOwner(chatId);
 
       match /members/{userId} {
         allow read: if canReadChat(chatId) ||
           (signedIn() && request.auth.uid == userId);
         allow create: if signedIn() &&
-          validChatRole(request.resource.data.role) &&
+          (
+            (
+              isOwnedChatBootstrapAfter(chatId, userId) &&
+              request.resource.data.role == 'owner' &&
+              request.resource.data.status == 'active'
+            ) ||
+            (
+              userId != chatDataAfter(chatId).ownerId &&
+              request.resource.data.role in ['admin', 'member']
+            )
+          ) &&
           validChatMemberStatus(request.resource.data.status) &&
           (
             (
               request.auth.uid == userId &&
-              isChatActiveMemberAfter(chatId, userId)
+              (
+                isOwnedChatBootstrapAfter(chatId, userId) ||
+                isChatActiveMemberAfter(chatId, userId)
+              )
             ) ||
             (
               canInviteToChat(chatId) &&
@@ -493,10 +729,22 @@ service cloud.firestore {
             )
           );
         allow update: if signedIn() &&
-          validChatRole(request.resource.data.role) &&
+          (
+            (
+              userId == chatDataAfter(chatId).ownerId &&
+              request.resource.data.role == 'owner'
+            ) ||
+            (
+              userId != chatDataAfter(chatId).ownerId &&
+              request.resource.data.role in ['admin', 'member']
+            )
+          ) &&
           validChatMemberStatus(request.resource.data.status) &&
           (
-            canManageChat(chatId) ||
+            (
+              canManageChat(chatId) &&
+              userId != chatData(chatId).ownerId
+            ) ||
             (
               canInviteToChat(chatId) &&
               request.resource.data.status == 'invited' &&
@@ -504,14 +752,22 @@ service cloud.firestore {
             ) ||
             (
               request.auth.uid == userId &&
+              userId != chatData(chatId).ownerId &&
               (
                 isChatActiveMemberAfter(chatId, userId) ||
                 request.resource.data.status == 'left'
               )
             )
           );
-        allow delete: if canManageChat(chatId) ||
-          (signedIn() && request.auth.uid == userId);
+        allow delete: if (
+            canManageChat(chatId) &&
+            userId != chatData(chatId).ownerId
+          ) ||
+          (
+            signedIn() &&
+            request.auth.uid == userId &&
+            userId != chatData(chatId).ownerId
+          );
       }
 
       match /messages/{messageId} {
@@ -522,6 +778,14 @@ service cloud.firestore {
             canManageChat(chatId) ||
             resource.data.senderId == request.auth.uid
           );
+
+        match /votes/{userId} {
+          allow read: if canReadChat(chatId);
+          allow create, update: if canReadChat(chatId) &&
+            validPollVote(chatId, messageId, userId);
+          allow delete: if canReadChat(chatId) &&
+            request.auth.uid == userId;
+        }
       }
 
       match /invites/{inviteCode} {
@@ -553,6 +817,10 @@ service cloud.firestore {
       allow create: if canCreateChatInvite(inviteCode);
       allow update: if canResolveChatInvite();
       allow delete: if signedIn() && canInviteToChat(resource.data.chatId);
+    }
+
+    match /chat_join_codes/{joinCode} {
+      allow read, write: if false;
     }
   }
 }

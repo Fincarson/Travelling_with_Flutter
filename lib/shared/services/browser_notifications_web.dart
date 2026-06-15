@@ -5,8 +5,10 @@ import 'dart:html' as html;
 
 final _timers = <int, Timer>{};
 final _visibleNotifications = <int, html.Notification>{};
+final _notificationClicks = StreamController<String>.broadcast();
 
 bool get supportsBrowserNotifications => html.Notification.supported;
+Stream<String> get browserNotificationClicks => _notificationClicks.stream;
 
 Future<bool> requestBrowserNotificationPermission() async {
   if (!supportsBrowserNotifications) return false;
@@ -34,13 +36,25 @@ Future<void> scheduleBrowserNotification({
 
   final delay = notifyAt.difference(DateTime.now());
   if (delay.isNegative || delay == Duration.zero) {
-    _showBrowserNotification(id: id, title: title, body: body);
+    await showBrowserNotification(
+      id: id,
+      title: title,
+      body: body,
+      payload: payload,
+    );
     return;
   }
 
   _timers[id] = Timer(delay, () {
     _timers.remove(id);
-    _showBrowserNotification(id: id, title: title, body: body);
+    unawaited(
+      showBrowserNotification(
+        id: id,
+        title: title,
+        body: body,
+        payload: payload,
+      ),
+    );
   });
 }
 
@@ -51,17 +65,31 @@ Future<void> cancelBrowserNotifications(Iterable<int> ids) async {
   }
 }
 
-void _showBrowserNotification({
+Future<void> showBrowserNotification({
   required int id,
   required String title,
   required String body,
-}) {
+  String? payload,
+  String? tag,
+}) async {
+  if (!supportsBrowserNotifications ||
+      html.Notification.permission != 'granted') {
+    return;
+  }
+  await cancelBrowserNotifications([id]);
   final notification = html.Notification(
     title,
     body: body,
     icon: 'icons/Icon-192.png',
-    tag: 'trip-reminder-$id',
+    tag: tag?.trim().isNotEmpty == true ? tag : 'travel-agent-$id',
   );
   _visibleNotifications[id] = notification;
+  notification.onClick.listen((_) {
+    final target = payload?.trim();
+    if (target != null && target.isNotEmpty) {
+      _notificationClicks.add(target);
+    }
+    notification.close();
+  });
   notification.onClose.first.then((_) => _visibleNotifications.remove(id));
 }

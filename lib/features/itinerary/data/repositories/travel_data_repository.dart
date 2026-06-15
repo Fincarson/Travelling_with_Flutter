@@ -51,6 +51,13 @@ class TravelDataRepository {
     return batch.commit();
   }
 
+  Future<void> completeOnboarding(String accountId) {
+    return _userDoc(accountId).set({
+      'settings': {'onboardingRequired': false, 'onboardingCompleted': true},
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   Future<List<Trip>> loadTrips(String accountId) async {
     await migrateLegacyTrips(accountId);
     final memberships = await _membershipsRef(accountId).get();
@@ -363,7 +370,7 @@ class TravelDataRepository {
       'spent': trip.spent,
       'currency': trip.currency,
       'status': trip.status.name,
-      'groupType': trip.groupType,
+      'numOfTravelers': trip.numOfTravelers,
       'memberIds': memberIds,
       'roles': roles,
       'images': trip.images,
@@ -472,7 +479,10 @@ class TravelDataRepository {
         'id': category.id,
         'category': category.category,
         'planned': category.planned,
-        'actual': category.actual,
+        'actual': category.effectiveActual,
+        'spendings': category.spendings
+            .map((spending) => spending.toMap())
+            .toList(),
         'order': index,
         'updatedAt': FieldValue.serverTimestamp(),
       });
