@@ -1,6 +1,6 @@
 part of travel_agent_app;
 
-class CreateOptionCard extends StatelessWidget {
+class CreateOptionCard extends StatefulWidget {
   const CreateOptionCard({
     required this.icon,
     required this.title,
@@ -15,44 +15,75 @@ class CreateOptionCard extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<CreateOptionCard> createState() => _CreateOptionCardState();
+}
+
+class _CreateOptionCardState extends State<CreateOptionCard> {
+  var _hovered = false;
+
+  @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: GlassPanel(
-        child: SizedBox(
-          width: double.infinity,
-          child: Row(
-            children: [
-              IconBadge(icon: icon, size: 48),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      appText(context, title),
-                      style: const TextStyle(
-                        color: _primary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                      ),
+    final settings = PerformanceScope.maybeSettingsOf(context);
+    final interactiveMotion =
+        settings.animationsEnabled && settings.heavyVisualEffects;
+    return MouseRegion(
+      onEnter: (_) {
+        if (interactiveMotion) setState(() => _hovered = true);
+      },
+      onExit: (_) {
+        if (_hovered) setState(() => _hovered = false);
+      },
+      child: AnimatedScale(
+        scale: _hovered ? 1.015 : 1,
+        duration: settings.transitionDuration,
+        curve: Curves.easeOutCubic,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: GlassPanel(
+            child: SizedBox(
+              width: double.infinity,
+              child: Row(
+                children: [
+                  IconBadge(icon: widget.icon, size: 48),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          appText(context, widget.title),
+                          style: const TextStyle(
+                            color: _primary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          appText(context, widget.text),
+                          style: const TextStyle(
+                            color: _secondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      appText(context, text),
-                      style: const TextStyle(
-                        color: _secondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        height: 1.3,
-                      ),
+                  ),
+                  AnimatedSlide(
+                    offset: _hovered ? const Offset(.14, 0) : Offset.zero,
+                    duration: settings.transitionDuration,
+                    curve: Curves.easeOutCubic,
+                    child: const Icon(
+                      Icons.arrow_forward_rounded,
+                      color: _secondary,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              const Icon(Icons.arrow_forward_rounded, color: _secondary),
-            ],
+            ),
           ),
         ),
       ),
@@ -110,11 +141,19 @@ class CreateTripChatTurn extends StatelessWidget {
   const CreateTripChatTurn({
     required this.message,
     required this.onSelect,
+    this.selectedCurrency,
+    this.currencyOptions = const [],
+    this.onCurrencyChanged,
+    this.budgetOptions = const [],
     super.key,
   });
 
   final CreateTripChatMessage message;
   final ValueChanged<String> onSelect;
+  final String? selectedCurrency;
+  final List<String> currencyOptions;
+  final ValueChanged<String>? onCurrencyChanged;
+  final List<CreateTripChoiceOption> budgetOptions;
 
   @override
   Widget build(BuildContext context) {
@@ -130,6 +169,10 @@ class CreateTripChatTurn extends StatelessWidget {
             child: CreateTripChoicePanel(
               widget: message.widget!,
               onSelect: onSelect,
+              selectedCurrency: selectedCurrency,
+              currencyOptions: currencyOptions,
+              onCurrencyChanged: onCurrencyChanged,
+              budgetOptions: budgetOptions,
             ),
           ),
       ],
@@ -212,14 +255,26 @@ class CreateTripChoicePanel extends StatelessWidget {
   const CreateTripChoicePanel({
     required this.widget,
     required this.onSelect,
+    this.selectedCurrency,
+    this.currencyOptions = const [],
+    this.onCurrencyChanged,
+    this.budgetOptions = const [],
     super.key,
   });
 
   final CreateTripChoiceWidget widget;
   final ValueChanged<String> onSelect;
+  final String? selectedCurrency;
+  final List<String> currencyOptions;
+  final ValueChanged<String>? onCurrencyChanged;
+  final List<CreateTripChoiceOption> budgetOptions;
 
   @override
   Widget build(BuildContext context) {
+    final isBudgetChoice = widget.title.toLowerCase().contains('budget');
+    final options = isBudgetChoice && budgetOptions.isNotEmpty
+        ? budgetOptions
+        : widget.options;
     return GlassPanel(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -232,8 +287,26 @@ class CreateTripChoicePanel extends StatelessWidget {
               fontWeight: FontWeight.w900,
             ),
           ),
+          if (isBudgetChoice &&
+              selectedCurrency != null &&
+              currencyOptions.isNotEmpty &&
+              onCurrencyChanged != null) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final currency in currencyOptions)
+                  ChoiceChip(
+                    label: Text(currency),
+                    selected: currency == selectedCurrency,
+                    onSelected: (_) => onCurrencyChanged!(currency),
+                  ),
+              ],
+            ),
+          ],
           const SizedBox(height: 10),
-          for (final option in widget.options)
+          for (final option in options)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: InkWell(

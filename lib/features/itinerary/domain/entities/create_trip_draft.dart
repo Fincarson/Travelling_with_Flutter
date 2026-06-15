@@ -1,6 +1,7 @@
 part of travel_agent_app;
 
 const _customDateRangeValue = '__pick_dates__';
+const _customBudgetValue = '__custom_budget__';
 
 class CreateTripDraft {
   const CreateTripDraft({
@@ -9,6 +10,7 @@ class CreateTripDraft {
     this.endDate,
     this.budget,
     this.currency,
+    this.numOfTravelers,
     this.groupType,
     this.preferences = const [],
   });
@@ -18,6 +20,7 @@ class CreateTripDraft {
   final DateTime? endDate;
   final String? budget;
   final String? currency;
+  final int? numOfTravelers;
   final String? groupType;
   final List<String> preferences;
 
@@ -27,6 +30,7 @@ class CreateTripDraft {
     DateTime? endDate,
     String? budget,
     String? currency,
+    int? numOfTravelers,
     String? groupType,
     List<String>? preferences,
   }) {
@@ -36,6 +40,7 @@ class CreateTripDraft {
       endDate: endDate ?? this.endDate,
       budget: budget ?? this.budget,
       currency: currency ?? this.currency,
+      numOfTravelers: numOfTravelers ?? this.numOfTravelers,
       groupType: groupType ?? this.groupType,
       preferences: preferences ?? this.preferences,
     );
@@ -47,6 +52,7 @@ class CreateTripDraft {
     'endDate': endDate == null ? null : _dateKey(endDate!),
     'budget': budget,
     'currency': currency,
+    'numOfTravelers': numOfTravelers,
     'groupType': groupType,
     'preferences': preferences,
   };
@@ -55,13 +61,21 @@ class CreateTripDraft {
     Map<String, dynamic> map, {
     required CreateTripDraft fallback,
   }) {
+    final travelerCount =
+        _normalTravelerCount(map['numOfTravelers']) ??
+        _legacyTravelerCountFromGroupType(map['groupType']) ??
+        fallback.numOfTravelers;
     return fallback.copyWith(
       destination: _nonEmptyString(map['destination']) ?? fallback.destination,
       startDate: _parseIsoDate(map['startDate']) ?? fallback.startDate,
       endDate: _parseIsoDate(map['endDate']) ?? fallback.endDate,
       budget: _nonEmptyString(map['budget']) ?? fallback.budget,
       currency: _normalCurrencyCode(map['currency']) ?? fallback.currency,
-      groupType: _normalGroupType(map['groupType']) ?? fallback.groupType,
+      numOfTravelers: travelerCount,
+      groupType:
+          _normalGroupType(map['groupType']) ??
+          _groupTypeFromTravelerCount(travelerCount) ??
+          fallback.groupType,
       preferences: ((map['preferences'] as List<dynamic>?) ?? const [])
           .whereType<String>()
           .where((item) => item.trim().isNotEmpty)
@@ -69,21 +83,30 @@ class CreateTripDraft {
     );
   }
 
-  Map<String, dynamic> toJson() => toAiMap();
+  Map<String, dynamic> toMap() => toAiMap();
 
-  static CreateTripDraft? fromJson(Map<String, dynamic>? json) {
-    if (json == null) return null;
+  Map<String, dynamic> toJson() => toMap();
+
+  static CreateTripDraft fromMap(Map<String, dynamic> map) {
     return CreateTripDraft(
-      destination: json['destination'] as String?,
-      startDate: _parseIsoDate(json['startDate']),
-      endDate: _parseIsoDate(json['endDate']),
-      budget: json['budget'] as String?,
-      currency: json['currency'] as String?,
-      groupType: json['groupType'] as String?,
-      preferences: ((json['preferences'] as List<dynamic>?) ?? const [])
+      destination: map['destination'] as String?,
+      startDate: _parseIsoDate(map['startDate']),
+      endDate: _parseIsoDate(map['endDate']),
+      budget: map['budget'] as String?,
+      currency: map['currency'] as String?,
+      numOfTravelers:
+          _normalTravelerCount(map['numOfTravelers']) ??
+          _legacyTravelerCountFromGroupType(map['groupType']),
+      groupType: map['groupType'] as String?,
+      preferences: ((map['preferences'] as List<dynamic>?) ?? const [])
           .whereType<String>()
           .toList(),
     );
+  }
+
+  static CreateTripDraft? fromJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    return fromMap(json);
   }
 }
 
@@ -98,21 +121,26 @@ class CreateTripChatMessage {
   final String text;
   final CreateTripChoiceWidget? widget;
 
-  Map<String, dynamic> toJson() => {
-        'fromUser': fromUser,
-        'text': text,
-        'widget': widget?.toJson(),
-      };
+  Map<String, dynamic> toMap() => {
+    'fromUser': fromUser,
+    'text': text,
+    'widget': widget?.toJson(),
+  };
 
-  static CreateTripChatMessage fromJson(Map<String, dynamic> json) {
+  Map<String, dynamic> toJson() => toMap();
+
+  static CreateTripChatMessage fromMap(Map<String, dynamic> map) {
     return CreateTripChatMessage(
-      fromUser: json['fromUser'] as bool? ?? false,
-      text: json['text'] as String? ?? '',
-      widget: json['widget'] is Map
-          ? CreateTripChoiceWidget.fromMap(json['widget'])
+      fromUser: map['fromUser'] as bool? ?? false,
+      text: map['text'] as String? ?? '',
+      widget: map['widget'] is Map
+          ? CreateTripChoiceWidget.fromMap(map['widget'])
           : null,
     );
   }
+
+  static CreateTripChatMessage fromJson(Map<String, dynamic> json) =>
+      fromMap(json);
 
   static List<CreateTripChatMessage> fromJsonList(List<dynamic> json) {
     return json
@@ -163,9 +191,9 @@ class CreateTripChoiceWidget {
   final List<CreateTripChoiceOption> options;
 
   Map<String, dynamic> toJson() => {
-        'title': title,
-        'options': options.map((o) => o.toJson()).toList(),
-      };
+    'title': title,
+    'options': options.map((o) => o.toJson()).toList(),
+  };
 
   static CreateTripChoiceWidget? fromMap(Object? value) {
     if (value is! Map) return null;
@@ -198,10 +226,10 @@ class CreateTripChoiceOption {
   final String description;
 
   Map<String, dynamic> toJson() => {
-        'label': label,
-        'value': value,
-        'description': description,
-      };
+    'label': label,
+    'value': value,
+    'description': description,
+  };
 
   static CreateTripChoiceOption? fromMap(Map<dynamic, dynamic> map) {
     final label = _nonEmptyString(map['label']);
@@ -251,10 +279,38 @@ DateTime? _parseIsoDate(Object? value) {
   return DateTime.tryParse(value.trim());
 }
 
+int? _normalTravelerCount(Object? value) {
+  if (value is num) return value.toInt().clamp(1, 99).toInt();
+  final text = _nonEmptyString(value);
+  if (text == null) return null;
+  final match = RegExp(r'\d+').firstMatch(text);
+  final count = int.tryParse(match?.group(0) ?? '');
+  if (count == null) return null;
+  return count.clamp(1, 99).toInt();
+}
+
+int? _legacyTravelerCountFromGroupType(Object? value) {
+  final text = _nonEmptyString(value)?.toLowerCase();
+  if (text == null) return null;
+  if (text.contains('solo')) return 1;
+  if (text.contains('couple')) return 2;
+  if (text.contains('family') || text.contains('friend')) return 4;
+  if (text.contains('tour')) return 8;
+  return null;
+}
+
+String? _groupTypeFromTravelerCount(int? count) {
+  if (count == null) return null;
+  if (count <= 1) return 'Solo';
+  if (count == 2) return 'Couple';
+  return 'Friends';
+}
+
 String? _normalGroupType(Object? value) {
   final text = _nonEmptyString(value)?.toLowerCase();
   if (text == null) return null;
   if (text.contains('solo')) return 'Solo';
+  if (text.contains('couple')) return 'Couple';
   if (text.contains('family')) return 'Family';
   if (text.contains('tour')) return 'Tour';
   if (text.contains('friend')) return 'Friends';

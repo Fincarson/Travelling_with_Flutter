@@ -4,7 +4,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthenticatedAccount {
   const AuthenticatedAccount({
@@ -133,9 +132,6 @@ class AccountAuthService {
   static const _googleServerClientId = String.fromEnvironment(
     'GOOGLE_SERVER_CLIENT_ID',
   );
-  static const rememberDuration = Duration(days: 30);
-  static const _rememberedUidKey = 'account_auth.remembered_uid';
-  static const _rememberUntilKey = 'account_auth.remember_until';
 
   Stream<AuthenticatedAccount?> get accountChanges {
     return _auth.userChanges().map((user) {
@@ -172,41 +168,8 @@ class AccountAuthService {
     );
   }
 
-  Future<AuthenticatedAccount?> restoreRememberedAccount() async {
-    final user = _auth.currentUser;
-    if (user == null) return null;
-
-    final prefs = await SharedPreferences.getInstance();
-    final rememberedUid = prefs.getString(_rememberedUidKey);
-    final rememberUntilText = prefs.getString(_rememberUntilKey);
-    final rememberUntil = rememberUntilText == null
-        ? null
-        : DateTime.tryParse(rememberUntilText)?.toUtc();
-    final isRemembered =
-        rememberedUid == user.uid &&
-        rememberUntil != null &&
-        DateTime.now().toUtc().isBefore(rememberUntil);
-
-    if (!isRemembered) {
-      await signOut();
-      return null;
-    }
-
-    return AuthenticatedAccount.fromFirebaseUser(user);
-  }
-
-  Future<void> rememberCurrentSession({required bool remember}) async {
-    final prefs = await SharedPreferences.getInstance();
-    final user = _auth.currentUser;
-    if (!remember || user == null) {
-      await prefs.remove(_rememberedUidKey);
-      await prefs.remove(_rememberUntilKey);
-      return;
-    }
-
-    final rememberUntil = DateTime.now().toUtc().add(rememberDuration);
-    await prefs.setString(_rememberedUidKey, user.uid);
-    await prefs.setString(_rememberUntilKey, rememberUntil.toIso8601String());
+  Future<void> prepareForFreshSignIn() async {
+    await signOut();
   }
 
   Future<void> signInWithEmail({
@@ -223,6 +186,10 @@ class AccountAuthService {
     required String name,
     required String email,
     required String password,
+    List<String> interests = const [],
+    String? ageRange,
+    String travelPace = 'Balanced',
+    String? termsVersion,
   }) async {
     final credential = await _auth.createUserWithEmailAndPassword(
       email: email.trim(),
@@ -234,9 +201,13 @@ class AccountAuthService {
       await credential.user?.updateDisplayName(trimmedName);
       await credential.user?.reload();
     }
-    await _markOnboardingPendingForNewAccount(
+    await _saveNewAccountProfile(
       credential,
       displayName: trimmedName,
+      interests: interests,
+      ageRange: ageRange,
+      travelPace: travelPace,
+      termsVersion: termsVersion,
     );
   }
 
@@ -532,7 +503,6 @@ class AccountAuthService {
 
   Future<void> signOut() async {
     await _auth.signOut();
-    unawaited(_clearRememberedSession());
     if (!kIsWeb) unawaited(_signOutFromGoogle());
   }
 
@@ -602,16 +572,6 @@ class AccountAuthService {
     }
   }
 
-  static Future<void> _clearRememberedSession() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_rememberedUidKey);
-      await prefs.remove(_rememberUntilKey);
-    } catch (_) {
-      // A local preference failure must not restore a signed-out Firebase user.
-    }
-  }
-
   Future<void> _rejectNewProviderAccount(
     UserCredential credential,
     String message,
@@ -629,9 +589,13 @@ class AccountAuthService {
     throw AccountAuthException(message);
   }
 
-  static Future<void> _markOnboardingPendingForNewAccount(
+  static Future<void> _saveNewAccountProfile(
     UserCredential credential, {
     String? displayName,
+    List<String> interests = const [],
+    String? ageRange,
+    String travelPace = 'Balanced',
+    String? termsVersion,
   }) async {
     if (credential.additionalUserInfo?.isNewUser != true) return;
     final user = credential.user ?? FirebaseAuth.instance.currentUser;
@@ -641,20 +605,44 @@ class AccountAuthService {
     final trimmedName = (displayName ?? user?.displayName ?? '').trim();
     final trimmedEmail = (user?.email ?? '').trim();
     final photoUrl = user?.photoURL;
+    final completedOnboarding =
+        termsVersion != null && termsVersion.trim().isNotEmpty;
     final profileData = <String, dynamic>{
-      'settings': {'onboardingRequired': true, 'onboardingCompleted': false},
+      'interests': interests,
+      'onboarding': {'ageRange': ageRange, 'travelPace': travelPace},
+      'settings': {
+        'onboardingRequired': !completedOnboarding,
+        'onboardingCompleted': completedOnboarding,
+      },
       'updatedAt': FieldValue.serverTimestamp(),
     };
+    if (completedOnboarding) {
+      profileData['legalConsent'] = {
+        'termsVersion': termsVersion.trim(),
+        'acceptedAt': FieldValue.serverTimestamp(),
+        'draftTerms': true,
+      };
+    }
     if (trimmedName.isNotEmpty) profileData['name'] = trimmedName;
     if (trimmedEmail.isNotEmpty) profileData['email'] = trimmedEmail;
     if (photoUrl != null && photoUrl.trim().isNotEmpty) {
       profileData['photoUrl'] = photoUrl.trim();
     }
 
-    await FirebaseFirestore.instance
-        .collection('travel_users')
-        .doc(uid)
-        .set(profileData, SetOptions(merge: true));
+    final firestore = FirebaseFirestore.instance;
+    final batch = firestore.batch();
+    batch.set(
+      firestore.collection('travel_users').doc(uid),
+      profileData,
+      SetOptions(merge: true),
+    );
+    batch.set(firestore.collection('public_users').doc(uid), {
+      'displayName': trimmedName.isEmpty ? 'Explorer' : trimmedName,
+      'emailLower': trimmedEmail.toLowerCase(),
+      'photoUrl': photoUrl,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    await batch.commit();
   }
 }
 

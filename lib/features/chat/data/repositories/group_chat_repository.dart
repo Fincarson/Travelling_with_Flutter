@@ -12,6 +12,8 @@ class GroupChatRepository {
   final FirebaseFirestore _firestore;
   final FirebaseStorage _storage;
   final FirebaseFunctions _functions;
+  static const _visibleChatLimit = 100;
+  static const _sharedContentLimit = 120;
 
   CollectionReference<Map<String, dynamic>> get _chatsRef =>
       _firestore.collection('chat_groups');
@@ -49,6 +51,7 @@ class GroupChatRepository {
   Stream<List<GroupChatMembership>> watchMemberships(String accountId) {
     return _membershipsRef(accountId)
         .orderBy('updatedAt', descending: true)
+        .limit(_visibleChatLimit)
         .snapshots()
         .map(
           (snapshot) => snapshot.docs.map(GroupChatMembership.fromDoc).toList(),
@@ -65,7 +68,7 @@ class GroupChatRepository {
   }
 
   Stream<List<GroupChatInvite>> watchPendingInvites(String accountId) {
-    return _userInvitesRef(accountId).snapshots().map((snapshot) {
+    return _userInvitesRef(accountId).limit(50).snapshots().map((snapshot) {
       final invites = snapshot.docs
           .map(GroupChatInvite.fromDoc)
           .where(
@@ -144,6 +147,7 @@ class GroupChatRepository {
     return _chatDoc(chatId)
         .collection('messages')
         .orderBy('createdAt', descending: true)
+        .limit(_sharedContentLimit)
         .snapshots()
         .map(
           (snapshot) => snapshot.docs

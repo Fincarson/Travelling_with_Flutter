@@ -561,199 +561,224 @@ class SelectedPlaceCard extends StatelessWidget {
   }
 }
 
-class TripListCard extends StatefulWidget {
+class TripListCard extends StatelessWidget {
   const TripListCard({
     required this.trip,
     required this.onTap,
     required this.onStart,
-    required this.onDelete,
+    this.favorite = false,
+    this.onToggleFavorite,
     super.key,
   });
   final Trip trip;
   final VoidCallback onTap;
   final VoidCallback onStart;
-  final VoidCallback onDelete;
-
-  @override
-  State<TripListCard> createState() => _TripListCardState();
-}
-
-class _TripListCardState extends State<TripListCard> {
-  static const _deleteRevealWidth = 92.0;
-  double _dragOffset = 0;
-
-  void _closeActions() {
-    if (_dragOffset == 0) return;
-    setState(() => _dragOffset = 0);
-  }
-
-  void _deleteTrip() {
-    _closeActions();
-    widget.onDelete();
-  }
-
-  void _handleHorizontalDragUpdate(DragUpdateDetails details) {
-    final delta = details.primaryDelta;
-    if (delta == null || delta == 0) return;
-    setState(() {
-      _dragOffset = (_dragOffset + delta).clamp(
-        -_deleteRevealWidth,
-        _deleteRevealWidth,
-      );
-    });
-  }
-
-  void _handleHorizontalDragEnd(DragEndDetails details) {
-    final velocity = details.primaryVelocity ?? 0;
-    final shouldReveal =
-        _dragOffset.abs() > _deleteRevealWidth * .35 || velocity.abs() > 420;
-    setState(() {
-      if (!shouldReveal) {
-        _dragOffset = 0;
-      } else if (_dragOffset == 0) {
-        _dragOffset = velocity.isNegative
-            ? -_deleteRevealWidth
-            : _deleteRevealWidth;
-      } else {
-        _dragOffset = _dragOffset.isNegative
-            ? -_deleteRevealWidth
-            : _deleteRevealWidth;
-      }
-    });
-  }
+  final bool favorite;
+  final VoidCallback? onToggleFavorite;
 
   @override
   Widget build(BuildContext context) {
-    final performance = PerformanceScope.settingsOf(context);
-    final animationDuration = performance.animationsEnabled
-        ? performance.transitionDuration
-        : Duration.zero;
+    final scheme = Theme.of(context).colorScheme;
+    final settings = PerformanceScope.maybeSettingsOf(context);
+    final fallbackImage = destinations.first.image;
+    final images = trip.images
+        .where((image) => image.trim().isNotEmpty)
+        .toList();
+    String imageAt(int index) =>
+        images.isEmpty ? fallbackImage : images[index % images.length];
+    final isPast = trip.status == TripStatus.past;
+    final isOngoing = trip.status == TripStatus.ongoing;
+    final actionLabel = isPast
+        ? 'VIEW TRIP'
+        : isOngoing
+        ? 'CONTINUE TRIP'
+        : 'START TRIP';
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final imageSize = constraints.maxWidth < 340 ? 74.0 : 94.0;
-        final content = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.trip.destination,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${widget.trip.startDate} / ${_travelerCountLabel(widget.trip.numOfTravelers)}',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: _secondary,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                SmallPill(label: widget.trip.status.name),
-                if (widget.trip.status != TripStatus.ongoing)
-                  GestureDetector(
-                    onTap: widget.onStart,
-                    child: const SmallPill(label: 'Start'),
-                  ),
-              ],
-            ),
-          ],
-        );
-
-        return ClipRRect(
+        final compact = constraints.maxWidth < 520;
+        return Material(
+          key: ValueKey('trip-card-${trip.id}'),
+          color: scheme.surfaceContainerLowest,
+          elevation: settings.heavyVisualEffects ? 4 : 0,
+          shadowColor: Colors.black.withValues(alpha: .1),
           borderRadius: BorderRadius.circular(24),
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: _TripDeleteRevealBackground(
-                  alignment: _dragOffset >= 0
-                      ? Alignment.centerLeft
-                      : Alignment.centerRight,
-                  onDelete: _deleteTrip,
-                ),
-              ),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onHorizontalDragUpdate: _handleHorizontalDragUpdate,
-                onHorizontalDragEnd: _handleHorizontalDragEnd,
-                child: AnimatedContainer(
-                  duration: animationDuration,
-                  curve: Curves.easeOutCubic,
-                  transform: Matrix4.translationValues(_dragOffset, 0, 0),
-                  child: GlassPanel(
-                    padding: const EdgeInsets.all(12),
-                    child: Stack(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: EdgeInsets.all(compact ? 14 : 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _TripListAvatar(
+                        image: imageAt(0),
+                        size: compact ? 44 : 50,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              trip.destination,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: scheme.onSurface,
+                                fontSize: compact ? 18 : 20,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              trip.startDate == trip.endDate
+                                  ? trip.startDate
+                                  : '${trip.startDate} to ${trip.endDate}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: scheme.onSurfaceVariant,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      if (onToggleFavorite != null)
+                        IconButton(
+                          tooltip: favorite
+                              ? 'Remove favorite trip'
+                              : 'Favorite trip',
+                          onPressed: onToggleFavorite,
+                          icon: Icon(
+                            favorite
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            color: favorite
+                                ? scheme.error
+                                : scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFB6D8F2).withValues(alpha: .55),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          appText(
+                            context,
+                            _travelerCountLabel(trip.numOfTravelers),
+                          ).toUpperCase(),
+                          style: const TextStyle(
+                            color: Color(0xFF355872),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: .8,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: compact ? 112 : 150,
+                    child: Row(
                       children: [
-                        InkWell(
-                          borderRadius: BorderRadius.circular(18),
-                          onTap: _dragOffset == 0
-                              ? widget.onTap
-                              : _closeActions,
-                          child: Padding(
-                            padding: const EdgeInsets.only(right: 36),
-                            child: Row(
-                              children: [
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(18),
-                                  child: Image.network(
-                                    widget.trip.images.first,
-                                    width: imageSize,
-                                    height: imageSize,
-                                    fit: BoxFit.cover,
-                                    filterQuality:
-                                        PerformanceScope.maybeSettingsOf(
-                                          context,
-                                        ).filterQuality,
+                        for (var index = 0; index < 3; index++) ...[
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.network(
+                                imageAt(index),
+                                height: double.infinity,
+                                fit: BoxFit.cover,
+                                filterQuality: settings.filterQuality,
+                                errorBuilder: (_, __, ___) => ColoredBox(
+                                  color: scheme.primaryContainer,
+                                  child: Icon(
+                                    Icons.landscape_rounded,
+                                    color: scheme.primary,
                                   ),
                                 ),
-                                const SizedBox(width: 14),
-                                Expanded(child: content),
-                              ],
+                              ),
                             ),
                           ),
-                        ),
-                        Positioned(
-                          top: 0,
-                          right: 0,
-                          child: PopupMenuButton<_TripCardMenuAction>(
-                            tooltip: appText(context, 'Trip options'),
-                            icon: const Icon(Icons.more_horiz_rounded),
-                            onSelected: (action) {
-                              switch (action) {
-                                case _TripCardMenuAction.delete:
-                                  _deleteTrip();
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: _TripCardMenuAction.delete,
-                                child: Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.delete_outline_rounded,
-                                      color: Color(0xFFE5484D),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Text(appText(context, 'Delete trip')),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                          if (index != 2) const SizedBox(width: 8),
+                        ],
                       ],
                     ),
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _TripListStat(
+                          value: _displayMoney(
+                            context,
+                            trip.spent,
+                            trip.currency,
+                          ),
+                          label: 'SPENT',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _TripListStat(
+                          value: '${trip.items.length}',
+                          label: 'PLACES',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _TripListStat(
+                          value: '${trip.bookings.length}',
+                          label: 'BOOKINGS',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: isPast || isOngoing ? onTap : onStart,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        backgroundColor: const Color(0xFF3D5A6C),
+                        foregroundColor: Colors.white,
+                        shape: const StadiumBorder(),
+                        textStyle: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      child: Text(actionLabel),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Center(
+                    child: Text(
+                      'Swipe left or right to delete',
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         );
       },
@@ -761,50 +786,76 @@ class _TripListCardState extends State<TripListCard> {
   }
 }
 
-enum _TripCardMenuAction { delete }
+class _TripListAvatar extends StatelessWidget {
+  const _TripListAvatar({required this.image, required this.size});
 
-class _TripDeleteRevealBackground extends StatelessWidget {
-  const _TripDeleteRevealBackground({
-    required this.alignment,
-    required this.onDelete,
-  });
-
-  final Alignment alignment;
-  final VoidCallback onDelete;
+  final String image;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: const Color(0xFFE5484D),
-      child: Align(
-        alignment: alignment,
-        child: SizedBox(
-          width: _TripListCardState._deleteRevealWidth,
-          height: double.infinity,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onDelete,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.delete_rounded, color: Colors.white),
-                  const SizedBox(height: 4),
-                  Text(
-                    appText(context, 'Delete'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+    final scheme = Theme.of(context).colorScheme;
+    return ClipOval(
+      child: Image.network(
+        image,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        filterQuality: PerformanceScope.maybeSettingsOf(context).filterQuality,
+        errorBuilder: (_, __, ___) => ColoredBox(
+          color: scheme.primaryContainer,
+          child: SizedBox.square(
+            dimension: size,
+            child: Icon(Icons.flight_takeoff_rounded, color: scheme.primary),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _TripListStat extends StatelessWidget {
+  const _TripListStat({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 11),
+      decoration: BoxDecoration(
+        color: scheme.brightness == Brightness.light
+            ? const Color(0xFFF5F4EE)
+            : scheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: scheme.onSurface,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: scheme.onSurfaceVariant,
+              fontSize: 8,
+              fontWeight: FontWeight.w900,
+              letterSpacing: .7,
+            ),
+          ),
+        ],
       ),
     );
   }

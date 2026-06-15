@@ -655,8 +655,8 @@ class _NotificationCardState extends State<_NotificationCard> {
         _hovered &&
         notification.important &&
         settings.motionLevel == MotionLevel.reduced;
-    const importantColor = Color(0xFFFFF7DF);
-    const importantBorder = Color(0xFFE5B94F);
+    const importantColor = Color(0xFFEAF4FF);
+    const importantBorder = Color(0xFF3B82C4);
 
     return MouseRegion(
       onEnter: (_) {
@@ -674,7 +674,7 @@ class _NotificationCardState extends State<_NotificationCard> {
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: notification.important
-              ? (subtleHover ? const Color(0xFFFFF2C8) : importantColor)
+              ? (subtleHover ? const Color(0xFFDCEEFF) : importantColor)
               : widget.archived
               ? const Color(0xFFF4F6F7)
               : Colors.white,
@@ -708,14 +708,14 @@ class _NotificationCardState extends State<_NotificationCard> {
               height: 46,
               decoration: BoxDecoration(
                 color: notification.important
-                    ? const Color(0xFFFFE7A3)
+                    ? const Color(0xFFCFE7FF)
                     : notification.type.color.withValues(alpha: .12),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(
                 notification.type.icon,
                 color: notification.important
-                    ? const Color(0xFF8B6415)
+                    ? const Color(0xFF1E5F99)
                     : notification.type.color,
                 size: 23,
               ),
@@ -734,7 +734,7 @@ class _NotificationCardState extends State<_NotificationCard> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: notification.important
-                                ? const Color(0xFF8B6415)
+                                ? const Color(0xFF1E5F99)
                                 : notification.type.color,
                             fontSize: 11,
                             fontWeight: FontWeight.w900,
@@ -813,13 +813,13 @@ class _ImportantLabel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFE7A3),
+        color: const Color(0xFFCFE7FF),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
         appText(context, 'Important').toUpperCase(),
         style: const TextStyle(
-          color: Color(0xFF76520A),
+          color: Color(0xFF154F82),
           fontSize: 9,
           fontWeight: FontWeight.w900,
           letterSpacing: .6,

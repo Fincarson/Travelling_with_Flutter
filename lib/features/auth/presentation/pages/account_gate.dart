@@ -10,41 +10,39 @@ import '../../../../shared/widgets/app_error_widgets.dart';
 import '../../data/account_auth_service.dart';
 
 class AccountGate extends StatefulWidget {
-  AccountGate({super.key, AccountAuthService? authService})
-    : _authService = authService ?? AccountAuthService();
+  const AccountGate({super.key, AccountAuthService? authService})
+    : _providedAuthService = authService;
 
-  final AccountAuthService _authService;
+  final AccountAuthService? _providedAuthService;
 
   @override
   State<AccountGate> createState() => _AccountGateState();
 }
 
 class _AccountGateState extends State<AccountGate> {
-  late final Future<AuthenticatedAccount?> _rememberedAccount;
   final _deviceContextService = AppDeviceContextService();
   final _locationPromptedAccountIds = <String>{};
-
-  AccountAuthService get _authService => widget._authService;
+  late final AccountAuthService _authService;
+  late final Future<void> _signInPreparation;
 
   @override
   void initState() {
     super.initState();
-    _rememberedAccount = _authService.restoreRememberedAccount();
+    _authService = widget._providedAuthService ?? AccountAuthService();
+    _signInPreparation = _authService.prepareForFreshSignIn();
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<AuthenticatedAccount?>(
-      future: _rememberedAccount,
+    return FutureBuilder<void>(
+      future: _signInPreparation,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const _AuthFrame(child: _AuthLoading());
         }
 
         return StreamBuilder<AuthenticatedAccount?>(
           stream: _authService.accountChanges,
-          initialData: snapshot.data,
           builder: (context, snapshot) {
             final account = snapshot.data;
             if (account == null) {
@@ -91,6 +89,8 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
   var _emailAuthFailed = false;
   var _phoneAuthFailed = false;
   var _showPasswordReset = false;
+  var _showOnboarding = false;
+  PreAccountOnboardingData? _pendingOnboarding;
   PhoneSignInSession? _phoneSession;
 
   @override
@@ -194,15 +194,24 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
   }
 
   Future<void> _submitEmail() async {
+    if (_isCreatingAccount && _pendingOnboarding == null) {
+      setState(() => _showOnboarding = true);
+      return;
+    }
     final form = _emailFormKey.currentState;
     if (form == null || !form.validate()) return;
 
     await _runAuth(() async {
       if (_isCreatingAccount) {
+        final onboarding = _pendingOnboarding!;
         await widget.authService.createEmailAccount(
           name: _name.text,
           email: _email.text,
           password: _password.text,
+          interests: onboarding.interests,
+          ageRange: onboarding.ageRange,
+          travelPace: onboarding.travelPace,
+          termsVersion: onboarding.termsVersion,
         );
       } else {
         await widget.authService.signInWithEmail(
@@ -210,7 +219,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
           password: _password.text,
         );
       }
-      await widget.authService.rememberCurrentSession(remember: true);
     }, errorTarget: _AuthErrorTarget.email);
   }
 
@@ -228,7 +236,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
       final session = await widget.authService.sendPhoneCode(phone);
       if (!mounted) return;
       if (session.autoVerified) {
-        await widget.authService.rememberCurrentSession(remember: true);
         return;
       }
       setState(() {
@@ -254,7 +261,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
         session: session,
         smsCode: _smsCode.text,
       );
-      await widget.authService.rememberCurrentSession(remember: true);
     }, errorTarget: _AuthErrorTarget.phone);
   }
 
@@ -263,7 +269,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
     await _runAuth(() async {
       try {
         await widget.authService.signInWithGoogle();
-        await widget.authService.rememberCurrentSession(remember: true);
       } on GoogleAccountLinkRequiredException catch (error) {
         pendingLink = error;
       }
@@ -283,12 +288,27 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
         password: password,
         googleCredential: link.googleCredential,
       );
-      await widget.authService.rememberCurrentSession(remember: true);
     }, errorTarget: _AuthErrorTarget.email);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_showOnboarding) {
+      return PreAccountOnboardingFlow(
+        initialData: _pendingOnboarding,
+        onBack: () => setState(() => _showOnboarding = false),
+        onComplete: (data) {
+          setState(() {
+            _pendingOnboarding = data;
+            _name.text = data.name;
+            _isCreatingAccount = true;
+            _showOnboarding = false;
+            _emailAuthFailed = false;
+          });
+        },
+      );
+    }
+
     if (_showPasswordReset) {
       return PasswordResetPage(
         authService: widget.authService,
@@ -306,10 +326,13 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
           padding: _authPagePadding(context),
           children: [
             const SizedBox(height: 10),
-            const Icon(
-              Icons.flight_takeoff_rounded,
-              color: Color(0xFF355872),
-              size: 42,
+            const Hero(
+              tag: 'travel-plane-logo',
+              child: Icon(
+                Icons.flight_takeoff_rounded,
+                color: Color(0xFF355872),
+                size: 42,
+              ),
             ),
             const SizedBox(height: 18),
             Text(
@@ -388,7 +411,10 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
               ),
               const SizedBox(height: 10),
               OutlinedButton.icon(
-                onPressed: null,
+                onPressed: _isBusy
+                    ? null
+                    : () =>
+                          _showNotice('Facebook sign-in is not available yet.'),
                 icon: const Icon(Icons.facebook_rounded),
                 label: Text(appText(context, 'Facebook coming later')),
               ),
@@ -407,6 +433,13 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (_isCreatingAccount) ...[
+            _AccountOnboardingSummary(
+              data: _pendingOnboarding,
+              onEdit: _isBusy
+                  ? null
+                  : () => setState(() => _showOnboarding = true),
+            ),
+            const SizedBox(height: 12),
             TextFormField(
               controller: _name,
               enabled: !_isBusy,
@@ -483,7 +516,13 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
             onPressed: _isBusy
                 ? null
                 : () => setState(() {
-                    _isCreatingAccount = !_isCreatingAccount;
+                    if (_isCreatingAccount) {
+                      _isCreatingAccount = false;
+                    } else if (_pendingOnboarding != null) {
+                      _isCreatingAccount = true;
+                    } else {
+                      _showOnboarding = true;
+                    }
                     _emailAuthFailed = false;
                   }),
             child: Text(
@@ -921,6 +960,60 @@ class _GoogleAccountLinkDialogState extends State<_GoogleAccountLinkDialog> {
           child: Text(appText(context, 'Connect and sign in')),
         ),
       ],
+    );
+  }
+}
+
+class _AccountOnboardingSummary extends StatelessWidget {
+  const _AccountOnboardingSummary({required this.data, required this.onEdit});
+
+  final PreAccountOnboardingData? data;
+  final VoidCallback? onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final onboarding = data;
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.primary.withValues(alpha: .08),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: scheme.primary.withValues(alpha: .28)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
+        child: Row(
+          children: [
+            Icon(Icons.check_circle_rounded, color: scheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Onboarding complete',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    onboarding == null
+                        ? 'Complete your preferences and draft terms.'
+                        : '${onboarding.interests.length} interests • ${onboarding.travelPace} pace • Terms accepted',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(onPressed: onEdit, child: const Text('Edit')),
+          ],
+        ),
+      ),
     );
   }
 }

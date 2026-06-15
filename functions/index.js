@@ -1,8 +1,8 @@
 /* global process */
 
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
-const {onDocumentCreated} = require("firebase-functions/v2/firestore");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
+const {defineSecret} = require("firebase-functions/params");
 const {
   onDocumentCreated,
   onDocumentWritten,
@@ -17,6 +17,8 @@ admin.initializeApp();
 const openAiChatModel = "gpt-5.4-mini";
 const openAiItineraryModel = "gpt-5.5";
 const openAiTimeoutMs = 30000;
+const geoapifyApiKeySecret = defineSecret("GEOAPIFY_API_KEY");
+const openAiApiKeySecret = defineSecret("OPENAI_API_KEY");
 const translationClient = new TranslationServiceClient();
 const currencyRatesCacheLifetimeMs = 24 * 60 * 60 * 1000;
 const currencyRatesDocument = admin
@@ -25,17 +27,102 @@ const currencyRatesDocument = admin
     .doc("currencyRates");
 
 function geoapifyApiKey() {
-  return String(process.env.GEOAPIFY_API_KEY ?? "").trim();
+  return String(geoapifyApiKeySecret.value() ?? "").trim();
 }
 
 function openAiApiKey() {
-  return String(process.env.OPENAI_API_KEY ?? "").trim();
+  return String(openAiApiKeySecret.value() ?? "").trim();
+}
+
+function requireAuthenticatedUid(request, message = "Sign in to continue.") {
+  const uid = String(request.auth?.uid ?? "").trim();
+  if (!uid) {
+    throw new HttpsError("unauthenticated", message);
+  }
+  return uid;
+}
+
+function validDocumentId(value) {
+  const text = String(value ?? "").trim();
+  return text.length > 0 && text.length <= 128 && !text.includes("/");
+}
+
+function validLatitude(value) {
+  return Number.isFinite(value) && value >= -90 && value <= 90;
+}
+
+function validLongitude(value) {
+  return Number.isFinite(value) && value >= -180 && value <= 180;
+}
+
+function validIsoDate(value) {
+  const text = String(value ?? "");
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return false;
+  const date = new Date(`${text}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) &&
+    date.getUTCFullYear() === Number(match[1]) &&
+    date.getUTCMonth() + 1 === Number(match[2]) &&
+    date.getUTCDate() === Number(match[3]);
+}
+
+function safeShortStrings(value, {limit = 20, maxLength = 120} = {}) {
+  if (!Array.isArray(value)) return [];
+  return value
+      .slice(0, limit)
+      .map((item) => String(item ?? "").trim())
+      .filter((item) => item.length > 0 && item.length <= maxLength);
+}
+
+async function requireTripEditor(request, tripId) {
+  const uid = requireAuthenticatedUid(
+      request,
+      "Sign in to update a trip plan.",
+  );
+  if (!validDocumentId(tripId)) {
+    throw new HttpsError("invalid-argument", "A valid trip is required.");
+  }
+
+  const snapshot = await admin.firestore()
+      .collection("trips")
+      .doc(String(tripId).trim())
+      .get();
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Trip not found.");
+  }
+
+  const trip = snapshot.data() || {};
+  const memberIds = Array.isArray(trip.memberIds)
+    ? trip.memberIds.map(String)
+    : [];
+  const role = String(trip.roles?.[uid] ?? "");
+  if (!memberIds.includes(uid) || !["owner", "editor"].includes(role)) {
+    throw new HttpsError(
+        "permission-denied",
+        "Only trip owners and editors can update the plan.",
+    );
+  }
+  return trip;
 }
 
 function safeTravelerCount(value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return 1;
   return Math.min(99, Math.max(1, parsed));
+}
+
+function travelerCountFromGroupType(value) {
+  switch (String(value ?? "").trim().toLowerCase()) {
+    case "couple":
+      return 2;
+    case "family":
+    case "friends":
+      return 4;
+    case "tour":
+      return 8;
+    default:
+      return 1;
+  }
 }
 
 const travelAssistantInstructions = [
@@ -92,6 +179,7 @@ const createTripInstructions = [
   "Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.",
   "Required final fields: destination, startDate, endDate, budget, numOfTravelers.",
   "Dates must be ISO yyyy-MM-dd. numOfTravelers must be an integer from 1 to 99.",
+  "Preserve groupType as Solo, Couple, Friends, Family, or Tour when the user identifies the party type.",
   "If the user names a currency, set currency to its three-letter ISO 4217 code.",
 ].join(" ");
 
@@ -256,6 +344,7 @@ const createTripReplyFormat = {
           budget: {type: ["string", "null"]},
           currency: {type: ["string", "null"]},
           numOfTravelers: {type: ["integer", "null"]},
+          groupType: {type: ["string", "null"]},
           preferences: {
             type: "array",
             items: {type: "string"},
@@ -268,6 +357,7 @@ const createTripReplyFormat = {
           "budget",
           "currency",
           "numOfTravelers",
+          "groupType",
           "preferences",
         ],
       },
@@ -331,6 +421,98 @@ const scheduleStopFormat = {
       cost: {type: "integer"},
     },
     required: ["day", "time", "activity", "type", "cost"],
+  },
+};
+
+const dayPlanEditFormat = {
+  type: "json_schema",
+  name: "day_plan_edit",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      feasible: {type: "boolean"},
+      warning: {type: "string"},
+      items: {
+        type: "array",
+        maxItems: 8,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            day: {type: "integer"},
+            time: {type: "string"},
+            activity: {type: "string"},
+            type: {
+              type: "string",
+              enum: [
+                "place",
+                "food",
+                "restaurant",
+                "walk",
+                "museum",
+                "beach",
+                "shopping",
+                "train",
+                "flight",
+                "hotel",
+                "cafe",
+                "hiking",
+                "temple",
+              ],
+            },
+            cost: {type: "integer"},
+          },
+          required: ["day", "time", "activity", "type", "cost"],
+        },
+      },
+    },
+    required: ["feasible", "warning", "items"],
+  },
+};
+
+const transportRecommendationsFormat = {
+  type: "json_schema",
+  name: "transport_recommendations",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      summary: {type: "string"},
+      options: {
+        type: "array",
+        maxItems: 5,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            mode: {type: "string"},
+            provider: {type: "string"},
+            route: {type: "string"},
+            duration: {type: "string"},
+            price: {type: "integer"},
+            currency: {type: "string"},
+            bookingHint: {type: "string"},
+            sourceName: {type: "string"},
+            sourceUrl: {type: "string"},
+          },
+          required: [
+            "mode",
+            "provider",
+            "route",
+            "duration",
+            "price",
+            "currency",
+            "bookingHint",
+            "sourceName",
+            "sourceUrl",
+          ],
+        },
+      },
+    },
+    required: ["summary", "options"],
   },
 };
 
@@ -574,11 +756,16 @@ async function fetchCurrencyRates() {
 exports.searchPlaces = onCall(
   {
     region: "us-central1",
+    secrets: [geoapifyApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to search for places.");
     const query = String(request.data?.query ?? "").trim();
     if (query.length < 3) {
       return {results: []};
+    }
+    if (query.length > 120) {
+      throw new HttpsError("invalid-argument", "Search text is too long.");
     }
 
     const apiKey = geoapifyApiKey();
@@ -615,11 +802,13 @@ exports.searchPlaces = onCall(
 exports.reversePlace = onCall(
   {
     region: "us-central1",
+    secrets: [geoapifyApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to look up a location.");
     const latitude = Number(request.data?.latitude);
     const longitude = Number(request.data?.longitude);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    if (!validLatitude(latitude) || !validLongitude(longitude)) {
       throw new HttpsError("invalid-argument", "Location is required.");
     }
 
@@ -656,13 +845,16 @@ exports.reversePlace = onCall(
 exports.searchNearbyPlaces = onCall(
   {
     region: "us-central1",
+    secrets: [geoapifyApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to search nearby places.");
     const latitude = Number(request.data?.latitude);
     const longitude = Number(request.data?.longitude);
-    const categories = Array.isArray(request.data?.categories) ?
-      request.data.categories.map((item) => String(item).trim()).filter(Boolean) :
-      [];
+    const categories = safeShortStrings(request.data?.categories, {
+      limit: 10,
+      maxLength: 80,
+    }).filter((item) => /^[a-z0-9_.-]+$/i.test(item));
     const radiusMeters = Math.min(
       5000,
       Math.max(100, Number.parseInt(request.data?.radiusMeters ?? 1200, 10)),
@@ -673,8 +865,8 @@ exports.searchNearbyPlaces = onCall(
     );
 
     if (
-      !Number.isFinite(latitude) ||
-      !Number.isFinite(longitude) ||
+      !validLatitude(latitude) ||
+      !validLongitude(longitude) ||
       !categories.length
     ) {
       throw new HttpsError(
@@ -717,14 +909,26 @@ exports.searchNearbyPlaces = onCall(
 exports.searchItineraryStop = onCall(
   {
     region: "us-central1",
+    secrets: [geoapifyApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to search itinerary stops.");
     const query = String(request.data?.query ?? "").trim();
     const destination = String(request.data?.destination ?? "").trim();
     const latitude = Number(request.data?.latitude);
     const longitude = Number(request.data?.longitude);
     if (query.length < 3) {
       return {results: []};
+    }
+    if (query.length > 200 || destination.length > 200) {
+      throw new HttpsError("invalid-argument", "Place search is too long.");
+    }
+    if (
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      (!validLatitude(latitude) || !validLongitude(longitude))
+    ) {
+      throw new HttpsError("invalid-argument", "Location is invalid.");
     }
 
     const apiKey = geoapifyApiKey();
@@ -966,8 +1170,24 @@ function validateTripPlanRequest(data) {
   const startDate = String(data.startDate ?? "").trim();
   const endDate = String(data.endDate ?? "").trim();
   const budget = Number.parseInt(data.budget, 10);
+  const numOfTravelers = data.numOfTravelers == null ?
+    travelerCountFromGroupType(data.groupType) :
+    Number.parseInt(data.numOfTravelers, 10);
 
-  if (!destination || !startDate || !endDate || !Number.isFinite(budget)) {
+  if (
+    !destination ||
+    destination.length > 200 ||
+    !validIsoDate(startDate) ||
+    !validIsoDate(endDate) ||
+    new Date(`${endDate}T00:00:00.000Z`) <
+      new Date(`${startDate}T00:00:00.000Z`) ||
+    !Number.isFinite(budget) ||
+    budget < 0 ||
+    budget > 1000000000 ||
+    !Number.isFinite(numOfTravelers) ||
+    numOfTravelers < 1 ||
+    numOfTravelers > 99
+  ) {
     throw new HttpsError("invalid-argument", "Trip details are required.");
   }
 }
@@ -979,6 +1199,9 @@ async function generateTripPlanFromRequest(data, options = {}) {
   const startDate = String(data.startDate ?? "").trim();
   const endDate = String(data.endDate ?? "").trim();
   const budget = Number.parseInt(data.budget, 10);
+  const numOfTravelers = data.numOfTravelers == null ?
+    travelerCountFromGroupType(data.groupType) :
+    safeTravelerCount(data.numOfTravelers);
   const languageInstructions = outputLanguageInstructions(
     data.profileLanguage,
     data.outputLanguage,
@@ -999,11 +1222,13 @@ async function generateTripPlanFromRequest(data, options = {}) {
       currency: String(data.currency ?? "USD"),
       profileLanguage: String(data.profileLanguage ?? "en"),
       outputLanguage: aiLanguageName(data.profileLanguage, data.outputLanguage),
-      groupType: String(data.groupType ?? "Solo"),
-      preferences: Array.isArray(data.preferences) ? data.preferences : [],
+      numOfTravelers,
+      groupType: String(data.groupType ?? ""),
+      preferences: safeShortStrings(data.preferences),
       flight: {
         airline: String(data.airline ?? ""),
         flightNumber: String(data.flightCode ?? ""),
+        confirmation: String(data.flightConfirmation ?? ""),
         departureTime: String(data.flightDepartureTime ?? ""),
         departurePlace: String(data.flightDeparturePlace ?? ""),
         landingTime: String(data.flightLandingTime ?? ""),
@@ -1038,7 +1263,10 @@ function sanitizedTripPreviewRequest(data) {
     startDate: String(data.startDate ?? "").trim(),
     endDate: String(data.endDate ?? "").trim(),
     budget: Number.parseInt(data.budget, 10),
-    groupType: String(data.groupType ?? "Solo"),
+    numOfTravelers: data.numOfTravelers == null ?
+      travelerCountFromGroupType(data.groupType) :
+      safeTravelerCount(data.numOfTravelers),
+    groupType: String(data.groupType ?? ""),
     preferences: Array.isArray(data.preferences) ?
       data.preferences.map((item) => String(item)).slice(0, 20) :
       [],
@@ -1305,8 +1533,10 @@ function publicTripPreviewError(error) {
 exports.chatWithAssistant = onCall(
   {
     region: "us-central1",
+    secrets: [openAiApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to use the travel assistant.");
     const message = String(request.data?.message ?? "").trim();
     if (!message) {
       throw new HttpsError("invalid-argument", "Message is required.");
@@ -1349,13 +1579,78 @@ exports.chatWithAssistant = onCall(
   },
 );
 
+exports.recommendDestinations = onCall(
+  {
+    region: "us-central1",
+    secrets: [openAiApiKeySecret],
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Sign in to get travel recommendations.",
+      );
+    }
+    const data = request.data ?? {};
+    const candidates = Array.isArray(data.candidates) ?
+      data.candidates.map((value) => String(value).trim()).filter(Boolean) :
+      [];
+    if (!candidates.length || candidates.length > 30) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Destination candidates are required.",
+      );
+    }
+
+    return createStructuredResponse({
+      instructions: [
+        "Rank up to five travel destinations from the supplied candidate list.",
+        "Use interests, saved places, travel pace, and prior ratings.",
+        "A low rating or negative feedback should reduce similar suggestions.",
+        "Never invent a destination and return destination names exactly as supplied.",
+      ].join(" "),
+      input: {
+        interests: data.interests ?? [],
+        travelPace: String(data.travelPace ?? "Balanced"),
+        favoritePlaces: data.favoritePlaces ?? [],
+        tripRatings: data.tripRatings ?? [],
+        candidates,
+      },
+      format: {
+        type: "json_schema",
+        name: "destination_recommendations",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            destinations: {
+              type: "array",
+              maxItems: 5,
+              items: {
+                type: "string",
+                enum: candidates,
+              },
+            },
+          },
+          required: ["destinations"],
+        },
+      },
+      logContext: "OpenAI destination recommendations failed",
+      publicMessage: "AI recommendations are unavailable.",
+    });
+  },
+);
+
 exports.generateTripPlan = onCall(
   {
     region: "us-central1",
     timeoutSeconds: 120,
     memory: "512MiB",
+    secrets: [openAiApiKeySecret, geoapifyApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to generate a trip.");
     const plan = await generateTripPlanFromRequest(request.data ?? {}, {
       timeoutMs: 90000,
     });
@@ -1399,6 +1694,7 @@ exports.runTripPreviewJob = onDocumentCreated(
     document: "travel_users/{userId}/tripPreviewJobs/{jobId}",
     timeoutSeconds: 120,
     memory: "512MiB",
+    secrets: [openAiApiKeySecret, geoapifyApiKeySecret],
   },
   async (event) => {
     const snapshot = event.data;
@@ -1453,14 +1749,21 @@ exports.runTripPreviewJob = onDocumentCreated(
 exports.generateScheduleStop = onCall(
   {
     region: "us-central1",
+    secrets: [openAiApiKeySecret],
   },
   async (request) => {
     const data = request.data ?? {};
-    const destination = String(data.destination ?? "").trim();
+    const trip = await requireTripEditor(request, data.tripId);
+    const destination = String(trip.destination ?? "").trim();
     const targetDay = Number.parseInt(data.targetDay, 10);
     const requestText = String(data.request ?? "").trim();
 
-    if (!destination || !Number.isFinite(targetDay)) {
+    if (
+      !destination ||
+      !Number.isFinite(targetDay) ||
+      targetDay < 1 ||
+      targetDay > 366
+    ) {
       throw new HttpsError("invalid-argument", "Trip day is required.");
     }
     if (requestText.length > 800) {
@@ -1477,16 +1780,16 @@ exports.generateScheduleStop = onCall(
       ].join(" "),
       input: {
         destination,
-        startDate: String(data.startDate ?? ""),
-        endDate: String(data.endDate ?? ""),
-        currency: String(data.currency ?? "USD"),
-        budget: Number.parseInt(data.budget, 10) || 0,
-        numOfTravelers: safeTravelerCount(data.numOfTravelers),
-        preferences: Array.isArray(data.preferences) ? data.preferences : [],
+        startDate: String(trip.startDate ?? ""),
+        endDate: String(trip.endDate ?? ""),
+        currency: String(trip.currency ?? "USD"),
+        budget: Number.parseInt(trip.budget, 10) || 0,
+        numOfTravelers: safeTravelerCount(trip.numOfTravelers),
+        preferences: safeShortStrings(trip.preferences),
         targetDay,
         request: requestText || "Suggest a useful trip stop.",
         existingSchedule: Array.isArray(data.existingSchedule)
-          ? data.existingSchedule
+          ? data.existingSchedule.slice(0, 60)
           : [],
         appContext: data.appContext ?? null,
       },
@@ -1499,11 +1802,179 @@ exports.generateScheduleStop = onCall(
   },
 );
 
+exports.generateDayPlanEdit = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 30,
+    secrets: [openAiApiKeySecret],
+  },
+  async (request) => {
+    const data = request.data ?? {};
+    const tripId = String(data.tripId ?? "").trim();
+    let trip;
+    if (tripId.startsWith("preview-")) {
+      requireAuthenticatedUid(request, "Sign in to edit an itinerary preview.");
+      const destination = String(data.destination ?? "").trim();
+      if (!destination || destination.length > 200) {
+        throw new HttpsError(
+            "invalid-argument",
+            "A preview destination is required.",
+        );
+      }
+      trip = {
+        destination,
+        startDate: String(data.startDate ?? ""),
+        endDate: String(data.endDate ?? ""),
+        currency: String(data.currency ?? "USD"),
+        budget: Number.parseInt(data.budget, 10) || 0,
+        numOfTravelers: safeTravelerCount(data.numOfTravelers),
+        preferences: safeShortStrings(data.preferences),
+      };
+    } else {
+      trip = await requireTripEditor(request, tripId);
+    }
+    const targetDay = Number.parseInt(data.targetDay, 10);
+    const placeRequest = String(data.placeRequest ?? "").trim();
+
+    if (
+      !Number.isFinite(targetDay) ||
+      targetDay < 1 ||
+      targetDay > 366 ||
+      !placeRequest
+    ) {
+      throw new HttpsError(
+          "invalid-argument",
+          "A trip day and place are required.",
+      );
+    }
+    if (placeRequest.length > 800) {
+      throw new HttpsError("invalid-argument", "Place request is too long.");
+    }
+
+    const result = await createStructuredResponse({
+      instructions: [
+        "Edit one day of a travel itinerary and return strict JSON only.",
+        "Judge whether the requested place realistically fits the day.",
+        "Consider route distance, schedule density, opening hours, and travel time.",
+        "If it does not fit, set feasible=false and preserve the existing day.",
+        "If it fits, return the complete revised day in practical time order.",
+        "Return no markdown or explanation outside the JSON fields.",
+      ].join(" "),
+      input: {
+        destination: String(trip.destination ?? ""),
+        startDate: String(trip.startDate ?? ""),
+        endDate: String(trip.endDate ?? ""),
+        currency: String(trip.currency ?? "USD"),
+        budget: Number.parseInt(trip.budget, 10) || 0,
+        numOfTravelers: safeTravelerCount(trip.numOfTravelers),
+        preferences: safeShortStrings(trip.preferences),
+        targetDay,
+        placeRequest,
+        targetDaySchedule: Array.isArray(data.targetDaySchedule)
+          ? data.targetDaySchedule.slice(0, 20)
+          : [],
+        fullSchedule: Array.isArray(data.fullSchedule)
+          ? data.fullSchedule.slice(0, 80)
+          : [],
+        appContext: data.appContext ?? null,
+      },
+      format: dayPlanEditFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "low",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "required",
+      logContext: "OpenAI day plan edit failed",
+      publicMessage: "AI day edit failed.",
+    });
+
+    return {result};
+  },
+);
+
+exports.generateTransportRecommendations = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 45,
+    secrets: [openAiApiKeySecret],
+  },
+  async (request) => {
+    requireAuthenticatedUid(
+        request,
+        "Sign in to get transport recommendations.",
+    );
+    const data = request.data ?? {};
+    const origin = String(data.origin ?? "").trim();
+    const destination = String(data.destination ?? "").trim();
+    const startDate = String(data.startDate ?? "").trim();
+    const endDate = String(data.endDate ?? "").trim();
+    const currency = String(data.currency ?? "USD").trim().toUpperCase();
+
+    if (
+      !origin ||
+      !destination ||
+      origin.length > 240 ||
+      destination.length > 240 ||
+      !validIsoDate(startDate) ||
+      !validIsoDate(endDate) ||
+      new Date(`${endDate}T00:00:00.000Z`) <
+        new Date(`${startDate}T00:00:00.000Z`) ||
+      !/^[A-Z]{3}$/.test(currency)
+    ) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Valid transport route details are required.",
+      );
+    }
+
+    const result = await createStructuredResponse({
+      instructions: [
+        "Find practical transportation options for a travel app booking workspace.",
+        "Use current web search data from useful booking, operator, or travel information sources.",
+        "Return options sorted from cheapest to most expensive.",
+        "Use the requested currency when prices can be estimated.",
+        "If exact live booking prices are unavailable, use realistic current public fare ranges and mark them approximate in bookingHint.",
+        "Include only useful route options for the supplied origin and destination.",
+        "Return no markdown or explanation outside the JSON fields.",
+      ].join(" "),
+      input: {
+        origin,
+        destination,
+        startDate,
+        endDate,
+        currency,
+        groupType: String(data.groupType ?? "").slice(0, 80),
+        numOfTravelers: safeTravelerCount(data.numOfTravelers),
+        appContext: data.appContext ?? null,
+      },
+      format: transportRecommendationsFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "medium",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "required",
+      logContext: "OpenAI transport recommendations failed",
+      publicMessage: "AI transport recommendations failed.",
+      timeoutMs: 40000,
+    });
+
+    return {result};
+  },
+);
+
 exports.createTripReply = onCall(
   {
     region: "us-central1",
+    secrets: [openAiApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to plan a trip.");
     const message = String(request.data?.message ?? "").trim();
     if (!message) {
       throw new HttpsError("invalid-argument", "Message is required.");
@@ -2520,11 +2991,20 @@ async function fetchOpenAiResponses({
   publicMessage,
   timeoutMs = openAiTimeoutMs,
 }) {
+  const apiKey = openAiApiKey();
+  if (!apiKey) {
+    logger.error("OpenAI API key is not configured", {logContext});
+    throw new HttpsError(
+        "failed-precondition",
+        "AI services are not configured.",
+    );
+  }
+
   try {
     return await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${openAiApiKey()}`,
+        "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       signal: AbortSignal.timeout(timeoutMs),
