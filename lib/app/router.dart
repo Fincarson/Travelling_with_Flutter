@@ -76,6 +76,14 @@ class AppRouter {
                           ),
                       routes: [
                         GoRoute(
+                          path: 'settings',
+                          builder: (context, state) =>
+                              appState._buildTripSettingsScreen(
+                                context,
+                                state.pathParameters['tripId'] ?? '',
+                              ),
+                        ),
+                        GoRoute(
                           path: 'map',
                           builder: (context, state) =>
                               appState._buildTripMapScreen(
@@ -234,7 +242,8 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
                       action: widget.location == '/profile'
                           ? IconButton(
                               tooltip: appText(context, 'Settings'),
-                              onPressed: () => context.go('/profile/settings'),
+                              onPressed: () =>
+                                  widget.appState._go('/profile/settings'),
                               icon: const Icon(Icons.settings_rounded),
                             )
                           : headerAction,
@@ -317,7 +326,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
 
   void _select(BuildContext context, _NavTab tab) {
     if (tab == _NavTab.add) {
-      context.push('/trips/new');
+      widget.appState._push('/trips/new');
       return;
     }
 
@@ -384,7 +393,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     if (parent == null) return;
     _runNavigationAnimation(
       incomingFromRight: false,
-      navigate: () => context.go(parent),
+      navigate: () => widget.appState._go(parent),
     );
   }
 

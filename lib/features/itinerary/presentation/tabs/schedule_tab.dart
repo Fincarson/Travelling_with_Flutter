@@ -158,67 +158,84 @@ class _ScheduleTabState extends State<ScheduleTab> {
     final cost = TextEditingController(text: '0');
     var day = _tripRuntimePlan(trip).currentDay;
     try {
-      return await showDialog<ScheduleItem>(
+      return await _showTravelFormSheet<ScheduleItem>(
         context: context,
-        builder: (context) => StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
-            title: Text(appText(context, 'Add destination')),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: activity,
-                    decoration: InputDecoration(
-                      labelText: appText(context, 'Activity'),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: time,
-                    decoration: InputDecoration(
-                      labelText: appText(context, 'Time'),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: cost,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: appText(context, 'Cost'),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  _ScheduleDayStepper(
-                    label: '${appText(context, 'Day')} $day',
-                    onMinus: () =>
-                        setDialogState(() => day = math.max(1, day - 1)),
-                    onPlus: () => setDialogState(() => day += 1),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () =>
-                    Navigator.of(context, rootNavigator: true).pop(),
-                child: Text(appText(context, 'Cancel')),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context, rootNavigator: true).pop(
-                  ScheduleItem(
-                    day,
-                    time.text.trim().isEmpty ? '10:00 AM' : time.text.trim(),
-                    activity.text.trim().isEmpty
-                        ? 'New activity'
-                        : activity.text.trim(),
-                    Icons.place_rounded,
-                    int.tryParse(cost.text.replaceAll(RegExp(r'\D'), '')) ?? 0,
+        builder: (sheetContext) => StatefulBuilder(
+          builder: (context, setDialogState) => SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  appText(context, 'Add destination'),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: activity,
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Activity'),
                   ),
                 ),
-                child: Text(appText(context, 'Add')),
-              ),
-            ],
+                const SizedBox(height: 10),
+                TextField(
+                  controller: time,
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Time'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: cost,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Cost'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _ScheduleDayStepper(
+                  label: '${appText(context, 'Day')} $day',
+                  onMinus: () =>
+                      setDialogState(() => day = math.max(1, day - 1)),
+                  onPlus: () => setDialogState(() => day += 1),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: Text(appText(context, 'Cancel')),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.of(context).pop(
+                          ScheduleItem(
+                            day,
+                            time.text.trim().isEmpty
+                                ? '10:00 AM'
+                                : time.text.trim(),
+                            activity.text.trim().isEmpty
+                                ? 'New activity'
+                                : activity.text.trim(),
+                            Icons.place_rounded,
+                            int.tryParse(
+                                  cost.text.replaceAll(RegExp(r'\D'), ''),
+                                ) ??
+                                0,
+                          ),
+                        ),
+                        child: Text(appText(context, 'Add')),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -235,10 +252,9 @@ class _ScheduleTabState extends State<ScheduleTab> {
     var isGenerating = false;
     String? error;
     try {
-      return await showDialog<ScheduleItem>(
+      return await _showTravelFormSheet<ScheduleItem>(
         context: context,
-        barrierDismissible: !isGenerating,
-        builder: (context) => StatefulBuilder(
+        builder: (sheetContext) => StatefulBuilder(
           builder: (context, setDialogState) {
             Future<void> generate() async {
               if (isGenerating) return;
@@ -255,73 +271,91 @@ class _ScheduleTabState extends State<ScheduleTab> {
                     )
                     .timeout(const Duration(seconds: 20));
                 if (!context.mounted) return;
-                Navigator.of(context, rootNavigator: true).pop(item);
+                Navigator.of(context).pop(item);
               } catch (_) {
                 if (!context.mounted) return;
                 Navigator.of(
                   context,
-                  rootNavigator: true,
                 ).pop(_fallbackAiScheduleStop(trip, day, description.text));
               }
             }
 
-            return AlertDialog(
-              title: Text(appText(context, 'Add with AI')),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: description,
-                      minLines: 3,
-                      maxLines: 5,
-                      decoration: InputDecoration(
-                        labelText: appText(context, 'Description'),
-                        hintText: appText(
-                          context,
-                          'Example: indoor lunch stop near the museum',
-                        ),
+            return SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    appText(context, 'Add with AI'),
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: description,
+                    minLines: 3,
+                    maxLines: 5,
+                    decoration: InputDecoration(
+                      labelText: appText(context, 'Description'),
+                      hintText: appText(
+                        context,
+                        'Example: indoor lunch stop near the museum',
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    _ScheduleDayStepper(
-                      label: '${appText(context, 'Day')} $day',
-                      onMinus: isGenerating
-                          ? null
-                          : () => setDialogState(
-                              () => day = math.max(1, day - 1),
-                            ),
-                      onPlus: isGenerating
-                          ? null
-                          : () => setDialogState(() => day += 1),
-                    ),
-                    if (error != null) ...[
-                      const SizedBox(height: 10),
-                      FormNotice(message: error!),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: isGenerating
-                      ? null
-                      : () => Navigator.of(context, rootNavigator: true).pop(),
-                  child: Text(appText(context, 'Cancel')),
-                ),
-                FilledButton.icon(
-                  onPressed: isGenerating ? null : () => unawaited(generate()),
-                  icon: isGenerating
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.auto_awesome_rounded),
-                  label: Text(
-                    appText(context, isGenerating ? 'Thinking...' : 'Generate'),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 10),
+                  _ScheduleDayStepper(
+                    label: '${appText(context, 'Day')} $day',
+                    onMinus: isGenerating
+                        ? null
+                        : () =>
+                              setDialogState(() => day = math.max(1, day - 1)),
+                    onPlus: isGenerating
+                        ? null
+                        : () => setDialogState(() => day += 1),
+                  ),
+                  if (error != null) ...[
+                    const SizedBox(height: 10),
+                    FormNotice(message: error!),
+                  ],
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: isGenerating
+                              ? null
+                              : () => Navigator.of(context).pop(),
+                          child: Text(appText(context, 'Cancel')),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: isGenerating
+                              ? null
+                              : () => unawaited(generate()),
+                          icon: isGenerating
+                              ? const SizedBox.square(
+                                  dimension: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.auto_awesome_rounded),
+                          label: Text(
+                            appText(
+                              context,
+                              isGenerating ? 'Thinking...' : 'Generate',
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             );
           },
         ),
@@ -397,11 +431,21 @@ class _ScheduleTabState extends State<ScheduleTab> {
     return '${cleaned.substring(0, 53).trim()}...';
   }
 
-  void _removeScheduleStop(int index) {
+  void _removeScheduleStop(BuildContext context, int index) {
     final next = [...trip.items];
     if (index < 0 || index >= next.length) return;
-    next.removeAt(index);
+    final removed = next.removeAt(index);
     onSave(trip.copyWith(items: next));
+    _showUndoSnackBar(
+      context,
+      message: 'Destination deleted',
+      undoLabel: 'Undo',
+      onUndo: () {
+        final restored = [...widget.trip.items];
+        restored.insert(index.clamp(0, restored.length).toInt(), removed);
+        onSave(widget.trip.copyWith(items: restored));
+      },
+    );
   }
 
   @override
@@ -521,11 +565,11 @@ class _ScheduleTabState extends State<ScheduleTab> {
                 ),
                 child: const Icon(Icons.delete_rounded, color: Colors.red),
               ),
-              onDismissed: (_) => _removeScheduleStop(entry.index),
+              onDismissed: (_) => _removeScheduleStop(context, entry.index),
               child: ScheduleTile(
                 item: entry.item,
                 currency: widget.trip.currency,
-                onDelete: () => _removeScheduleStop(entry.index),
+                onDelete: () => _removeScheduleStop(context, entry.index),
               ),
             ),
       ],

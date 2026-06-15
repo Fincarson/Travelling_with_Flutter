@@ -78,6 +78,7 @@ class Trip {
     String? originLabel,
     double? originLatitude,
     double? originLongitude,
+    bool clearDestinationPlace = false,
   }) => Trip(
     id: id,
     title: title ?? this.title,
@@ -95,10 +96,12 @@ class Trip {
     currency: currency ?? this.currency,
     preferences: preferences ?? this.preferences,
     budgetCategories: budgetCategories ?? this.budgetCategories,
-    placeId: placeId ?? this.placeId,
-    formattedAddress: formattedAddress ?? this.formattedAddress,
-    latitude: latitude ?? this.latitude,
-    longitude: longitude ?? this.longitude,
+    placeId: clearDestinationPlace ? null : placeId ?? this.placeId,
+    formattedAddress: clearDestinationPlace
+        ? null
+        : formattedAddress ?? this.formattedAddress,
+    latitude: clearDestinationPlace ? null : latitude ?? this.latitude,
+    longitude: clearDestinationPlace ? null : longitude ?? this.longitude,
     originLabel: originLabel ?? this.originLabel,
     originLatitude: originLatitude ?? this.originLatitude,
     originLongitude: originLongitude ?? this.originLongitude,

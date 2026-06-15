@@ -7,6 +7,7 @@ class TripDetailScreen extends StatelessWidget {
     required this.onOpenChat,
     required this.onOpenBudget,
     required this.onOpenPacking,
+    required this.onOpenSettings,
     required this.onUpdateTrip,
     this.initialTabIndex = 0,
     this.initialAiPrompt,
@@ -17,6 +18,7 @@ class TripDetailScreen extends StatelessWidget {
   final VoidCallback onOpenChat;
   final VoidCallback onOpenBudget;
   final VoidCallback onOpenPacking;
+  final VoidCallback onOpenSettings;
   final ValueChanged<Trip> onUpdateTrip;
   final int initialTabIndex;
   final String? initialAiPrompt;
@@ -27,6 +29,7 @@ class TripDetailScreen extends StatelessWidget {
       trip: trip,
       onBack: onBack,
       onOpenChat: onOpenChat,
+      onOpenSettings: onOpenSettings,
       onUpdateTrip: onUpdateTrip,
       initialTabIndex: initialTabIndex,
       initialAiPrompt: initialAiPrompt,
@@ -39,6 +42,7 @@ class _EditableTripDetailScreen extends StatefulWidget {
     required this.trip,
     required this.onBack,
     required this.onOpenChat,
+    required this.onOpenSettings,
     required this.onUpdateTrip,
     required this.initialTabIndex,
     this.initialAiPrompt,
@@ -47,6 +51,7 @@ class _EditableTripDetailScreen extends StatefulWidget {
   final Trip trip;
   final VoidCallback onBack;
   final VoidCallback onOpenChat;
+  final VoidCallback onOpenSettings;
   final ValueChanged<Trip> onUpdateTrip;
   final int initialTabIndex;
   final String? initialAiPrompt;
@@ -100,6 +105,7 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
             selectedIndex: selectedIndex,
             forceElevated: innerBoxIsScrolled,
             onBack: widget.onBack,
+            onOpenSettings: widget.onOpenSettings,
             onSelect: (index) => setState(() => _selectedSectionIndex = index),
           ),
         ],
@@ -172,6 +178,7 @@ class _TripDetailSliverAppBar extends StatelessWidget {
     required this.selectedIndex,
     required this.forceElevated,
     required this.onBack,
+    required this.onOpenSettings,
     required this.onSelect,
   });
 
@@ -180,6 +187,7 @@ class _TripDetailSliverAppBar extends StatelessWidget {
   final int selectedIndex;
   final bool forceElevated;
   final VoidCallback onBack;
+  final VoidCallback onOpenSettings;
   final ValueChanged<int> onSelect;
 
   @override
@@ -205,8 +213,25 @@ class _TripDetailSliverAppBar extends StatelessWidget {
           onPressed: onBack,
           icon: const Icon(Icons.arrow_back_rounded),
           color: _primary,
+          style: IconButton.styleFrom(
+            backgroundColor: Colors.white.withValues(alpha: .88),
+          ),
         ),
       ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: IconButton(
+            tooltip: appText(context, 'Trip settings'),
+            onPressed: onOpenSettings,
+            icon: const Icon(Icons.settings_rounded),
+            color: _primary,
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white.withValues(alpha: .88),
+            ),
+          ),
+        ),
+      ],
       flexibleSpace: _TripDetailFlexibleBanner(trip: trip),
       bottom: _TripSectionTabBar(
         sections: sections,

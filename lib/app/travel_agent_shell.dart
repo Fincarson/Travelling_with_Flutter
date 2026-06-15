@@ -445,7 +445,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
 
   void _createTripFromDestination(Destination destination) {
     _suggestedDestination = destination.name;
-    context.go('/trips/new');
+    _go('/trips/new');
   }
 
   Future<UserProfile?> _loadLocalProfile(String accountId) async {
@@ -887,17 +887,17 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       trips: _visibleTrips,
       activeTrip: _visibleActiveTrip,
       memories: _tripMemories,
-      onCreate: () => context.go('/trips/new'),
-      onOpenTrip: (trip) => context.go(_tripLocation(trip.id)),
+      onCreate: () => _go('/trips/new'),
+      onOpenTrip: (trip) => _go(_tripLocation(trip.id)),
       onStartTrip: _startTrip,
       onAskAi: (prompt) {
         _openTripAssistant(prompt);
         final trip = _selectedTrip;
-        if (trip != null) context.go(_tripLocation(trip.id));
+        if (trip != null) _go(_tripLocation(trip.id));
       },
-      onOpenInfo: () => context.go('/tools/info'),
-      onOpenTranslate: () => context.go('/tools/translate'),
-      onOpenMap: () => context.go('/tools/map'),
+      onOpenInfo: () => _go('/tools/info'),
+      onOpenTranslate: () => _go('/tools/translate'),
+      onOpenMap: () => _go('/tools/map'),
       onOpenNotifications: _openNotificationCenter,
       onToggleFavoritePlace: _toggleFavoritePlace,
       onAddPlaceToTrip: _createTripFromDestination,
@@ -909,22 +909,22 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       archivedNotificationIds: _archivedNotificationIds,
       onArchive: (id) => setState(() => _archivedNotificationIds.add(id)),
       onRestore: (id) => setState(() => _archivedNotificationIds.remove(id)),
-      onBack: () => context.go('/'),
+      onBack: () => _go('/'),
     );
   }
 
   Widget _buildInfoScreen(BuildContext context) {
-    return InfoScreen(onBack: () => context.go('/'));
+    return InfoScreen(onBack: () => _go('/'));
   }
 
   Widget _buildTranslateScreen(BuildContext context) {
-    return TranslateScreen(onBack: () => context.go('/'));
+    return TranslateScreen(onBack: () => _go('/'));
   }
 
   Widget _buildGlobalMapScreen(BuildContext context) {
     return MapScreen(
       trip: _visibleActiveTrip ?? _selectedTrip ?? mockKyotoTrip,
-      onBack: () => context.go('/'),
+      onBack: () => _go('/'),
     );
   }
 
@@ -932,8 +932,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     return TripsScreen(
       trips: _visibleTrips,
       memories: _tripMemories,
-      onCreate: () => context.go('/trips/new'),
-      onOpenTrip: (trip) => context.go(_tripLocation(trip.id)),
+      onCreate: () => _go('/trips/new'),
+      onOpenTrip: (trip) => _go(_tripLocation(trip.id)),
       onStartTrip: _startTrip,
       onDeleteTrip: _deleteTrip,
       favoriteTripIds: _user.favoriteTripIds,
@@ -951,7 +951,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       initialDestination: _suggestedDestination,
       onBack: () {
         _suggestedDestination = null;
-        context.go('/trips');
+        _go('/trips');
       },
       onGenerate: (trip) {
         _suggestedDestination = null;
@@ -965,20 +965,38 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     if (trip == null) {
       return _NoTripSelectedScreen(
         title: 'Trip',
-        onBack: () => context.go('/trips'),
-        onCreate: () => context.go('/trips/new'),
+        onBack: () => _go('/trips'),
+        onCreate: () => _go('/trips/new'),
       );
     }
     return TripDetailScreen(
       key: ValueKey('trip-detail-${trip.id}'),
       trip: trip,
-      onBack: () => context.go('/trips'),
-      onOpenChat: () => context.go('/chat'),
-      onOpenBudget: () => context.go('/trips/${trip.id}/budget'),
-      onOpenPacking: () => context.go('/trips/${trip.id}/packing'),
+      onBack: () => _go('/trips'),
+      onOpenChat: () => _go('/chat'),
+      onOpenBudget: () => _go('/trips/${trip.id}/budget'),
+      onOpenPacking: () => _go('/trips/${trip.id}/packing'),
+      onOpenSettings: () => _go('/trips/${trip.id}/settings'),
       onUpdateTrip: _updateTrip,
       initialTabIndex: _tripDetailInitialTab,
       initialAiPrompt: _pendingTripAiPrompt,
+    );
+  }
+
+  Widget _buildTripSettingsScreen(BuildContext context, String tripId) {
+    final trip = _tripById(_visibleTrips, tripId) ?? _selectedTrip;
+    if (trip == null) {
+      return _NoTripSelectedScreen(
+        title: 'Trip settings',
+        onBack: () => _go('/trips'),
+        onCreate: () => _go('/trips/new'),
+      );
+    }
+    return TripSettingsScreen(
+      key: ValueKey('trip-settings-${trip.id}'),
+      trip: trip,
+      onBack: () => _go(_tripLocation(trip.id)),
+      onSave: _updateTrip,
     );
   }
 
@@ -987,14 +1005,11 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     if (trip == null) {
       return _NoTripSelectedScreen(
         title: 'Map',
-        onBack: () => context.go('/trips'),
-        onCreate: () => context.go('/trips/new'),
+        onBack: () => _go('/trips'),
+        onCreate: () => _go('/trips/new'),
       );
     }
-    return MapScreen(
-      trip: trip,
-      onBack: () => context.go(_tripLocation(trip.id)),
-    );
+    return MapScreen(trip: trip, onBack: () => _go(_tripLocation(trip.id)));
   }
 
   Widget _buildBudgetScreen(BuildContext context, String tripId) {
@@ -1002,14 +1017,11 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     if (trip == null) {
       return _NoTripSelectedScreen(
         title: 'Budget',
-        onBack: () => context.go('/trips'),
-        onCreate: () => context.go('/trips/new'),
+        onBack: () => _go('/trips'),
+        onCreate: () => _go('/trips/new'),
       );
     }
-    return BudgetScreen(
-      trip: trip,
-      onBack: () => context.go(_tripLocation(trip.id)),
-    );
+    return BudgetScreen(trip: trip, onBack: () => _go(_tripLocation(trip.id)));
   }
 
   Widget _buildPackingScreen(BuildContext context, String tripId) {
@@ -1017,14 +1029,11 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     if (trip == null) {
       return _NoTripSelectedScreen(
         title: 'Packing',
-        onBack: () => context.go('/trips'),
-        onCreate: () => context.go('/trips/new'),
+        onBack: () => _go('/trips'),
+        onCreate: () => _go('/trips/new'),
       );
     }
-    return PackingScreen(
-      trip: trip,
-      onBack: () => context.go(_tripLocation(trip.id)),
-    );
+    return PackingScreen(trip: trip, onBack: () => _go(_tripLocation(trip.id)));
   }
 
   Widget _buildChatListScreen(BuildContext context) {
@@ -1033,7 +1042,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       account: widget.account,
       user: _user,
       onRoomOpenChanged: _setChatRoomOpen,
-      onOpenChat: (chatId) => context.go('/chat/$chatId'),
+      onOpenChat: (chatId) => _go('/chat/$chatId'),
       onAppBarActionsChanged: _setChatListAppBarActions,
     );
   }
@@ -1043,7 +1052,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       chatId: chatId,
       account: widget.account,
       user: _user,
-      onBack: () => context.go('/chat'),
+      onBack: () => _go('/chat'),
       onVisibilityChanged: _setActiveChatId,
     );
   }
@@ -1054,7 +1063,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       user: _user,
       trips: _visibleTrips,
       memories: _tripMemories,
-      onOpenTrip: (trip) => context.go(_tripLocation(trip.id)),
+      onOpenTrip: (trip) => _go(_tripLocation(trip.id)),
       onToggleFavoriteTrip: (trip) {
         unawaited(_toggleFavoriteTrip(trip));
       },
@@ -1095,19 +1104,18 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       onSave: _saveProfile,
       onSignOut: _authService.signOut,
       onDeleteAccount: _deleteAccount,
-      onBack: () => context.go('/profile'),
-      onOpenLinkedAccounts: () =>
-          context.go('/profile/settings/linked-accounts'),
-      onOpenPerformance: () => context.go('/profile/performance'),
+      onBack: () => _go('/profile'),
+      onOpenLinkedAccounts: () => _go('/profile/settings/linked-accounts'),
+      onOpenPerformance: () => _go('/profile/performance'),
       archivedItemCount: _tripMemories.length + _archivedNotificationIds.length,
-      onOpenArchived: () => context.go('/profile/archived'),
+      onOpenArchived: () => _go('/profile/archived'),
     );
   }
 
   Widget _buildLinkedAccountsScreen(BuildContext context) {
     return LinkedAccountsScreen(
       authService: _authService,
-      onBack: () => context.go('/profile/settings'),
+      onBack: () => _go('/profile/settings'),
     );
   }
 
@@ -1117,13 +1125,13 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       archivedNotificationIds: _archivedNotificationIds,
       onRestoreNotification: (id) =>
           setState(() => _archivedNotificationIds.remove(id)),
-      onBack: () => context.go('/profile/settings'),
+      onBack: () => _go('/profile/settings'),
     );
   }
 
   Widget _buildPerformanceSettingsScreen(BuildContext context) {
     return PerformanceSettingsScreen(
-      onBack: () => context.go('/profile/settings'),
+      onBack: () => _go('/profile/settings'),
       onSettingsChanged: _savePerformanceSettings,
     );
   }
@@ -1150,6 +1158,10 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   String _tripLocation(String tripId) => '/trips/$tripId';
+
+  void _go(String path) => _router.go(path);
+
+  void _push(String path) => _router.push(path);
 
   Future<void> _openNotificationTarget(String targetPath) async {
     final path = targetPath.trim();
@@ -1299,6 +1311,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
           }),
           onOpenBudget: () => setState(() => _screen = _Screen.budget),
           onOpenPacking: () => setState(() => _screen = _Screen.packing),
+          onOpenSettings: () => _go('/trips/${trip.id}/settings'),
           onUpdateTrip: _updateTrip,
           initialTabIndex: _tripDetailInitialTab,
           initialAiPrompt: _pendingTripAiPrompt,

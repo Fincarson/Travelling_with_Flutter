@@ -119,10 +119,31 @@ class _BudgetTabState extends State<BudgetTab> {
   }
 
   void _deleteSpending(BudgetCategory category, BudgetSpending spending) {
+    final index = category.spendings.indexWhere(
+      (item) => item.id == spending.id,
+    );
     final spendings = category.spendings
         .where((item) => item.id != spending.id)
         .toList();
     _saveCategory(category, spendings);
+    _showUndoSnackBar(
+      context,
+      message: 'Budget item deleted',
+      undoLabel: 'Undo',
+      onUndo: () {
+        final currentCategory = _budgetCategoriesForTrip(
+          trip,
+        ).firstWhere((item) => item.id == category.id, orElse: () => category);
+        final restored = [...currentCategory.spendings];
+        restored.insert(
+          (index == -1 ? restored.length : index)
+              .clamp(0, restored.length)
+              .toInt(),
+          spending,
+        );
+        _saveCategory(currentCategory, restored);
+      },
+    );
   }
 
   void _saveCategory(BudgetCategory category, List<BudgetSpending> spendings) {
@@ -809,88 +830,102 @@ Future<BudgetSpending?> _showSpendingDialog(
   final date = TextEditingController(text: existing?.date ?? '');
   final note = TextEditingController(text: existing?.note ?? '');
   try {
-    return await showDialog<BudgetSpending>(
+    return await _showTravelFormSheet<BudgetSpending>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(
-          appText(
-            dialogContext,
-            existing == null ? 'Create new spending' : 'Edit spending',
-          ),
+      builder: (dialogContext) => SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              appText(
+                dialogContext,
+                existing == null ? 'Create new spending' : 'Edit spending',
+              ),
+              style: Theme.of(
+                dialogContext,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: title,
+              decoration: InputDecoration(
+                labelText: appText(dialogContext, 'Title'),
+              ),
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: amount,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText:
+                    '${appText(dialogContext, 'Amount')} $displayCurrency',
+              ),
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: date,
+              decoration: InputDecoration(
+                labelText: appText(dialogContext, 'Date'),
+              ),
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: note,
+              decoration: InputDecoration(
+                labelText: appText(dialogContext, 'Note'),
+              ),
+              textInputAction: TextInputAction.done,
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: Text(appText(dialogContext, 'Cancel')),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () {
+                      final parsedAmount =
+                          int.tryParse(
+                            amount.text.replaceAll(RegExp(r'\D'), ''),
+                          ) ??
+                          0;
+                      if (parsedAmount <= 0) return;
+                      final sourceAmount = _budgetSourceAmountFromDisplay(
+                        parsedAmount,
+                        sourceCurrency: sourceCurrency,
+                        displayCurrency: displayCurrency,
+                        exchangeData: exchangeData,
+                      );
+                      Navigator.of(dialogContext).pop(
+                        BudgetSpending(
+                          id:
+                              existing?.id ??
+                              'spending-${DateTime.now().microsecondsSinceEpoch}',
+                          title: title.text.trim().isEmpty
+                              ? category.category
+                              : title.text.trim(),
+                          amount: sourceAmount,
+                          date: date.text.trim(),
+                          note: note.text.trim(),
+                        ),
+                      );
+                    },
+                    child: Text(appText(dialogContext, 'Save')),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: title,
-                decoration: InputDecoration(
-                  labelText: appText(dialogContext, 'Title'),
-                ),
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: amount,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText:
-                      '${appText(dialogContext, 'Amount')} $displayCurrency',
-                ),
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: date,
-                decoration: InputDecoration(
-                  labelText: appText(dialogContext, 'Date'),
-                ),
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: note,
-                decoration: InputDecoration(
-                  labelText: appText(dialogContext, 'Note'),
-                ),
-                textInputAction: TextInputAction.done,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(appText(dialogContext, 'Cancel')),
-          ),
-          FilledButton(
-            onPressed: () {
-              final parsedAmount =
-                  int.tryParse(amount.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
-              if (parsedAmount <= 0) return;
-              final sourceAmount = _budgetSourceAmountFromDisplay(
-                parsedAmount,
-                sourceCurrency: sourceCurrency,
-                displayCurrency: displayCurrency,
-                exchangeData: exchangeData,
-              );
-              Navigator.of(dialogContext).pop(
-                BudgetSpending(
-                  id:
-                      existing?.id ??
-                      'spending-${DateTime.now().microsecondsSinceEpoch}',
-                  title: title.text.trim().isEmpty
-                      ? category.category
-                      : title.text.trim(),
-                  amount: sourceAmount,
-                  date: date.text.trim(),
-                  note: note.text.trim(),
-                ),
-              );
-            },
-            child: Text(appText(dialogContext, 'Save')),
-          ),
-        ],
       ),
     );
   } finally {
