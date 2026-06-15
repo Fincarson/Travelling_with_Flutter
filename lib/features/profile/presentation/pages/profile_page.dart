@@ -229,30 +229,33 @@ class _FavoritePlaceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          place.imageUrl,
-          width: 52,
-          height: 52,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const ColoredBox(
-            color: Color(0xFFE6F1F8),
-            child: SizedBox(
-              width: 52,
-              height: 52,
-              child: Icon(Icons.place_rounded, color: _primary),
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.network(
+            place.imageUrl,
+            width: 52,
+            height: 52,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const ColoredBox(
+              color: Color(0xFFE6F1F8),
+              child: SizedBox(
+                width: 52,
+                height: 52,
+                child: Icon(Icons.place_rounded, color: _primary),
+              ),
             ),
           ),
         ),
-      ),
-      title: Text(place.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        place.tags.take(2).join(' · '),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+        title: Text(place.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(
+          place.tags.take(2).join(' · '),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
     );
   }
@@ -275,35 +278,38 @@ class _FavoriteTripTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      onTap: onTap,
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          imageUrl,
-          width: 52,
-          height: 52,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const ColoredBox(
-            color: Color(0xFFE6F1F8),
-            child: SizedBox(
-              width: 52,
-              height: 52,
-              child: Icon(Icons.luggage_rounded, color: _primary),
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        onTap: onTap,
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.network(
+            imageUrl,
+            width: 52,
+            height: 52,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const ColoredBox(
+              color: Color(0xFFE6F1F8),
+              child: SizedBox(
+                width: 52,
+                height: 52,
+                child: Icon(Icons.luggage_rounded, color: _primary),
+              ),
             ),
           ),
         ),
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+        trailing: onRemove == null
+            ? null
+            : IconButton(
+                tooltip: 'Remove from favorites',
+                onPressed: onRemove,
+                icon: const Icon(Icons.favorite_rounded, color: _primary),
+              ),
       ),
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: onRemove == null
-          ? null
-          : IconButton(
-              tooltip: 'Remove from favorites',
-              onPressed: onRemove,
-              icon: const Icon(Icons.favorite_rounded, color: _primary),
-            ),
     );
   }
 }

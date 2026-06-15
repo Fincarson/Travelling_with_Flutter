@@ -15,6 +15,23 @@ class AppRouter {
       },
       routes: [
         GoRoute(path: '/onboarding', redirect: (context, state) => '/'),
+        GoRoute(
+          path: '/error',
+          builder: (context, state) {
+            final error =
+                AppErrorController.current.value ??
+                AppErrorData.fromMessage(
+                  'An unexpected error has occurred. Please try again later.',
+                );
+            return UnexpectedErrorView(
+              error: error,
+              onGoHome: () {
+                AppErrorController.clear();
+                context.go('/');
+              },
+            );
+          },
+        ),
         StatefulShellRoute.indexedStack(
           builder: (context, state, navigationShell) {
             return _TravelRouteFrame(

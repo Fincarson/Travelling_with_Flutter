@@ -415,120 +415,123 @@ class _ScheduleTabState extends State<ScheduleTab> {
     final selectedEntries =
         grouped[_selectedDay] ?? const <({int index, ScheduleItem item})>[];
 
-    return ListView(
-      padding: _responsivePagePadding(context, top: 16),
-      children: [
-        _ScheduleDayTabs(
-          days: days,
-          selectedDay: _selectedDay,
-          onSelect: (day) {
-            setState(() => _selectedDay = day);
-            WidgetsBinding.instance.addPostFrameCallback(
-              (_) => _maybeAutofillSelectedDay(),
-            );
-          },
-        ),
-        const SizedBox(height: 16),
-        PrimaryButton(
-          label: 'Add destination',
-          icon: Icons.add_rounded,
-          onPressed: () => _addScheduleStop(context),
-        ),
-        const SizedBox(height: 16),
-        // if (trip.status == TripStatus.ongoing) ...[
-        // GlassPanel(
-        //   child: Row(
-        //     children: [
-        //       const IconBadge(icon: Icons.auto_awesome_rounded, size: 44),
-        //       const SizedBox(width: 12),
-        //       Expanded(
-        //         child: Column(
-        //           crossAxisAlignment: CrossAxisAlignment.start,
-        //           children: [
-        //             LabelText(
-        //               'Today is day ${runtime.currentDay} of ${runtime.totalDays}',
-        //             ),
-        //             const SizedBox(height: 4),
-        //             Text(
-        //               runtime.nextItem == null
-        //                   ? 'No more scheduled stops are waiting right now.'
-        //                   : 'Next: ${runtime.nextItem!.activity} at ${runtime.nextItem!.time}',
-        //               maxLines: 2,
-        //               overflow: TextOverflow.ellipsis,
-        //               style: const TextStyle(
-        //                 color: _primary,
-        //                 fontWeight: FontWeight.w900,
-        //               ),
-        //             ),
-        //           ],
-        //         ),
-        //       ),
-        //     ],
-        //   ),
-        // ),
-        // const SizedBox(height: 16),
-        // ],
-        if (grouped.isEmpty) ...[
-          GlassPanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const IconBadge(icon: Icons.route_rounded, size: 46),
-                const SizedBox(height: 12),
-                Text(
-                  appText(context, 'No activities yet'),
-                  style: const TextStyle(
-                    color: _primary,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  appText(context, 'Add stops to build this schedule.'),
-                  style: const TextStyle(
-                    color: _secondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
+    return TooltipVisibility(
+      visible: false,
+      child: ListView(
+        padding: _responsivePagePadding(context, top: 16),
+        children: [
+          _ScheduleDayTabs(
+            days: days,
+            selectedDay: _selectedDay,
+            onSelect: (day) {
+              setState(() => _selectedDay = day);
+              WidgetsBinding.instance.addPostFrameCallback(
+                (_) => _maybeAutofillSelectedDay(),
+              );
+            },
           ),
-          const SizedBox(height: 12),
-        ],
-        // LabelText('${appText(context, 'Day')} $_selectedDay'),
-        const SizedBox(height: 10),
-        if (selectedEntries.isEmpty)
-          _ScheduleAutofillPanel(
-            day: _selectedDay,
-            isLoading: _isAutofillingDay,
-            onFill: _isAutofillingDay ? null : _maybeAutofillSelectedDay,
-          )
-        else
-          for (final entry in selectedEntries)
-            Dismissible(
-              key: ValueKey(
-                '${entry.index}-${entry.item.day}-${entry.item.time}-${entry.item.activity}',
-              ),
-              direction: DismissDirection.endToStart,
-              background: Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: 18),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF2F2),
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: const Icon(Icons.delete_rounded, color: Colors.red),
-              ),
-              onDismissed: (_) => _removeScheduleStop(entry.index),
-              child: ScheduleTile(
-                item: entry.item,
-                currency: widget.trip.currency,
-                onDelete: () => _removeScheduleStop(entry.index),
+          const SizedBox(height: 16),
+          PrimaryButton(
+            label: 'Add destination',
+            icon: Icons.add_rounded,
+            onPressed: () => _addScheduleStop(context),
+          ),
+          const SizedBox(height: 16),
+          // if (trip.status == TripStatus.ongoing) ...[
+          // GlassPanel(
+          //   child: Row(
+          //     children: [
+          //       const IconBadge(icon: Icons.auto_awesome_rounded, size: 44),
+          //       const SizedBox(width: 12),
+          //       Expanded(
+          //         child: Column(
+          //           crossAxisAlignment: CrossAxisAlignment.start,
+          //           children: [
+          //             LabelText(
+          //               'Today is day ${runtime.currentDay} of ${runtime.totalDays}',
+          //             ),
+          //             const SizedBox(height: 4),
+          //             Text(
+          //               runtime.nextItem == null
+          //                   ? 'No more scheduled stops are waiting right now.'
+          //                   : 'Next: ${runtime.nextItem!.activity} at ${runtime.nextItem!.time}',
+          //               maxLines: 2,
+          //               overflow: TextOverflow.ellipsis,
+          //               style: const TextStyle(
+          //                 color: _primary,
+          //                 fontWeight: FontWeight.w900,
+          //               ),
+          //             ),
+          //           ],
+          //         ),
+          //       ),
+          //     ],
+          //   ),
+          // ),
+          // const SizedBox(height: 16),
+          // ],
+          if (grouped.isEmpty) ...[
+            GlassPanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const IconBadge(icon: Icons.route_rounded, size: 46),
+                  const SizedBox(height: 12),
+                  Text(
+                    appText(context, 'No activities yet'),
+                    style: const TextStyle(
+                      color: _primary,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    appText(context, 'Add stops to build this schedule.'),
+                    style: const TextStyle(
+                      color: _secondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
             ),
-      ],
+            const SizedBox(height: 12),
+          ],
+          // LabelText('${appText(context, 'Day')} $_selectedDay'),
+          const SizedBox(height: 10),
+          if (selectedEntries.isEmpty)
+            _ScheduleAutofillPanel(
+              day: _selectedDay,
+              isLoading: _isAutofillingDay,
+              onFill: _isAutofillingDay ? null : _maybeAutofillSelectedDay,
+            )
+          else
+            for (final entry in selectedEntries)
+              Dismissible(
+                key: ValueKey(
+                  '${entry.index}-${entry.item.day}-${entry.item.time}-${entry.item.activity}',
+                ),
+                direction: DismissDirection.endToStart,
+                background: Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: const Icon(Icons.delete_rounded, color: Colors.red),
+                ),
+                onDismissed: (_) => _removeScheduleStop(entry.index),
+                child: ScheduleTile(
+                  item: entry.item,
+                  currency: widget.trip.currency,
+                  onDelete: () => _removeScheduleStop(entry.index),
+                ),
+              ),
+        ],
+      ),
     );
   }
 }
@@ -579,10 +582,13 @@ class _ScheduleAutofillPanel extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2.4),
             )
           else
-            IconButton.filled(
-              tooltip: appText(context, 'Fill day with AI'),
-              onPressed: onFill,
-              icon: const Icon(Icons.auto_fix_high_rounded),
+            Semantics(
+              button: true,
+              label: appText(context, 'Fill day with AI'),
+              child: IconButton.filled(
+                onPressed: onFill,
+                icon: const Icon(Icons.auto_fix_high_rounded),
+              ),
             ),
         ],
       ),

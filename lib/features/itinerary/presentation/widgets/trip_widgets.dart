@@ -917,10 +917,13 @@ class ScheduleTile extends StatelessWidget {
             // ),
             if (onDelete != null) ...[
               const SizedBox(width: 8),
-              IconButton(
-                tooltip: appText(context, 'Remove activity'),
-                onPressed: onDelete,
-                icon: const Icon(Icons.delete_outline_rounded),
+              Semantics(
+                button: true,
+                label: appText(context, 'Remove activity'),
+                child: IconButton(
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_outline_rounded),
+                ),
               ),
             ],
           ],

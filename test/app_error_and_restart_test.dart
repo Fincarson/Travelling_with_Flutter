@@ -32,6 +32,24 @@ void main() {
     expect(find.text('setState() called after dispose'), findsOneWidget);
   });
 
+  testWidgets('unexpected error can return to home', (tester) async {
+    var wentHome = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UnexpectedErrorView(
+          error: const AppErrorData(code: 'unexpected-error', details: 'Boom'),
+          onGoHome: () => wentHome = true,
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Back to home'));
+    await tester.pump();
+
+    expect(wentHome, isTrue);
+  });
+
   testWidgets('restart scope recreates the full child tree', (tester) async {
     var initializationCount = 0;
 

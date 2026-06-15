@@ -92,30 +92,29 @@ class _BudgetTabState extends State<BudgetTab> {
     required String displayCurrency,
     BudgetSpending? existing,
   }) async {
+    final exchangeData = CurrencyScope.maybeOf(context)?.exchangeData;
     final spending = await _showSpendingDialog(
       context,
       category: category,
       sourceCurrency: trip.currency,
       displayCurrency: displayCurrency,
+      exchangeData: exchangeData,
       existing: existing,
     );
     if (spending == null) return;
     if (!mounted) return;
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final currentCategory = _budgetCategoriesForTrip(
-        trip,
-      ).firstWhere((item) => item.id == category.id, orElse: () => category);
-      final spendings = [...currentCategory.spendings];
-      final index = spendings.indexWhere((item) => item.id == spending.id);
-      if (index == -1) {
-        spendings.add(spending);
-      } else {
-        spendings[index] = spending;
-      }
-      _saveCategory(currentCategory, spendings);
-    });
+    final currentCategory = _budgetCategoriesForTrip(
+      trip,
+    ).firstWhere((item) => item.id == category.id, orElse: () => category);
+    final spendings = [...currentCategory.spendings];
+    final index = spendings.indexWhere((item) => item.id == spending.id);
+    if (index == -1) {
+      spendings.add(spending);
+    } else {
+      spendings[index] = spending;
+    }
+    _saveCategory(currentCategory, spendings);
   }
 
   void _deleteSpending(BudgetCategory category, BudgetSpending spending) {
@@ -793,111 +792,152 @@ Future<BudgetSpending?> _showSpendingDialog(
   required BudgetCategory category,
   required String sourceCurrency,
   required String displayCurrency,
+  required CurrencyExchangeData? exchangeData,
   BudgetSpending? existing,
 }) async {
-  final exchangeData = CurrencyScope.maybeOf(context)?.exchangeData;
-  final existingAmount = existing == null
-      ? ''
-      : _budgetConvertedAmount(
-          existing.amount,
-          sourceCurrency: sourceCurrency,
-          displayCurrency: displayCurrency,
-          exchangeData: exchangeData,
-        ).round().toString();
-  final title = TextEditingController(text: existing?.title ?? '');
-  final amount = TextEditingController(text: existingAmount);
-  final date = TextEditingController(text: existing?.date ?? '');
-  final note = TextEditingController(text: existing?.note ?? '');
-  try {
-    return await showDialog<BudgetSpending>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(
-          appText(
-            dialogContext,
-            existing == null ? 'Create new spending' : 'Edit spending',
-          ),
+  return showDialog<BudgetSpending>(
+    context: context,
+    builder: (dialogContext) => _BudgetSpendingDialog(
+      category: category,
+      sourceCurrency: sourceCurrency,
+      displayCurrency: displayCurrency,
+      exchangeData: exchangeData,
+      existing: existing,
+    ),
+  );
+}
+
+class _BudgetSpendingDialog extends StatefulWidget {
+  const _BudgetSpendingDialog({
+    required this.category,
+    required this.sourceCurrency,
+    required this.displayCurrency,
+    required this.exchangeData,
+    this.existing,
+  });
+
+  final BudgetCategory category;
+  final String sourceCurrency;
+  final String displayCurrency;
+  final CurrencyExchangeData? exchangeData;
+  final BudgetSpending? existing;
+
+  @override
+  State<_BudgetSpendingDialog> createState() => _BudgetSpendingDialogState();
+}
+
+class _BudgetSpendingDialogState extends State<_BudgetSpendingDialog> {
+  late final TextEditingController _title;
+  late final TextEditingController _amount;
+  late final TextEditingController _date;
+  late final TextEditingController _note;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.existing;
+    final existingAmount = existing == null
+        ? ''
+        : _budgetConvertedAmount(
+            existing.amount,
+            sourceCurrency: widget.sourceCurrency,
+            displayCurrency: widget.displayCurrency,
+            exchangeData: widget.exchangeData,
+          ).round().toString();
+    _title = TextEditingController(text: existing?.title ?? '');
+    _amount = TextEditingController(text: existingAmount);
+    _date = TextEditingController(text: existing?.date ?? '');
+    _note = TextEditingController(text: existing?.note ?? '');
+  }
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _amount.dispose();
+    _date.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final existing = widget.existing;
+    return AlertDialog(
+      title: Text(
+        appText(
+          context,
+          existing == null ? 'Create new spending' : 'Edit spending',
         ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: title,
-                decoration: InputDecoration(
-                  labelText: appText(dialogContext, 'Title'),
-                ),
-                textInputAction: TextInputAction.next,
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _title,
+              decoration: InputDecoration(labelText: appText(context, 'Title')),
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _amount,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText:
+                    '${appText(context, 'Amount')} '
+                    '${widget.displayCurrency}',
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: amount,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText:
-                      '${appText(dialogContext, 'Amount')} $displayCurrency',
-                ),
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: date,
-                decoration: InputDecoration(
-                  labelText: appText(dialogContext, 'Date'),
-                ),
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: note,
-                decoration: InputDecoration(
-                  labelText: appText(dialogContext, 'Note'),
-                ),
-                textInputAction: TextInputAction.done,
-              ),
-            ],
-          ),
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _date,
+              decoration: InputDecoration(labelText: appText(context, 'Date')),
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _note,
+              decoration: InputDecoration(labelText: appText(context, 'Note')),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _save(),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(appText(dialogContext, 'Cancel')),
-          ),
-          FilledButton(
-            onPressed: () {
-              final parsedAmount =
-                  int.tryParse(amount.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
-              if (parsedAmount <= 0) return;
-              final sourceAmount = _budgetSourceAmountFromDisplay(
-                parsedAmount,
-                sourceCurrency: sourceCurrency,
-                displayCurrency: displayCurrency,
-                exchangeData: exchangeData,
-              );
-              Navigator.of(dialogContext).pop(
-                BudgetSpending(
-                  id:
-                      existing?.id ??
-                      'spending-${DateTime.now().microsecondsSinceEpoch}',
-                  title: title.text.trim().isEmpty
-                      ? category.category
-                      : title.text.trim(),
-                  amount: sourceAmount,
-                  date: date.text.trim(),
-                  note: note.text.trim(),
-                ),
-              );
-            },
-            child: Text(appText(dialogContext, 'Save')),
-          ),
-        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(appText(context, 'Cancel')),
+        ),
+        FilledButton(onPressed: _save, child: Text(appText(context, 'Save'))),
+      ],
+    );
+  }
+
+  void _save() {
+    final parsedAmount =
+        int.tryParse(_amount.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+    if (parsedAmount <= 0) return;
+    final sourceAmount = _budgetSourceAmountFromDisplay(
+      parsedAmount,
+      sourceCurrency: widget.sourceCurrency,
+      displayCurrency: widget.displayCurrency,
+      exchangeData: widget.exchangeData,
+    );
+    Navigator.of(context).pop(
+      BudgetSpending(
+        id:
+            widget.existing?.id ??
+            'spending-${DateTime.now().microsecondsSinceEpoch}',
+        title: _title.text.trim().isEmpty
+            ? widget.category.category
+            : _title.text.trim(),
+        amount: sourceAmount,
+        date: _date.text.trim(),
+        note: _note.text.trim(),
       ),
     );
-  } finally {
-    title.dispose();
-    amount.dispose();
-    date.dispose();
-    note.dispose();
   }
 }
 

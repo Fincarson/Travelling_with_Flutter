@@ -1477,22 +1477,36 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Future<void> _enableNotificationsFromDashboard() async {
-    final result = await _syncPushTokenRegistrationResult(enabled: true);
-    if (!mounted || !context.mounted) return;
-
-    if (result.registered) {
-      await _saveProfile(_user.copyWith(notificationsEnabled: true));
+    try {
+      final result = await _syncPushTokenRegistrationResult(enabled: true);
       if (!mounted || !context.mounted) return;
-    }
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(appText(context, result.message)),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      if (result.registered) {
+        await _saveProfile(_user.copyWith(notificationsEnabled: true));
+        if (!mounted || !context.mounted) return;
+      }
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(appText(context, result.message)),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } catch (error) {
+      if (!mounted || !context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              appText(context, 'Could not enable notifications: $error'),
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
   }
 
   Future<PushTokenSyncResult> _syncPushTokenRegistrationResult({
@@ -1503,30 +1517,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       accountId: accountId,
       enabled: enabled ?? _user.notificationsEnabled,
     );
-  }
-
-  Future<void> _enableNotificationsFromDashboard() async {
-    try {
-      await _saveProfile(_user.copyWith(notificationsEnabled: true));
-      final result = await _syncPushTokenRegistrationResult(enabled: true);
-      if (!mounted || result.registered) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(content: Text(appText(context, result.message))),
-        );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              appText(context, 'Could not enable notifications: $error'),
-            ),
-          ),
-        );
-    }
   }
 
   void _queueTripAutomation(List<Trip> trips) {

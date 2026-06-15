@@ -169,7 +169,8 @@ class AccountAuthService {
   }
 
   Future<void> prepareForFreshSignIn() async {
-    await signOut();
+    // Startup must not clear FirebaseAuth's persisted session. If no account is
+    // signed in, AccountGate will naturally show the sign-in form.
   }
 
   Future<void> signInWithEmail({

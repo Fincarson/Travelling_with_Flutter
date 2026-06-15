@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:go_router/go_router.dart';
 
 import '../core/errors/app_error.dart';
 import '../core/localization/app_language.dart';
@@ -99,7 +100,14 @@ class _MyAppState extends State<MyApp> {
                           valueListenable: AppErrorController.current,
                           builder: (context, error, _) {
                             if (error != null) {
-                              return UnexpectedErrorView(error: error);
+                              return UnexpectedErrorView(
+                                error: error,
+                                onGoHome: () {
+                                  final router = GoRouter.maybeOf(context);
+                                  AppErrorController.clear();
+                                  router?.go('/');
+                                },
+                              );
                             }
                             return content;
                           },

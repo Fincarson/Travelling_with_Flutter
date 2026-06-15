@@ -1,22 +1,32 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/errors/app_error.dart';
 import '../../core/localization/app_text.dart';
 
+final Set<String> _loggedUnexpectedErrors = <String>{};
+
 class UnexpectedErrorView extends StatelessWidget {
   const UnexpectedErrorView({
     required this.error,
     this.compact = false,
+    this.onGoHome,
     super.key,
   });
 
   final AppErrorData error;
   final bool compact;
+  final VoidCallback? onGoHome;
 
   @override
   Widget build(BuildContext context) {
+    _logUnexpectedError(error);
     final colors = Theme.of(context).colorScheme;
-    final content = _UnexpectedErrorPanel(error: error, compact: compact);
+    final content = _UnexpectedErrorPanel(
+      error: error,
+      compact: compact,
+      onGoHome: onGoHome,
+    );
     if (compact) return content;
 
     return ColoredBox(
@@ -43,11 +53,27 @@ class UnexpectedErrorView extends StatelessWidget {
   }
 }
 
+void _logUnexpectedError(AppErrorData error) {
+  final firstLine = error.details
+      .split('\n')
+      .map((line) => line.trim())
+      .firstWhere((line) => line.isNotEmpty, orElse: () => error.code);
+  final codePrefix = error.code.isEmpty ? '' : '${error.code}: ';
+  final message = '[Travel Agent error screen] $codePrefix$firstLine';
+  if (!_loggedUnexpectedErrors.add(message)) return;
+  debugPrintSynchronously(message);
+}
+
 class _UnexpectedErrorPanel extends StatefulWidget {
-  const _UnexpectedErrorPanel({required this.error, required this.compact});
+  const _UnexpectedErrorPanel({
+    required this.error,
+    required this.compact,
+    required this.onGoHome,
+  });
 
   final AppErrorData error;
   final bool compact;
+  final VoidCallback? onGoHome;
 
   @override
   State<_UnexpectedErrorPanel> createState() => _UnexpectedErrorPanelState();
@@ -94,6 +120,14 @@ class _UnexpectedErrorPanelState extends State<_UnexpectedErrorPanel> {
               fontSize: 12,
               fontWeight: FontWeight.w800,
             ),
+          ),
+        ],
+        if (widget.onGoHome != null) ...[
+          SizedBox(height: widget.compact ? 8 : 16),
+          FilledButton.icon(
+            onPressed: widget.onGoHome,
+            icon: const Icon(Icons.home_rounded),
+            label: Text(appText(context, 'Back to home')),
           ),
         ],
         const SizedBox(height: 8),
