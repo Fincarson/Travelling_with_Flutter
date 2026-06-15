@@ -60,6 +60,9 @@ class GroupChat {
     required this.roles,
     this.description = '',
     this.linkedTripId,
+    this.linkedTripTitle,
+    this.linkedTripDestination,
+    this.linkedTripCoverImageUrl,
     this.type = 'group',
     this.lastMessageText = '',
     this.lastMessageAt,
@@ -73,6 +76,9 @@ class GroupChat {
   final Map<String, String> roles;
   final String description;
   final String? linkedTripId;
+  final String? linkedTripTitle;
+  final String? linkedTripDestination;
+  final String? linkedTripCoverImageUrl;
   final String type;
   final String lastMessageText;
   final Timestamp? lastMessageAt;
@@ -94,12 +100,29 @@ class GroupChat {
       ),
       description: (map['description'] as String?) ?? '',
       linkedTripId: map['linkedTripId'] as String?,
+      linkedTripTitle: map['linkedTripTitle'] as String?,
+      linkedTripDestination: map['linkedTripDestination'] as String?,
+      linkedTripCoverImageUrl: map['linkedTripCoverImageUrl'] as String?,
       type: (map['type'] as String?) ?? 'group',
       lastMessageText: (map['lastMessageText'] as String?) ?? '',
       lastMessageAt: map['lastMessageAt'] as Timestamp?,
       createdAt: map['createdAt'] as Timestamp?,
     );
   }
+}
+
+class ChatTripSummary {
+  const ChatTripSummary({
+    required this.id,
+    required this.title,
+    required this.destination,
+    this.coverImageUrl,
+  });
+
+  final String id;
+  final String title;
+  final String destination;
+  final String? coverImageUrl;
 }
 
 class GroupChatMembership {

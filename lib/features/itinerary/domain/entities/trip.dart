@@ -27,6 +27,7 @@ class Trip {
     this.originLatitude,
     this.originLongitude,
     this.title = '',
+    this.currentUserRole = 'owner',
   });
 
   final String id;
@@ -52,8 +53,11 @@ class Trip {
   final String? originLabel;
   final double? originLatitude;
   final double? originLongitude;
+  final String currentUserRole;
 
   String get groupType => _travelerGroupLabel(numOfTravelers);
+  bool get canEdit => currentUserRole == 'owner' || currentUserRole == 'editor';
+  bool get isOwner => currentUserRole == 'owner';
 
   Trip copyWith({
     TripStatus? status,
@@ -78,6 +82,7 @@ class Trip {
     String? originLabel,
     double? originLatitude,
     double? originLongitude,
+    String? currentUserRole,
   }) => Trip(
     id: id,
     title: title ?? this.title,
@@ -102,6 +107,7 @@ class Trip {
     originLabel: originLabel ?? this.originLabel,
     originLatitude: originLatitude ?? this.originLatitude,
     originLongitude: originLongitude ?? this.originLongitude,
+    currentUserRole: currentUserRole ?? this.currentUserRole,
   );
 
   Map<String, dynamic> toMap() => {
@@ -194,6 +200,7 @@ class Trip {
     required List<ScheduleItem> items,
     required List<Booking> bookings,
     required List<BudgetCategory> budgetCategories,
+    required String currentUserRole,
   }) {
     final map = doc.data() ?? const <String, dynamic>{};
     final destination = (map['destination'] as String?) ?? 'Untitled trip';
@@ -234,6 +241,41 @@ class Trip {
           .whereType<String>()
           .toList(),
       budgetCategories: budgetCategories,
+      currentUserRole: currentUserRole,
+    );
+  }
+}
+
+class TripMember {
+  const TripMember({
+    required this.uid,
+    required this.role,
+    required this.status,
+    required this.displayNameSnapshot,
+    this.photoUrlSnapshot,
+    this.joinedAt,
+  });
+
+  final String uid;
+  final String role;
+  final String status;
+  final String displayNameSnapshot;
+  final String? photoUrlSnapshot;
+  final Timestamp? joinedAt;
+
+  bool get isOwner => role == 'owner';
+  bool get isActive => status == 'active';
+
+  static TripMember fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final map = doc.data() ?? const <String, dynamic>{};
+    return TripMember(
+      uid: doc.id,
+      role: (map['role'] as String?) ?? 'viewer',
+      status: (map['status'] as String?) ?? 'active',
+      displayNameSnapshot:
+          (map['displayNameSnapshot'] as String?) ?? 'Explorer',
+      photoUrlSnapshot: map['photoUrlSnapshot'] as String?,
+      joinedAt: map['joinedAt'] as Timestamp?,
     );
   }
 }

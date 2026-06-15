@@ -8,6 +8,9 @@ class TripDetailScreen extends StatelessWidget {
     required this.onOpenBudget,
     required this.onOpenPacking,
     required this.onUpdateTrip,
+    required this.accountId,
+    required this.repository,
+    required this.onLeftTrip,
     this.initialTabIndex = 0,
     this.initialAiPrompt,
     super.key,
@@ -18,6 +21,9 @@ class TripDetailScreen extends StatelessWidget {
   final VoidCallback onOpenBudget;
   final VoidCallback onOpenPacking;
   final ValueChanged<Trip> onUpdateTrip;
+  final String accountId;
+  final TravelDataRepository repository;
+  final VoidCallback onLeftTrip;
   final int initialTabIndex;
   final String? initialAiPrompt;
 
@@ -28,6 +34,9 @@ class TripDetailScreen extends StatelessWidget {
       onBack: onBack,
       onOpenChat: onOpenChat,
       onUpdateTrip: onUpdateTrip,
+      accountId: accountId,
+      repository: repository,
+      onLeftTrip: onLeftTrip,
       initialTabIndex: initialTabIndex,
       initialAiPrompt: initialAiPrompt,
     );
@@ -40,6 +49,9 @@ class _EditableTripDetailScreen extends StatefulWidget {
     required this.onBack,
     required this.onOpenChat,
     required this.onUpdateTrip,
+    required this.accountId,
+    required this.repository,
+    required this.onLeftTrip,
     required this.initialTabIndex,
     this.initialAiPrompt,
   });
@@ -48,6 +60,9 @@ class _EditableTripDetailScreen extends StatefulWidget {
   final VoidCallback onBack;
   final VoidCallback onOpenChat;
   final ValueChanged<Trip> onUpdateTrip;
+  final String accountId;
+  final TravelDataRepository repository;
+  final VoidCallback onLeftTrip;
   final int initialTabIndex;
   final String? initialAiPrompt;
 
@@ -83,7 +98,7 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
     widget.onUpdateTrip(trip);
   }
 
-  int _clampedSectionIndex(int index) => index.clamp(0, 6);
+  int _clampedSectionIndex(int index) => index.clamp(0, 7);
 
   @override
   Widget build(BuildContext context) {
@@ -103,7 +118,12 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
             onSelect: (index) => setState(() => _selectedSectionIndex = index),
           ),
         ],
-        body: sections[selectedIndex].child,
+        body: Column(
+          children: [
+            if (!_trip.canEdit) const _TripReadOnlyBanner(),
+            Expanded(child: sections[selectedIndex].child),
+          ],
+        ),
       ),
     );
   }
@@ -113,17 +133,25 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
       _TripDetailSection(
         label: 'Overview',
         icon: Icons.dashboard_rounded,
-        child: TripOverviewTab(trip: _trip, onSave: _save),
+        child: TripOverviewTab(
+          trip: _trip,
+          onSave: _save,
+          readOnly: !_trip.canEdit,
+        ),
       ),
       _TripDetailSection(
         label: 'Schedule',
         icon: Icons.route_rounded,
-        child: ScheduleTab(trip: _trip, onSave: _save),
+        child: ScheduleTab(
+          trip: _trip,
+          onSave: _save,
+          readOnly: !_trip.canEdit,
+        ),
       ),
       _TripDetailSection(
         label: 'Budget',
         icon: Icons.account_balance_wallet_rounded,
-        child: BudgetTab(trip: _trip, onSave: _save),
+        child: BudgetTab(trip: _trip, onSave: _save, readOnly: !_trip.canEdit),
       ),
       _TripDetailSection(
         label: 'Map',
@@ -133,12 +161,26 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
       _TripDetailSection(
         label: 'Checklist',
         icon: Icons.checklist_rounded,
-        child: ChecklistTab(trip: _trip, onSave: _save),
+        child: ChecklistTab(
+          trip: _trip,
+          onSave: _save,
+          readOnly: !_trip.canEdit,
+        ),
       ),
       _TripDetailSection(
         label: 'Booking',
         icon: Icons.confirmation_number_rounded,
-        child: BookingTab(trip: _trip, onSave: _save),
+        child: BookingTab(trip: _trip, onSave: _save, readOnly: !_trip.canEdit),
+      ),
+      _TripDetailSection(
+        label: 'Members',
+        icon: Icons.groups_rounded,
+        child: TripMembersTab(
+          trip: _trip,
+          accountId: widget.accountId,
+          repository: widget.repository,
+          onLeftTrip: widget.onLeftTrip,
+        ),
       ),
       _TripDetailSection(
         label: 'Chat',
@@ -150,6 +192,41 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
         ),
       ),
     ];
+  }
+}
+
+class _TripReadOnlyBanner extends StatelessWidget {
+  const _TripReadOnlyBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.secondaryContainer,
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: _responsiveHorizontalPadding(context),
+          vertical: 9,
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.visibility_rounded, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                appText(
+                  context,
+                  'View only: the trip owner manages this plan.',
+                ),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -224,6 +301,9 @@ class _TripDetailFlexibleBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final image = trip.images.isEmpty
+        ? destinations.first.image
+        : trip.images.first;
     return LayoutBuilder(
       builder: (context, constraints) {
         const bannerBottom = _TripSectionTabBar.height;
@@ -251,7 +331,7 @@ class _TripDetailFlexibleBanner extends StatelessWidget {
               child: Opacity(
                 opacity: imageOpacity,
                 child: Image.network(
-                  trip.images.first,
+                  image,
                   fit: BoxFit.cover,
                   filterQuality: PerformanceScope.maybeSettingsOf(
                     context,

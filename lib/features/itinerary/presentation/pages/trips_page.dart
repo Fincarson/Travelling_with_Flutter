@@ -242,23 +242,42 @@ class _TripsScreenState extends State<TripsScreen> {
                           for (final trip in trips)
                             Padding(
                               padding: const EdgeInsets.only(bottom: 16),
-                              child: _SwipeToDeleteTrip(
-                                trip: trip,
-                                confirmDelete: () => _confirmDelete(trip),
-                                child: TripListCard(
-                                  trip: trip,
-                                  onTap: () => widget.onOpenTrip(trip),
-                                  onStart: () => widget.onStartTrip(trip),
-                                  favorite: widget.favoriteTripIds.contains(
-                                    trip.id,
-                                  ),
-                                  onToggleFavorite:
-                                      widget.onToggleFavoriteTrip == null
-                                      ? null
-                                      : () =>
-                                            widget.onToggleFavoriteTrip!(trip),
-                                ),
-                              ),
+                              child: trip.isOwner
+                                  ? _SwipeToDeleteTrip(
+                                      trip: trip,
+                                      confirmDelete: () => _confirmDelete(trip),
+                                      child: TripListCard(
+                                        trip: trip,
+                                        onTap: () => widget.onOpenTrip(trip),
+                                        onStart: () => widget.onStartTrip(trip),
+                                        favorite: widget.favoriteTripIds
+                                            .contains(trip.id),
+                                        onToggleFavorite:
+                                            widget.onToggleFavoriteTrip == null
+                                            ? null
+                                            : () =>
+                                                  widget.onToggleFavoriteTrip!(
+                                                    trip,
+                                                  ),
+                                      ),
+                                    )
+                                  : TripListCard(
+                                      trip: trip,
+                                      onTap: () => widget.onOpenTrip(trip),
+                                      onStart: trip.canEdit
+                                          ? () => widget.onStartTrip(trip)
+                                          : null,
+                                      canDelete: false,
+                                      favorite: widget.favoriteTripIds.contains(
+                                        trip.id,
+                                      ),
+                                      onToggleFavorite:
+                                          widget.onToggleFavoriteTrip == null
+                                          ? null
+                                          : () => widget.onToggleFavoriteTrip!(
+                                              trip,
+                                            ),
+                                    ),
                             ),
                           if (memories.isNotEmpty) ...[
                             const Padding(

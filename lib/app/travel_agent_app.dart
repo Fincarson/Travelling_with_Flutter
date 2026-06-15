@@ -78,6 +78,7 @@ part '../features/itinerary/presentation/tabs/checklist_tab.dart';
 part '../features/itinerary/presentation/tabs/schedule_tab.dart';
 part '../features/itinerary/presentation/tabs/trip_chat_tab.dart';
 part '../features/itinerary/presentation/tabs/trip_map_tab.dart';
+part '../features/itinerary/presentation/tabs/trip_members_tab.dart';
 part '../features/itinerary/presentation/tabs/trip_overview_tab.dart';
 part '../features/chat/presentation/pages/chat_page.dart';
 part '../features/profile/presentation/pages/profile_page.dart';
