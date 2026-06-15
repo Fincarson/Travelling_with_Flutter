@@ -565,14 +565,16 @@ class TripListCard extends StatelessWidget {
   const TripListCard({
     required this.trip,
     required this.onTap,
-    required this.onStart,
+    this.onStart,
+    this.canDelete = true,
     this.favorite = false,
     this.onToggleFavorite,
     super.key,
   });
   final Trip trip;
   final VoidCallback onTap;
-  final VoidCallback onStart;
+  final VoidCallback? onStart;
+  final bool canDelete;
   final bool favorite;
   final VoidCallback? onToggleFavorite;
 
@@ -588,7 +590,9 @@ class TripListCard extends StatelessWidget {
         images.isEmpty ? fallbackImage : images[index % images.length];
     final isPast = trip.status == TripStatus.past;
     final isOngoing = trip.status == TripStatus.ongoing;
-    final actionLabel = isPast
+    final actionLabel = onStart == null
+        ? 'VIEW TRIP'
+        : isPast
         ? 'VIEW TRIP'
         : isOngoing
         ? 'CONTINUE TRIP'
@@ -750,7 +754,9 @@ class TripListCard extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
-                      onPressed: isPast || isOngoing ? onTap : onStart,
+                      onPressed: isPast || isOngoing || onStart == null
+                          ? onTap
+                          : onStart,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(48),
                         backgroundColor: const Color(0xFF3D5A6C),
@@ -765,17 +771,19 @@ class TripListCard extends StatelessWidget {
                       child: Text(actionLabel),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Center(
-                    child: Text(
-                      'Swipe left or right to delete',
-                      style: TextStyle(
-                        color: scheme.onSurfaceVariant,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
+                  if (canDelete) ...[
+                    const SizedBox(height: 8),
+                    Center(
+                      child: Text(
+                        'Swipe left or right to delete',
+                        style: TextStyle(
+                          color: scheme.onSurfaceVariant,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

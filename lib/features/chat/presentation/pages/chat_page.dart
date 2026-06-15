@@ -93,6 +93,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
           user: widget.user,
           repository: _repository,
           onBack: _closeActiveChat,
+          onOpenTrip: (tripId) => context.go('/trips/$tripId'),
         ),
       );
     }
@@ -515,6 +516,7 @@ class RoutedGroupChatRoomScreen extends StatefulWidget {
     required this.account,
     required this.user,
     required this.onBack,
+    required this.onOpenTrip,
     required this.onVisibilityChanged,
     super.key,
   });
@@ -523,6 +525,7 @@ class RoutedGroupChatRoomScreen extends StatefulWidget {
   final AuthenticatedAccount account;
   final UserProfile user;
   final VoidCallback onBack;
+  final ValueChanged<String> onOpenTrip;
   final ValueChanged<String?> onVisibilityChanged;
 
   @override
@@ -598,6 +601,7 @@ class _RoutedGroupChatRoomScreenState extends State<RoutedGroupChatRoomScreen> {
               user: widget.user,
               repository: _repository,
               onBack: widget.onBack,
+              onOpenTrip: widget.onOpenTrip,
             );
           }
 
@@ -631,6 +635,85 @@ class _LoadedGroupChatRoom {
   final GroupChatMembership membership;
 }
 
+class _ChatTimelineEntry {
+  const _ChatTimelineEntry.message(this.message) : date = null;
+
+  const _ChatTimelineEntry.date(this.date) : message = null;
+
+  final GroupChatMessage? message;
+  final DateTime? date;
+}
+
+List<_ChatTimelineEntry> _chatTimelineEntries(List<GroupChatMessage> messages) {
+  final entries = <_ChatTimelineEntry>[];
+  DateTime? currentDate;
+  final fallbackDate = DateTime.now();
+
+  for (final message in messages) {
+    final local = message.createdAt?.toDate().toLocal() ?? fallbackDate;
+    final date = DateTime(local.year, local.month, local.day);
+    if (currentDate != date) {
+      currentDate = date;
+      entries.add(_ChatTimelineEntry.date(date));
+    }
+    entries.add(_ChatTimelineEntry.message(message));
+  }
+
+  return entries;
+}
+
+class _ChatDateDivider extends StatelessWidget {
+  const _ChatDateDivider({required this.date});
+
+  final DateTime date;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      key: ValueKey('chat-date-divider-${date.toIso8601String()}'),
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Expanded(child: Divider(color: colors.outlineVariant)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Material(
+              color: colors.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(999),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                child: Text(
+                  _chatDateLabel(context, date),
+                  style: TextStyle(
+                    color: colors.onSurfaceVariant,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(child: Divider(color: colors.outlineVariant)),
+        ],
+      ),
+    );
+  }
+}
+
+String _chatDateLabel(BuildContext context, DateTime date) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final difference = today.difference(date).inDays;
+  if (difference == 0) return appText(context, 'Today');
+  if (difference == 1) return appText(context, 'Yesterday');
+
+  return MaterialLocalizations.of(context).formatMediumDate(date);
+}
+
 class GroupChatRoomScreen extends StatefulWidget {
   const GroupChatRoomScreen({
     required this.chat,
@@ -639,6 +722,7 @@ class GroupChatRoomScreen extends StatefulWidget {
     required this.user,
     required this.repository,
     required this.onBack,
+    required this.onOpenTrip,
     super.key,
   });
 
@@ -648,6 +732,7 @@ class GroupChatRoomScreen extends StatefulWidget {
   final UserProfile user;
   final GroupChatRepository repository;
   final VoidCallback onBack;
+  final ValueChanged<String> onOpenTrip;
 
   @override
   State<GroupChatRoomScreen> createState() => _GroupChatRoomScreenState();
@@ -716,6 +801,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
               stream: widget.repository.watchMessages(widget.chat.id),
               builder: (context, snapshot) {
                 final messages = snapshot.data ?? const <GroupChatMessage>[];
+                final timeline = _chatTimelineEntries(messages);
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
@@ -751,9 +837,13 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                 return ListView.builder(
                   reverse: true,
                   padding: _responsivePagePadding(context, top: 12, bottom: 12),
-                  itemCount: messages.length,
+                  itemCount: timeline.length,
                   itemBuilder: (context, index) {
-                    final message = messages[messages.length - index - 1];
+                    final entry = timeline[timeline.length - index - 1];
+                    if (entry.date case final date?) {
+                      return _ChatDateDivider(date: date);
+                    }
+                    final message = entry.message!;
                     return GroupMessageBubble(
                       message: message,
                       isMine: message.senderId == widget.account.uid,
@@ -997,6 +1087,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
           Navigator.of(context).pop();
           Future<void>.delayed(Duration.zero, _showGroupMedia);
         },
+        onOpenTrip: widget.onOpenTrip,
       ),
     );
     final chat = await widget.repository.loadChat(widget.chat.id);
@@ -1113,6 +1204,15 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   }
 
   Future<void> _showMoreOptions() async {
+    GroupChat? latestChat;
+    try {
+      latestChat = await widget.repository.loadChat(widget.chat.id);
+    } catch (error) {
+      if (mounted) setState(() => _error = _chatErrorMessage(error));
+      return;
+    }
+    if (!mounted || latestChat == null) return;
+    final isOwner = latestChat.ownerId == widget.account.uid;
     final action = await showModalBottomSheet<_ChatMoreAction>(
       context: context,
       showDragHandle: true,
@@ -1138,6 +1238,21 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                 ),
                 onTap: () => Navigator.of(context).pop(_ChatMoreAction.exit),
               ),
+              if (isOwner)
+                ListTile(
+                  leading: Icon(
+                    Icons.delete_forever_rounded,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  title: Text(
+                    appText(context, 'Delete group'),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                  onTap: () =>
+                      Navigator.of(context).pop(_ChatMoreAction.delete),
+                ),
             ],
           ),
         ),
@@ -1154,6 +1269,82 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
       );
       return;
     }
+    if (action == _ChatMoreAction.delete) {
+      await _deleteGroupChat();
+      return;
+    }
+
+    await _exitGroupChat(isOwner: isOwner);
+  }
+
+  Future<void> _exitGroupChat({required bool isOwner}) async {
+    GroupChatMember? newOwner;
+    if (isOwner) {
+      try {
+        final members = await widget.repository.loadMembers(widget.chat.id);
+        if (!mounted) return;
+        final candidates = members
+            .where((member) => member.uid != widget.account.uid)
+            .toList();
+        if (candidates.isNotEmpty) {
+          newOwner = await showModalBottomSheet<GroupChatMember>(
+            context: context,
+            showDragHandle: true,
+            builder: (context) => SafeArea(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 620),
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: _responsivePagePadding(context, top: 4, bottom: 24),
+                  children: [
+                    Text(
+                      appText(context, 'Choose a new group owner'),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      appText(
+                        context,
+                        'Ownership must be transferred before you leave.',
+                      ),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    for (final member in candidates)
+                      ListTile(
+                        leading: ChatAvatar(
+                          name: member.displayNameSnapshot,
+                          photoUrl: member.photoUrlSnapshot,
+                        ),
+                        title: Text(
+                          member.displayNameSnapshot,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        subtitle: Text(
+                          appText(context, _roleLabel(member.role)),
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () => Navigator.of(context).pop(member),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          );
+          if (newOwner == null || !mounted) return;
+        }
+      } catch (error) {
+        if (mounted) setState(() => _error = _chatErrorMessage(error));
+        return;
+      }
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1162,7 +1353,9 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
         content: Text(
           appText(
             context,
-            'You will lose access until another member invites you again.',
+            isOwner && newOwner == null
+                ? 'You are the only member, so leaving will delete this group chat.'
+                : 'You will lose access until another member invites you again.',
           ),
         ),
         actions: [
@@ -1180,6 +1373,45 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
     if (confirmed != true || !mounted) return;
     try {
       await widget.repository.leaveChat(
+        chatId: widget.chat.id,
+        accountId: widget.account.uid,
+        newOwnerId: newOwner?.uid,
+      );
+      if (mounted) widget.onBack();
+    } catch (error) {
+      if (mounted) setState(() => _error = _chatErrorMessage(error));
+    }
+  }
+
+  Future<void> _deleteGroupChat() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(appText(context, 'Delete group chat?')),
+        content: Text(
+          appText(
+            context,
+            'This permanently deletes the chat and its messages. The attached trip and its members will not be changed.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(appText(context, 'Cancel')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(appText(context, 'Delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.repository.deleteChat(
         chatId: widget.chat.id,
         accountId: widget.account.uid,
       );
@@ -1765,7 +1997,7 @@ enum _GroupChatMenuAction { addMembers, info, media, notifications, more }
 
 enum _ChatMuteChoice { unmuted, thirtyMinutes, oneHour, oneDay, forever }
 
-enum _ChatMoreAction { report, exit }
+enum _ChatMoreAction { report, exit, delete }
 
 enum _ChatComposerAction { camera, photos, videos, files, poll }
 

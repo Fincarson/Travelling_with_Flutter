@@ -136,6 +136,7 @@ void main() {
             ),
             repository: _FakeGroupChatRepository(messages: messages),
             onBack: () {},
+            onOpenTrip: (_) {},
           ),
         ),
       ),
@@ -226,6 +227,7 @@ void main() {
             ),
             repository: _FakeGroupChatRepository(messages: messages),
             onBack: () {},
+            onOpenTrip: (_) {},
           ),
         ),
       ),
@@ -236,6 +238,83 @@ void main() {
     expect(messageList.reverse, isTrue);
     expect(find.text('Latest message'), findsOneWidget);
     expect(find.text('Older message 0'), findsNothing);
+  });
+
+  testWidgets('chat separates messages by today, yesterday, and date', (
+    tester,
+  ) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day, 12);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final older = today.subtract(const Duration(days: 3));
+    final messages = [
+      GroupChatMessage(
+        id: 'older',
+        senderId: 'user-2',
+        senderNameSnapshot: 'Morgan',
+        text: 'Older message',
+        type: 'text',
+        createdAt: Timestamp.fromDate(older),
+      ),
+      GroupChatMessage(
+        id: 'yesterday',
+        senderId: 'user-2',
+        senderNameSnapshot: 'Morgan',
+        text: 'Yesterday message',
+        type: 'text',
+        createdAt: Timestamp.fromDate(yesterday),
+      ),
+      GroupChatMessage(
+        id: 'today',
+        senderId: 'user-1',
+        senderNameSnapshot: 'Taylor',
+        text: 'Today message',
+        type: 'text',
+        createdAt: Timestamp.fromDate(today),
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: GroupChatRoomScreen(
+            chat: const GroupChat(
+              id: 'chat-1',
+              title: 'Test chat',
+              ownerId: 'user-1',
+              memberIds: ['user-1', 'user-2'],
+              roles: {'user-1': 'owner', 'user-2': 'member'},
+            ),
+            membership: const GroupChatMembership(
+              chatId: 'chat-1',
+              role: 'owner',
+              status: 'active',
+              titleSnapshot: 'Test chat',
+            ),
+            account: const AuthenticatedAccount(
+              uid: 'user-1',
+              displayName: 'Taylor',
+            ),
+            user: const UserProfile(
+              name: 'Taylor',
+              email: 'taylor@example.com',
+              interests: [],
+            ),
+            repository: _FakeGroupChatRepository(messages: messages),
+            onBack: () {},
+            onOpenTrip: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final localizations = MaterialLocalizations.of(
+      tester.element(find.byType(GroupChatRoomScreen)),
+    );
+    expect(find.text('Today'), findsOneWidget);
+    expect(find.text('Yesterday'), findsOneWidget);
+    expect(find.text(localizations.formatMediumDate(older)), findsOneWidget);
   });
 
   testWidgets('short text message bubble fits its content', (tester) async {
@@ -267,6 +346,77 @@ void main() {
     expect(tester.getSize(bubble).width, lessThan(90));
   });
 
+  testWidgets('group owner can attach a trip from Group info', (tester) async {
+    const chat = GroupChat(
+      id: 'chat-1',
+      title: 'Taipei group',
+      ownerId: 'owner-1',
+      memberIds: ['owner-1'],
+      roles: {'owner-1': 'owner'},
+    );
+    final repository = _FakeGroupChatRepository(chat: chat);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 700,
+            child: GroupChatInfoPanel(
+              chatId: chat.id,
+              accountId: 'owner-1',
+              repository: repository,
+              onAddMembers: () {},
+              onOpenMedia: () {},
+              onOpenTrip: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('No trip attached'), findsOneWidget);
+    expect(find.text('Attach trip'), findsOneWidget);
+  });
+
+  testWidgets('unjoined group member sees Join trip', (tester) async {
+    const chat = GroupChat(
+      id: 'chat-1',
+      title: 'Taipei group',
+      ownerId: 'owner-1',
+      memberIds: ['owner-1', 'member-1'],
+      roles: {'owner-1': 'owner', 'member-1': 'member'},
+      linkedTripId: 'trip-1',
+      linkedTripTitle: 'Taipei week',
+      linkedTripDestination: 'Taipei',
+    );
+    final repository = _FakeGroupChatRepository(chat: chat);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 700,
+            child: GroupChatInfoPanel(
+              chatId: chat.id,
+              accountId: 'member-1',
+              repository: repository,
+              onAddMembers: () {},
+              onOpenMedia: () {},
+              onOpenTrip: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Attached trip'), findsOneWidget);
+    expect(find.text('Join trip'), findsOneWidget);
+    expect(find.text('Replace trip'), findsNothing);
+    expect(find.text('Detach trip'), findsNothing);
+  });
+
   test('GroupChatJoinResult parses callable response data', () {
     final result = GroupChatJoinResult.fromMap({
       'chatId': 'chat-123',
@@ -283,12 +433,34 @@ void main() {
 }
 
 class _FakeGroupChatRepository extends Fake implements GroupChatRepository {
-  _FakeGroupChatRepository({this.messages = const <GroupChatMessage>[]});
+  _FakeGroupChatRepository({
+    this.messages = const <GroupChatMessage>[],
+    this.chat,
+  });
 
   final List<GroupChatMessage> messages;
+  final GroupChat? chat;
 
   @override
   Stream<List<GroupChatMessage>> watchMessages(String chatId) {
     return Stream.value(messages);
+  }
+
+  @override
+  Stream<GroupChat?> watchChat(String chatId) {
+    return Stream.value(chat);
+  }
+
+  @override
+  Stream<List<GroupChatMember>> watchMembers(String chatId) {
+    return Stream.value(const []);
+  }
+
+  @override
+  Stream<bool> watchTripMembership({
+    required String accountId,
+    required String tripId,
+  }) {
+    return Stream.value(false);
   }
 }

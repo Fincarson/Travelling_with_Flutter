@@ -1,10 +1,16 @@
 part of travel_agent_app;
 
 class BudgetTab extends StatefulWidget {
-  const BudgetTab({required this.trip, required this.onSave, super.key});
+  const BudgetTab({
+    required this.trip,
+    required this.onSave,
+    this.readOnly = false,
+    super.key,
+  });
 
   final Trip trip;
   final ValueChanged<Trip> onSave;
+  final bool readOnly;
 
   @override
   State<BudgetTab> createState() => _BudgetTabState();
@@ -72,15 +78,22 @@ class _BudgetTabState extends State<BudgetTab> {
                   _expandedCategoryIds.add(category.id);
                 }
               }),
-              onSpendingCreate: () =>
-                  _editSpending(category, displayCurrency: displayCurrency),
-              onSpendingEdit: (spending) => _editSpending(
-                category,
-                existing: spending,
-                displayCurrency: displayCurrency,
-              ),
-              onSpendingDelete: (spending) =>
-                  _deleteSpending(category, spending),
+              onSpendingCreate: widget.readOnly
+                  ? null
+                  : () => _editSpending(
+                      category,
+                      displayCurrency: displayCurrency,
+                    ),
+              onSpendingEdit: widget.readOnly
+                  ? null
+                  : (spending) => _editSpending(
+                      category,
+                      existing: spending,
+                      displayCurrency: displayCurrency,
+                    ),
+              onSpendingDelete: widget.readOnly
+                  ? null
+                  : (spending) => _deleteSpending(category, spending),
             ),
           ),
       ],
@@ -385,9 +398,9 @@ class _BudgetCategoryAccordion extends StatelessWidget {
   final String displayCurrency;
   final bool expanded;
   final VoidCallback onToggle;
-  final VoidCallback onSpendingCreate;
-  final ValueChanged<BudgetSpending> onSpendingEdit;
-  final ValueChanged<BudgetSpending> onSpendingDelete;
+  final VoidCallback? onSpendingCreate;
+  final ValueChanged<BudgetSpending>? onSpendingEdit;
+  final ValueChanged<BudgetSpending>? onSpendingDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -496,19 +509,25 @@ class _BudgetCategoryAccordion extends StatelessWidget {
                           sourceCurrency: sourceCurrency,
                           displayCurrency: displayCurrency,
                           color: color,
-                          onEdit: () => onSpendingEdit(spending),
-                          onDelete: () => onSpendingDelete(spending),
+                          onEdit: onSpendingEdit == null
+                              ? null
+                              : () => onSpendingEdit!(spending),
+                          onDelete: onSpendingDelete == null
+                              ? null
+                              : () => onSpendingDelete!(spending),
                         ),
                       ),
-                  const SizedBox(height: 2),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: FilledButton.icon(
-                      onPressed: onSpendingCreate,
-                      icon: const Icon(Icons.add_rounded),
-                      label: Text(appText(context, 'Create new spending')),
+                  if (onSpendingCreate != null) ...[
+                    const SizedBox(height: 2),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilledButton.icon(
+                        onPressed: onSpendingCreate,
+                        icon: const Icon(Icons.add_rounded),
+                        label: Text(appText(context, 'Create new spending')),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -519,9 +538,9 @@ class _BudgetCategoryAccordion extends StatelessWidget {
 }
 
 class _EmptySpendingPanel extends StatelessWidget {
-  const _EmptySpendingPanel({required this.onCreate});
+  const _EmptySpendingPanel({this.onCreate});
 
-  final VoidCallback onCreate;
+  final VoidCallback? onCreate;
 
   @override
   Widget build(BuildContext context) {
@@ -547,7 +566,11 @@ class _EmptySpendingPanel extends StatelessWidget {
               ),
             ),
           ),
-          TextButton(onPressed: onCreate, child: Text(appText(context, 'Add'))),
+          if (onCreate != null)
+            TextButton(
+              onPressed: onCreate,
+              child: Text(appText(context, 'Add')),
+            ),
         ],
       ),
     );
@@ -569,8 +592,8 @@ class _BudgetSpendingCard extends StatefulWidget {
   final String sourceCurrency;
   final String displayCurrency;
   final Color color;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   @override
   State<_BudgetSpendingCard> createState() => _BudgetSpendingCardState();
@@ -581,52 +604,62 @@ class _BudgetSpendingCardState extends State<_BudgetSpendingCard> {
 
   @override
   Widget build(BuildContext context) {
+    final canEdit = widget.onEdit != null && widget.onDelete != null;
     return GestureDetector(
-      onHorizontalDragEnd: (details) {
-        final velocity = details.primaryVelocity ?? 0;
-        if (velocity < -80) {
-          setState(() => _revealed = true);
-        } else if (velocity > 80) {
-          setState(() => _revealed = false);
-        }
-      },
+      onHorizontalDragEnd: canEdit
+          ? (details) {
+              final velocity = details.primaryVelocity ?? 0;
+              if (velocity < -80) {
+                setState(() => _revealed = true);
+              } else if (velocity > 80) {
+                setState(() => _revealed = false);
+              }
+            }
+          : null,
       child: Stack(
         alignment: Alignment.centerRight,
         children: [
-          Positioned.fill(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                _SpendingActionButton(
-                  icon: Icons.edit_rounded,
-                  label: 'Edit',
-                  color: _secondary,
-                  onTap: widget.onEdit,
-                ),
-                const SizedBox(width: 8),
-                _SpendingActionButton(
-                  icon: Icons.delete_rounded,
-                  label: 'Delete',
-                  color: const Color(0xFFE5484D),
-                  onTap: widget.onDelete,
-                ),
-              ],
+          if (canEdit)
+            Positioned.fill(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  _SpendingActionButton(
+                    icon: Icons.edit_rounded,
+                    label: 'Edit',
+                    color: _secondary,
+                    onTap: widget.onEdit!,
+                  ),
+                  const SizedBox(width: 8),
+                  _SpendingActionButton(
+                    icon: Icons.delete_rounded,
+                    label: 'Delete',
+                    color: const Color(0xFFE5484D),
+                    onTap: widget.onDelete!,
+                  ),
+                ],
+              ),
             ),
-          ),
           AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic,
-            transform: Matrix4.translationValues(_revealed ? -148 : 0, 0, 0),
+            transform: Matrix4.translationValues(
+              canEdit && _revealed ? -148 : 0,
+              0,
+              0,
+            ),
             child: Material(
               color: Colors.white,
               borderRadius: BorderRadius.circular(18),
               child: InkWell(
                 borderRadius: BorderRadius.circular(18),
-                onTap: () {
-                  if (_revealed) {
-                    setState(() => _revealed = false);
-                  }
-                },
+                onTap: canEdit
+                    ? () {
+                        if (_revealed) {
+                          setState(() => _revealed = false);
+                        }
+                      }
+                    : null,
                 child: Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(

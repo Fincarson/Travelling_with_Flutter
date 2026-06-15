@@ -33,8 +33,15 @@ class GroupChatRepository {
   CollectionReference<Map<String, dynamic>> _userInvitesRef(String accountId) =>
       _userDoc(accountId).collection('chatInvites');
 
+  CollectionReference<Map<String, dynamic>> _tripMembershipsRef(
+    String accountId,
+  ) => _userDoc(accountId).collection('tripMemberships');
+
   DocumentReference<Map<String, dynamic>> _chatDoc(String chatId) =>
       _chatsRef.doc(chatId);
+
+  DocumentReference<Map<String, dynamic>> _tripDoc(String tripId) =>
+      _firestore.collection('trips').doc(tripId);
 
   Future<void> upsertPublicUser({
     required AuthenticatedAccount account,
@@ -143,6 +150,69 @@ class GroupChatRepository {
     });
   }
 
+  Future<List<GroupChatMember>> loadMembers(String chatId) async {
+    final snapshot = await _chatDoc(chatId).collection('members').get();
+    final members = snapshot.docs
+        .map(GroupChatMember.fromDoc)
+        .where((member) => member.isActive)
+        .toList();
+    members.sort(
+      (a, b) => a.displayNameSnapshot.toLowerCase().compareTo(
+        b.displayNameSnapshot.toLowerCase(),
+      ),
+    );
+    return members;
+  }
+
+  Stream<bool> watchTripMembership({
+    required String accountId,
+    required String tripId,
+  }) {
+    return _tripMembershipsRef(accountId).doc(tripId).snapshots().map((
+      snapshot,
+    ) {
+      if (!snapshot.exists) return false;
+      return snapshot.data()?['status'] == 'active';
+    });
+  }
+
+  Future<List<ChatTripSummary>> loadOwnedTrips(String accountId) async {
+    final memberships = await _tripMembershipsRef(accountId).get();
+    final ownerMemberships = memberships.docs.where(
+      (doc) =>
+          doc.data()['role'] == 'owner' && doc.data()['status'] == 'active',
+    );
+    final trips = await Future.wait(
+      ownerMemberships.map((membership) => _tripDoc(membership.id).get()),
+    );
+    final summaries = <ChatTripSummary>[];
+    for (final snapshot in trips) {
+      final data = snapshot.data();
+      if (!snapshot.exists || data == null || data['ownerId'] != accountId) {
+        continue;
+      }
+      final destination =
+          (data['destination'] as String?)?.trim() ?? 'Untitled trip';
+      final title = (data['title'] as String?)?.trim();
+      final images = ((data['images'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .where((image) => image.trim().isNotEmpty)
+          .toList();
+      summaries.add(
+        ChatTripSummary(
+          id: snapshot.id,
+          title: title == null || title.isEmpty ? destination : title,
+          destination: destination,
+          coverImageUrl: images.isEmpty ? null : images.first,
+        ),
+      );
+    }
+    summaries.sort(
+      (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+    );
+    return summaries;
+  }
+
   Stream<List<GroupChatMessage>> watchSharedContent(String chatId) {
     return _chatDoc(chatId)
         .collection('messages')
@@ -187,6 +257,9 @@ class GroupChatRepository {
       'roles': {accountId: GroupChatRole.owner.name},
       'description': '',
       'linkedTripId': null,
+      'linkedTripTitle': null,
+      'linkedTripDestination': null,
+      'linkedTripCoverImageUrl': null,
       'type': 'group',
       'lastMessageText': '',
       'createdAt': now,
@@ -536,13 +609,38 @@ class GroupChatRepository {
   Future<void> leaveChat({
     required String chatId,
     required String accountId,
+    String? newOwnerId,
   }) async {
-    await _removeActiveMember(
-      chatId: chatId,
-      actorId: accountId,
-      memberId: accountId,
-      isLeaving: true,
-    );
+    final callable = _functions.httpsCallable('leaveGroupChat');
+    await callable.call(<String, dynamic>{
+      'chatId': chatId,
+      if (newOwnerId != null) 'newOwnerId': newOwnerId,
+    });
+  }
+
+  Future<void> deleteChat({
+    required String chatId,
+    required String accountId,
+  }) async {
+    final callable = _functions.httpsCallable('deleteGroupChat');
+    await callable.call(<String, dynamic>{'chatId': chatId});
+  }
+
+  Future<void> setLinkedTrip({
+    required String chatId,
+    required String accountId,
+    String? tripId,
+  }) async {
+    final callable = _functions.httpsCallable('setGroupChatTrip');
+    await callable.call(<String, dynamic>{'chatId': chatId, 'tripId': tripId});
+  }
+
+  Future<void> joinLinkedTrip({
+    required String chatId,
+    required String accountId,
+  }) async {
+    final callable = _functions.httpsCallable('joinGroupChatTrip');
+    await callable.call(<String, dynamic>{'chatId': chatId});
   }
 
   Future<void> setMute({

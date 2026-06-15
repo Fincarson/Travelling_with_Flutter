@@ -180,7 +180,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             CurrentTripCard(
               trip: trip,
               onTap: () => widget.onOpenTrip(trip),
-              onStart: trip.status == TripStatus.ongoing
+              onStart: trip.status == TripStatus.ongoing || !trip.canEdit
                   ? null
                   : () => widget.onStartTrip(trip),
             ),

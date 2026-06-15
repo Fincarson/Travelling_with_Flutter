@@ -1,10 +1,15 @@
 part of travel_agent_app;
 
 class BookingTab extends StatelessWidget {
-  const BookingTab({required this.trip, required this.onSave, super.key});
-
+  const BookingTab({
+    required this.trip,
+    required this.onSave,
+    this.readOnly = false,
+    super.key,
+  });
   final Trip trip;
   final ValueChanged<Trip> onSave;
+  final bool readOnly;
 
   Future<void> _addBooking(BuildContext context) async {
     final title = TextEditingController();
@@ -131,29 +136,40 @@ class BookingTab extends StatelessWidget {
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
       children: [
-        PrimaryButton(
-          label: 'Add booking',
-          icon: Icons.add_rounded,
-          onPressed: () => _addBooking(context),
-        ),
-        const SizedBox(height: 16),
-        for (final booking in trip.bookings)
-          Dismissible(
-            key: ValueKey('${booking.title}-${booking.reference}'),
-            direction: DismissDirection.endToStart,
-            background: Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              alignment: Alignment.centerRight,
-              padding: const EdgeInsets.only(right: 18),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFEF2F2),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: const Icon(Icons.delete_rounded, color: Colors.red),
-            ),
-            onDismissed: (_) => _deleteBooking(context, booking),
-            child: BookingTile(booking: booking, currency: trip.currency),
+        if (!readOnly) ...[
+          PrimaryButton(
+            label: 'Add booking',
+            icon: Icons.add_rounded,
+            onPressed: () => _addBooking(context),
           ),
+          const SizedBox(height: 16),
+        ],
+        for (final booking in trip.bookings)
+          if (readOnly)
+            BookingTile(booking: booking, currency: trip.currency)
+          else
+            Dismissible(
+              key: ValueKey('${booking.title}-${booking.reference}'),
+              direction: DismissDirection.endToStart,
+              background: Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: const Icon(Icons.delete_rounded, color: Colors.red),
+              ),
+              onDismissed: (_) => onSave(
+                trip.copyWith(
+                  bookings: trip.bookings
+                      .where((candidate) => candidate != booking)
+                      .toList(),
+                ),
+              ),
+              child: BookingTile(booking: booking, currency: trip.currency),
+            ),
       ],
     );
   }

@@ -105,6 +105,114 @@ async function requireTripEditor(request, tripId) {
   return trip;
 }
 
+function activeMemberIds(data) {
+  return Array.isArray(data?.memberIds) ?
+    data.memberIds.map(String) :
+    [];
+}
+
+function roleMap(data) {
+  return data?.roles && typeof data.roles === "object" ?
+    {...data.roles} :
+    {};
+}
+
+function tripTitle(data) {
+  const destination = String(data?.destination || "Untitled trip").trim() ||
+    "Untitled trip";
+  return String(data?.title || destination).trim() || destination;
+}
+
+function tripCoverImage(data) {
+  if (!Array.isArray(data?.images)) return null;
+  const image = data.images
+      .map((value) => String(value || "").trim())
+      .find((value) => value.length > 0);
+  return image || null;
+}
+
+async function deleteReferencesInBatches(db, references) {
+  const unique = new Map();
+  for (const reference of references) {
+    unique.set(reference.path, reference);
+  }
+  const values = [...unique.values()];
+  for (let start = 0; start < values.length; start += 450) {
+    const batch = db.batch();
+    for (const reference of values.slice(start, start + 450)) {
+      batch.delete(reference);
+    }
+    await batch.commit();
+  }
+}
+
+async function deleteGroupChatTree({
+  db,
+  chatId,
+  ownerId,
+  requireSoleOwner = false,
+}) {
+  const chatRef = db.collection("chat_groups").doc(chatId);
+  const chatSnapshot = await chatRef.get();
+  if (!chatSnapshot.exists) return;
+  const chat = chatSnapshot.data() || {};
+  if (
+    String(chat.ownerId || "") !== ownerId ||
+    String(chat.roles?.[ownerId] || "") !== "owner"
+  ) {
+    throw new HttpsError(
+        "permission-denied",
+        "Only the group owner can delete this chat.",
+    );
+  }
+  if (requireSoleOwner && activeMemberIds(chat).length > 1) {
+    throw new HttpsError(
+        "failed-precondition",
+        "Choose a new group owner before leaving.",
+    );
+  }
+
+  const [members, invites, joinCodes, globalInvites] = await Promise.all([
+    chatRef.collection("members").get(),
+    chatRef.collection("invites").get(),
+    db.collection("chat_join_codes").where("chatId", "==", chatId).get(),
+    db.collection("chat_invites").where("chatId", "==", chatId).get(),
+  ]);
+  const externalReferences = [];
+  for (const member of members.docs) {
+    externalReferences.push(
+        db.collection("travel_users")
+            .doc(member.id)
+            .collection("chatMemberships")
+            .doc(chatId),
+    );
+  }
+  for (const invite of [...invites.docs, ...globalInvites.docs]) {
+    const inviteeUid = String(invite.data()?.inviteeUid || "").trim();
+    if (inviteeUid) {
+      externalReferences.push(
+          db.collection("travel_users")
+              .doc(inviteeUid)
+              .collection("chatInvites")
+              .doc(invite.id),
+      );
+    }
+  }
+  externalReferences.push(...joinCodes.docs.map((doc) => doc.ref));
+  externalReferences.push(...globalInvites.docs.map((doc) => doc.ref));
+
+  await deleteReferencesInBatches(db, externalReferences);
+  await db.recursiveDelete(chatRef);
+  await admin.storage().bucket().deleteFiles({
+    prefix: `chat_attachments/${chatId}/`,
+  }).catch((error) => {
+    logger.warn("Could not delete every group chat attachment", {
+      chatId,
+      message: error?.message,
+    });
+  });
+}
+
 function safeTravelerCount(value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return 1;
@@ -2084,6 +2192,464 @@ exports.ensureGroupChatJoinCode = onDocumentCreated(
         });
       });
     },
+);
+
+exports.setGroupChatTrip = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to attach a trip.",
+    );
+    const chatId = String(request.data?.chatId || "").trim();
+    const rawTripId = request.data?.tripId;
+    const tripId = rawTripId == null ? null : String(rawTripId).trim();
+    if (!validDocumentId(chatId) || (tripId && !validDocumentId(tripId))) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Choose a valid group and trip.",
+      );
+    }
+
+    const db = admin.firestore();
+    const chatRef = db.collection("chat_groups").doc(chatId);
+    const memberRef = chatRef.collection("members").doc(accountId);
+    await db.runTransaction(async (transaction) => {
+      const [chatSnapshot, memberSnapshot] = await Promise.all([
+        transaction.get(chatRef),
+        transaction.get(memberRef),
+      ]);
+      if (!chatSnapshot.exists) {
+        throw new HttpsError("not-found", "Group chat not found.");
+      }
+      const chat = chatSnapshot.data() || {};
+      if (
+        String(chat.ownerId || "") !== accountId ||
+        String(chat.roles?.[accountId] || "") !== "owner" ||
+        memberSnapshot.data()?.status !== "active"
+      ) {
+        throw new HttpsError(
+            "permission-denied",
+            "Only the group owner can change the attached trip.",
+        );
+      }
+
+      let linkedTripTitle = null;
+      let linkedTripDestination = null;
+      let linkedTripCoverImageUrl = null;
+      if (tripId) {
+        const tripRef = db.collection("trips").doc(tripId);
+        const tripSnapshot = await transaction.get(tripRef);
+        if (!tripSnapshot.exists) {
+          throw new HttpsError("not-found", "Trip not found.");
+        }
+        const trip = tripSnapshot.data() || {};
+        if (
+          String(trip.ownerId || "") !== accountId ||
+          String(trip.roles?.[accountId] || "") !== "owner"
+        ) {
+          throw new HttpsError(
+              "permission-denied",
+              "You can only attach a trip that you own.",
+          );
+        }
+        linkedTripTitle = tripTitle(trip);
+        linkedTripDestination =
+          String(trip.destination || "Untitled trip").trim() ||
+          "Untitled trip";
+        linkedTripCoverImageUrl = tripCoverImage(trip);
+      }
+
+      transaction.set(
+          chatRef,
+          {
+            linkedTripId: tripId,
+            linkedTripTitle,
+            linkedTripDestination,
+            linkedTripCoverImageUrl,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          {merge: true},
+      );
+    });
+    return {chatId, tripId};
+  },
+);
+
+exports.joinGroupChatTrip = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to join this trip.",
+    );
+    const chatId = String(request.data?.chatId || "").trim();
+    if (!validDocumentId(chatId)) {
+      throw new HttpsError("invalid-argument", "Choose a valid group.");
+    }
+
+    const db = admin.firestore();
+    const chatRef = db.collection("chat_groups").doc(chatId);
+    const chatMemberRef = chatRef.collection("members").doc(accountId);
+    const profileRef = db.collection("travel_users").doc(accountId);
+    return db.runTransaction(async (transaction) => {
+      const [chatSnapshot, chatMemberSnapshot, profileSnapshot] =
+        await Promise.all([
+          transaction.get(chatRef),
+          transaction.get(chatMemberRef),
+          transaction.get(profileRef),
+        ]);
+      if (!chatSnapshot.exists) {
+        throw new HttpsError("not-found", "Group chat not found.");
+      }
+      const chat = chatSnapshot.data() || {};
+      if (
+        !activeMemberIds(chat).includes(accountId) ||
+        chatMemberSnapshot.data()?.status !== "active"
+      ) {
+        throw new HttpsError(
+            "permission-denied",
+            "Join the group chat before joining its trip.",
+        );
+      }
+      const tripId = String(chat.linkedTripId || "").trim();
+      if (!validDocumentId(tripId)) {
+        throw new HttpsError(
+            "failed-precondition",
+            "This group does not have an attached trip.",
+        );
+      }
+
+      const tripRef = db.collection("trips").doc(tripId);
+      const tripMemberRef = tripRef.collection("members").doc(accountId);
+      const membershipRef = db.collection("travel_users")
+          .doc(accountId)
+          .collection("tripMemberships")
+          .doc(tripId);
+      const tripSnapshot = await transaction.get(tripRef);
+      if (!tripSnapshot.exists) {
+        throw new HttpsError("not-found", "The attached trip no longer exists.");
+      }
+      const trip = tripSnapshot.data() || {};
+      const memberIds = activeMemberIds(trip);
+      const roles = roleMap(trip);
+      const existingRole = String(roles[accountId] || "");
+      const alreadyMember = memberIds.includes(accountId);
+      const role = alreadyMember && ["owner", "editor", "viewer"]
+          .includes(existingRole) ? existingRole : "viewer";
+      const profile = profileSnapshot.data() || {};
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const destination =
+        String(trip.destination || "Untitled trip").trim() || "Untitled trip";
+      const coverImageUrl = tripCoverImage(trip);
+
+      transaction.set(
+          tripRef,
+          {
+            memberIds: alreadyMember ? memberIds : [...memberIds, accountId],
+            roles: {...roles, [accountId]: role},
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      transaction.set(
+          tripMemberRef,
+          {
+            role,
+            status: "active",
+            displayNameSnapshot: String(
+                profile.name || request.auth.token.name || "Explorer",
+            ).trim() || "Explorer",
+            photoUrlSnapshot:
+              typeof profile.photoUrl === "string" ? profile.photoUrl : null,
+            invitedBy: String(chat.ownerId || ""),
+            joinedAt: now,
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      transaction.set(
+          membershipRef,
+          {
+            tripId,
+            role,
+            status: "active",
+            titleSnapshot: tripTitle(trip),
+            destinationSnapshot: destination,
+            coverImageUrl,
+            unreadCount: 0,
+            createdAt: now,
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      return {tripId, role, alreadyMember};
+    });
+  },
+);
+
+exports.removeTripMember = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to manage trip members.",
+    );
+    const tripId = String(request.data?.tripId || "").trim();
+    const memberId = String(request.data?.memberId || "").trim();
+    if (!validDocumentId(tripId) || !validDocumentId(memberId)) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Choose a valid trip member.",
+      );
+    }
+
+    const db = admin.firestore();
+    const tripRef = db.collection("trips").doc(tripId);
+    await db.runTransaction(async (transaction) => {
+      const tripSnapshot = await transaction.get(tripRef);
+      if (!tripSnapshot.exists) {
+        throw new HttpsError("not-found", "Trip not found.");
+      }
+      const trip = tripSnapshot.data() || {};
+      if (
+        String(trip.ownerId || "") !== accountId ||
+        String(trip.roles?.[accountId] || "") !== "owner"
+      ) {
+        throw new HttpsError(
+            "permission-denied",
+            "Only the trip owner can remove members.",
+        );
+      }
+      if (memberId === accountId || String(trip.ownerId || "") === memberId) {
+        throw new HttpsError(
+            "failed-precondition",
+            "The trip owner cannot leave the trip.",
+        );
+      }
+      const memberIds = activeMemberIds(trip);
+      if (!memberIds.includes(memberId)) return;
+      const roles = roleMap(trip);
+      delete roles[memberId];
+      transaction.set(
+          tripRef,
+          {
+            memberIds: memberIds.filter((id) => id !== memberId),
+            roles,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          {merge: true},
+      );
+      transaction.delete(tripRef.collection("members").doc(memberId));
+      transaction.delete(
+          db.collection("travel_users")
+              .doc(memberId)
+              .collection("tripMemberships")
+              .doc(tripId),
+      );
+    });
+    return {tripId, memberId};
+  },
+);
+
+exports.leaveTrip = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to leave this trip.",
+    );
+    const tripId = String(request.data?.tripId || "").trim();
+    if (!validDocumentId(tripId)) {
+      throw new HttpsError("invalid-argument", "Choose a valid trip.");
+    }
+
+    const db = admin.firestore();
+    const tripRef = db.collection("trips").doc(tripId);
+    const membershipRef = db.collection("travel_users")
+        .doc(accountId)
+        .collection("tripMemberships")
+        .doc(tripId);
+    await db.runTransaction(async (transaction) => {
+      const tripSnapshot = await transaction.get(tripRef);
+      if (!tripSnapshot.exists) {
+        transaction.delete(membershipRef);
+        return;
+      }
+      const trip = tripSnapshot.data() || {};
+      if (
+        String(trip.ownerId || "") === accountId ||
+        String(trip.roles?.[accountId] || "") === "owner"
+      ) {
+        throw new HttpsError(
+            "failed-precondition",
+            "The trip owner cannot leave the trip.",
+        );
+      }
+      const memberIds = activeMemberIds(trip);
+      if (!memberIds.includes(accountId)) return;
+      const roles = roleMap(trip);
+      delete roles[accountId];
+      transaction.set(
+          tripRef,
+          {
+            memberIds: memberIds.filter((id) => id !== accountId),
+            roles,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          {merge: true},
+      );
+      transaction.delete(tripRef.collection("members").doc(accountId));
+      transaction.delete(membershipRef);
+    });
+    return {tripId};
+  },
+);
+
+exports.leaveGroupChat = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to leave this group.",
+    );
+    const chatId = String(request.data?.chatId || "").trim();
+    const newOwnerId = String(request.data?.newOwnerId || "").trim();
+    if (!validDocumentId(chatId)) {
+      throw new HttpsError("invalid-argument", "Choose a valid group.");
+    }
+
+    const db = admin.firestore();
+    const chatRef = db.collection("chat_groups").doc(chatId);
+    const chatSnapshot = await chatRef.get();
+    if (!chatSnapshot.exists) return {chatId, deleted: true};
+    const chat = chatSnapshot.data() || {};
+    const memberIds = activeMemberIds(chat);
+    if (
+      !memberIds.includes(accountId) ||
+      String(chat.roles?.[accountId] || "") === ""
+    ) {
+      throw new HttpsError(
+          "permission-denied",
+          "You are not an active member of this group.",
+      );
+    }
+    const isOwner = String(chat.ownerId || "") === accountId;
+    if (isOwner && memberIds.length === 1) {
+      await deleteGroupChatTree({
+        db,
+        chatId,
+        ownerId: accountId,
+        requireSoleOwner: true,
+      });
+      return {chatId, deleted: true};
+    }
+    if (isOwner && (!validDocumentId(newOwnerId) || newOwnerId === accountId)) {
+      throw new HttpsError(
+          "failed-precondition",
+          "Choose another member to become the group owner.",
+      );
+    }
+
+    await db.runTransaction(async (transaction) => {
+      const currentChatSnapshot = await transaction.get(chatRef);
+      if (!currentChatSnapshot.exists) return;
+      const currentChat = currentChatSnapshot.data() || {};
+      const currentMemberIds = activeMemberIds(currentChat);
+      const currentRoles = roleMap(currentChat);
+      if (!currentMemberIds.includes(accountId)) return;
+      const ownerLeaving = String(currentChat.ownerId || "") === accountId;
+      let nextOwnerMemberSnapshot = null;
+      if (ownerLeaving) {
+        const nextOwnerMemberRef = chatRef.collection("members").doc(newOwnerId);
+        nextOwnerMemberSnapshot = await transaction.get(nextOwnerMemberRef);
+        if (
+          !currentMemberIds.includes(newOwnerId) ||
+          nextOwnerMemberSnapshot.data()?.status !== "active"
+        ) {
+          throw new HttpsError(
+              "failed-precondition",
+              "Choose an active member to become the group owner.",
+          );
+        }
+      }
+
+      delete currentRoles[accountId];
+      if (ownerLeaving) currentRoles[newOwnerId] = "owner";
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      transaction.set(
+          chatRef,
+          {
+            ownerId: ownerLeaving ? newOwnerId : currentChat.ownerId,
+            memberIds: currentMemberIds.filter((id) => id !== accountId),
+            roles: currentRoles,
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      transaction.set(
+          chatRef.collection("members").doc(accountId),
+          {status: "left", updatedAt: now},
+          {merge: true},
+      );
+      transaction.set(
+          db.collection("travel_users")
+              .doc(accountId)
+              .collection("chatMemberships")
+              .doc(chatId),
+          {status: "left", updatedAt: now},
+          {merge: true},
+      );
+      if (ownerLeaving) {
+        transaction.set(
+            chatRef.collection("members").doc(newOwnerId),
+            {role: "owner", updatedAt: now},
+            {merge: true},
+        );
+        transaction.set(
+            db.collection("travel_users")
+                .doc(newOwnerId)
+                .collection("chatMemberships")
+                .doc(chatId),
+            {role: "owner", updatedAt: now},
+            {merge: true},
+        );
+      }
+    });
+    return {chatId, deleted: false};
+  },
+);
+
+exports.deleteGroupChat = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to delete this group.",
+    );
+    const chatId = String(request.data?.chatId || "").trim();
+    if (!validDocumentId(chatId)) {
+      throw new HttpsError("invalid-argument", "Choose a valid group.");
+    }
+    await deleteGroupChatTree({
+      db: admin.firestore(),
+      chatId,
+      ownerId: accountId,
+    });
+    return {chatId, deleted: true};
+  },
 );
 
 exports.getGroupChatJoinCode = onCall(

@@ -560,12 +560,10 @@ service cloud.firestore {
           request.resource.data.tripId == tripId &&
           validRole(request.resource.data.role) &&
           (
-            request.auth.uid == userId ||
             canEditTrip(tripId) ||
             canEditTripAfter(tripId)
           );
-        allow delete: if signedIn() &&
-          (request.auth.uid == userId || canEditTrip(tripId));
+        allow delete: if signedIn() && canEditTrip(tripId);
       }
 
       match /trips/{tripId} {
@@ -723,9 +721,10 @@ service cloud.firestore {
         match /messages/{messageId} {
           allow read: if canReadTrip(tripId);
           allow create: if signedIn() &&
-            canReadTrip(tripId) &&
+            canEditTrip(tripId) &&
             request.resource.data.senderId == request.auth.uid;
           allow update, delete: if signedIn() &&
+            canEditTrip(tripId) &&
             (
               isOwner(tripId) ||
               resource.data.senderId == request.auth.uid
