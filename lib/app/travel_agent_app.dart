@@ -71,6 +71,7 @@ part '../features/home/presentation/pages/home_page.dart';
 part '../features/notifications/presentation/pages/notifications_page.dart';
 part '../features/itinerary/presentation/pages/new_itinerary_page.dart';
 part '../features/itinerary/presentation/pages/itinerary_page.dart';
+part '../features/itinerary/presentation/pages/trip_settings_page.dart';
 part '../features/itinerary/presentation/pages/trips_page.dart';
 part '../features/itinerary/presentation/tabs/booking_tab.dart';
 part '../features/itinerary/presentation/tabs/budget_tab.dart';

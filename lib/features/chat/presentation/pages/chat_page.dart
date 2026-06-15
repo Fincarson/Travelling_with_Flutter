@@ -99,7 +99,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
 
     return ScreenScaffold(
-      bottomPadding: 92,
       child: ListView(
         padding: _responsivePagePadding(context, top: 12, bottom: 112),
         children: [

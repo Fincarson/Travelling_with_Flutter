@@ -78,6 +78,31 @@ class _ChecklistTabState extends State<ChecklistTab> {
     _saveChecklist(categories);
   }
 
+  void _deleteCategory(int categoryIndex) {
+    final categories = [...trip.checklist];
+    if (categoryIndex < 0 || categoryIndex >= categories.length) return;
+    final removed = categories.removeAt(categoryIndex);
+    for (final controller in _addItemControllers.values) {
+      controller.dispose();
+    }
+    _addItemControllers.clear();
+    setState(() => _editingCategoryIndex = null);
+    _saveChecklist(categories);
+    _showUndoSnackBar(
+      context,
+      message: 'Checklist category deleted',
+      undoLabel: 'Undo',
+      onUndo: () {
+        final restored = [...trip.checklist];
+        restored.insert(
+          categoryIndex.clamp(0, restored.length).toInt(),
+          removed,
+        );
+        _saveChecklist(restored);
+      },
+    );
+  }
+
   void _addItem(int categoryIndex) {
     final controller = _addItemControllers[categoryIndex];
     final text = controller?.text.trim() ?? '';
@@ -148,6 +173,7 @@ class _ChecklistTabState extends State<ChecklistTab> {
                   _renameItem(categoryIndex, itemIndex, value),
               onDeleteItem: (itemIndex) =>
                   _deleteItem(categoryIndex, itemIndex),
+              onDeleteCategory: () => _deleteCategory(categoryIndex),
               onAddItem: () => _addItem(categoryIndex),
             ),
           ),
@@ -174,6 +200,7 @@ class _ChecklistCategoryPanel extends StatelessWidget {
     required this.onToggleItem,
     required this.onRenameItem,
     required this.onDeleteItem,
+    required this.onDeleteCategory,
     required this.onAddItem,
   });
 
@@ -187,6 +214,7 @@ class _ChecklistCategoryPanel extends StatelessWidget {
   final void Function(int itemIndex, bool? value) onToggleItem;
   final void Function(int itemIndex, String value) onRenameItem;
   final ValueChanged<int> onDeleteItem;
+  final VoidCallback onDeleteCategory;
   final VoidCallback onAddItem;
 
   @override
@@ -237,6 +265,15 @@ class _ChecklistCategoryPanel extends StatelessWidget {
                     editing ? Icons.check_rounded : Icons.edit_rounded,
                   ),
                 ),
+              if (editing) ...[
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  tooltip: appText(context, 'Delete category'),
+                  onPressed: onDeleteCategory,
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  color: const Color(0xFFE5484D),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 12),
