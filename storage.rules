@@ -6,6 +6,29 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function tripPath(tripId) {
+      return /databases/(default)/documents/trips/$(tripId);
+    }
+
+    function tripExists(tripId) {
+      return firestore.exists(tripPath(tripId));
+    }
+
+    function tripData(tripId) {
+      return firestore.get(tripPath(tripId)).data;
+    }
+
+    function canReadTrip(tripId) {
+      return signedIn()
+        && tripExists(tripId)
+        && request.auth.uid in tripData(tripId).memberIds;
+    }
+
+    function canEditTrip(tripId) {
+      return canReadTrip(tripId)
+        && tripData(tripId).roles[request.auth.uid] in ['owner', 'editor'];
+    }
+
     match /user_avatars/{userId}/{fileName} {
       allow read: if request.auth != null;
       allow create, update: if request.auth != null
@@ -13,6 +36,18 @@ service firebase.storage {
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
       allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /trip_banners/{accountId}/{tripId}/{fileName} {
+      allow read: if canReadTrip(tripId);
+      allow create, update: if signedIn()
+        && request.auth.uid == accountId
+        && canEditTrip(tripId)
+        && request.resource.size <= 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if signedIn()
+        && request.auth.uid == accountId
+        && canEditTrip(tripId);
     }
 
     match /chat_attachments/{chatId}/{uploaderId}/{messageId}/{fileName} {

@@ -24,6 +24,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   final _currencyExchangeService = CurrencyExchangeService();
   final _profilePhotoService = ProfilePhotoService();
   final _chatListKey = GlobalKey<_ChatListScreenState>();
+  final _bottomNavController = ValueNotifier<_BottomNavController?>(null);
   late final _pushTokenService = PushTokenService(FirebaseFirestore.instance);
   static const _localProfilePrefix = 'travel_agent.profile.';
   static const _lastCurrencyCountryPrefix =
@@ -813,6 +814,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     _userSubscription?.cancel();
     _tripsSubscription?.cancel();
     _memoriesSubscription?.cancel();
+    _bottomNavController.dispose();
     unawaited(_pushTokenService.dispose());
     unawaited(_appNotificationService.dispose());
     for (final timer in _pendingTripDeleteTimers.values) {
@@ -832,6 +834,26 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             : TravelAgentTheme.light(),
         child: Scaffold(
           resizeToAvoidBottomInset: false,
+          floatingActionButton: _isLoading
+              ? null
+              : FloatingActionButton.small(
+                  heroTag: 'global-help',
+                  tooltip: 'App help',
+                  onPressed: () => setState(() => _helpOpen = true),
+                  child: const Icon(Icons.help_outline_rounded),
+                ),
+          bottomNavigationBar: _isLoading
+              ? null
+              : ValueListenableBuilder<_BottomNavController?>(
+                  valueListenable: _bottomNavController,
+                  builder: (context, controller, _) {
+                    if (controller == null) return const SizedBox.shrink();
+                    return _BottomNav(
+                      tab: controller.tab,
+                      onSelect: controller.onSelect,
+                    );
+                  },
+                ),
           body: SafeArea(
             bottom: false,
             child: _isLoading
@@ -846,16 +868,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
                           top: 12,
                           child: SyncBanner(message: _loadError!),
                         ),
-                      Positioned(
-                        right: 14,
-                        bottom: 94,
-                        child: FloatingActionButton.small(
-                          heroTag: 'global-help',
-                          tooltip: 'App help',
-                          onPressed: () => setState(() => _helpOpen = true),
-                          child: const Icon(Icons.help_outline_rounded),
-                        ),
-                      ),
                       if (_helpOpen ||
                           (_user.onboardingCompleted &&
                               !_user.tutorialCompleted &&
@@ -995,6 +1007,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     return TripSettingsScreen(
       key: ValueKey('trip-settings-${trip.id}'),
       trip: trip,
+      accountId: widget.account.uid,
       onBack: () => _go(_tripLocation(trip.id)),
       onSave: _updateTrip,
     );
@@ -1162,6 +1175,17 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   void _go(String path) => _router.go(path);
 
   void _push(String path) => _router.push(path);
+
+  void _setBottomNav(_BottomNavController? controller) {
+    final current = _bottomNavController.value;
+    if (current == null && controller == null) return;
+    if (current != null &&
+        controller != null &&
+        current.tab == controller.tab) {
+      return;
+    }
+    _bottomNavController.value = controller;
+  }
 
   Future<void> _openNotificationTarget(String targetPath) async {
     final path = targetPath.trim();
@@ -1624,7 +1648,6 @@ class _NoTripSelectedScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ScreenScaffold(
-      bottomPadding: 92,
       child: ListView(
         padding: _responsivePagePadding(context, top: 18, bottom: 112),
         children: [

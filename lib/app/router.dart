@@ -206,6 +206,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
 
   @override
   void dispose() {
+    widget.appState._setBottomNav(null);
     _slideController.dispose();
     super.dispose();
   }
@@ -215,57 +216,53 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     final performance = PerformanceScope.settingsOf(context);
     final title = _mainPageTitle(widget.location);
     final headerAction = _headerAction(context, widget.location);
+    _publishBottomNav();
     _slideController.duration = performance.transitionDuration;
 
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragStart: _onHorizontalDragStart,
-            onHorizontalDragUpdate: _onHorizontalDragUpdate,
-            onHorizontalDragEnd: _onHorizontalDragEnd,
-            onHorizontalDragCancel: _resetHorizontalDrag,
-            child: SlideTransition(
-              position: Tween<Offset>(begin: _slideBegin, end: Offset.zero)
-                  .animate(
-                    CurvedAnimation(
-                      parent: _slideController,
-                      curve: Curves.easeOutCubic,
-                    ),
-                  ),
-              child: Column(
-                children: [
-                  if (title != null)
-                    _MainPageHeader(
-                      title: title,
-                      action: widget.location == '/profile'
-                          ? IconButton(
-                              tooltip: appText(context, 'Settings'),
-                              onPressed: () =>
-                                  widget.appState._go('/profile/settings'),
-                              icon: const Icon(Icons.settings_rounded),
-                            )
-                          : headerAction,
-                    ),
-                  Expanded(
-                    child: widget.appState._performanceBoundary(
-                      widget.navigationShell,
-                      performance,
-                    ),
-                  ),
-                ],
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: _onHorizontalDragStart,
+      onHorizontalDragUpdate: _onHorizontalDragUpdate,
+      onHorizontalDragEnd: _onHorizontalDragEnd,
+      onHorizontalDragCancel: _resetHorizontalDrag,
+      child: SlideTransition(
+        position: Tween<Offset>(begin: _slideBegin, end: Offset.zero).animate(
+          CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
+        ),
+        child: Column(
+          children: [
+            if (title != null)
+              _MainPageHeader(
+                title: title,
+                action: widget.location == '/profile'
+                    ? IconButton(
+                        tooltip: appText(context, 'Settings'),
+                        onPressed: () =>
+                            widget.appState._go('/profile/settings'),
+                        icon: const Icon(Icons.settings_rounded),
+                      )
+                    : headerAction,
+              ),
+            Expanded(
+              child: widget.appState._performanceBoundary(
+                widget.navigationShell,
+                performance,
               ),
             ),
-          ),
+          ],
         ),
-        if (_showsBottomNav(widget.location))
-          _BottomNav(
-            tab: _tabForIndex,
-            onSelect: (tab) => _select(context, tab),
-          ),
-      ],
+      ),
     );
+  }
+
+  void _publishBottomNav() {
+    final controller = _showsBottomNav(widget.location)
+        ? _BottomNavController(tab: _tabForIndex, onSelect: _select)
+        : null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.appState._setBottomNav(controller);
+    });
   }
 
   Widget? _headerAction(BuildContext context, String location) {
@@ -324,7 +321,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     };
   }
 
-  void _select(BuildContext context, _NavTab tab) {
+  void _select(_NavTab tab) {
     if (tab == _NavTab.add) {
       widget.appState._push('/trips/new');
       return;

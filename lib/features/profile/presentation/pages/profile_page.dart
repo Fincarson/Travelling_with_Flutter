@@ -32,7 +32,6 @@ class ProfileScreen extends StatelessWidget {
         .toList();
 
     return ScreenScaffold(
-      bottomPadding: 92,
       child: ListView(
         padding: _responsivePagePadding(context, top: 22, bottom: 112),
         children: [

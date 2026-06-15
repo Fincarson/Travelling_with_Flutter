@@ -3,12 +3,14 @@ part of travel_agent_app;
 class TripSettingsScreen extends StatefulWidget {
   const TripSettingsScreen({
     required this.trip,
+    required this.accountId,
     required this.onBack,
     required this.onSave,
     super.key,
   });
 
   final Trip trip;
+  final String accountId;
   final VoidCallback onBack;
   final ValueChanged<Trip> onSave;
 
@@ -22,13 +24,14 @@ class _TripSettingsScreenState extends State<TripSettingsScreen> {
   late final TextEditingController _startDate;
   late final TextEditingController _endDate;
   late final TextEditingController _budget;
-  late final TextEditingController _currency;
+  late String _currencyCode;
   late int _travelers;
-  late TripStatus _status;
   late String? _selectedImage;
+  late String _savedDraftSignature;
+  final _bannerUploader = _TripBannerImageService();
   var _searchedImages = <String>[];
-  var _isSearchingImages = false;
   var _isSaving = false;
+  var _isUploadingBanner = false;
 
   @override
   void initState() {
@@ -38,9 +41,8 @@ class _TripSettingsScreenState extends State<TripSettingsScreen> {
     _startDate = TextEditingController(text: widget.trip.startDate);
     _endDate = TextEditingController(text: widget.trip.endDate);
     _budget = TextEditingController(text: widget.trip.budget.toString());
-    _currency = TextEditingController(text: widget.trip.currency);
+    _currencyCode = _normalizedCurrencyCode(widget.trip.currency);
     _travelers = widget.trip.numOfTravelers;
-    _status = widget.trip.status;
     _selectedImage = widget.trip.images.isEmpty
         ? null
         : widget.trip.images.first;
@@ -50,6 +52,7 @@ class _TripSettingsScreenState extends State<TripSettingsScreen> {
       existingImages: widget.trip.images,
       searchedImages: const [],
     );
+    _savedDraftSignature = _draftSignature();
   }
 
   @override
@@ -61,9 +64,8 @@ class _TripSettingsScreenState extends State<TripSettingsScreen> {
     _startDate.text = widget.trip.startDate;
     _endDate.text = widget.trip.endDate;
     _budget.text = widget.trip.budget.toString();
-    _currency.text = widget.trip.currency;
+    _currencyCode = _normalizedCurrencyCode(widget.trip.currency);
     _travelers = widget.trip.numOfTravelers;
-    _status = widget.trip.status;
     _selectedImage = widget.trip.images.isEmpty
         ? null
         : widget.trip.images.first;
@@ -73,6 +75,7 @@ class _TripSettingsScreenState extends State<TripSettingsScreen> {
       existingImages: widget.trip.images,
       searchedImages: const [],
     );
+    _savedDraftSignature = _draftSignature();
   }
 
   @override
@@ -82,7 +85,6 @@ class _TripSettingsScreenState extends State<TripSettingsScreen> {
     _startDate.dispose();
     _endDate.dispose();
     _budget.dispose();
-    _currency.dispose();
     super.dispose();
   }
 
@@ -98,26 +100,22 @@ class _TripSettingsScreenState extends State<TripSettingsScreen> {
     controller.text = _dateKey(picked);
   }
 
-  Future<void> _searchImages() async {
-    if (_isSearchingImages) return;
-    setState(() => _isSearchingImages = true);
-    final destination = _destination.text.trim().isEmpty
-        ? widget.trip.destination
-        : _destination.text.trim();
-    final images = await _searchTripBannerImages(
-      destination: destination,
-      selectedImage: _selectedImage,
-      existingImages: widget.trip.images,
-    );
-    if (!mounted) return;
-    setState(() {
-      _searchedImages = images;
-      _isSearchingImages = false;
-      _selectedImage ??= images.isEmpty ? null : images.first;
-    });
+  String _draftSignature() {
+    return [
+      _title.text.trim(),
+      _destination.text.trim(),
+      _startDate.text.trim(),
+      _endDate.text.trim(),
+      _budget.text.replaceAll(RegExp(r'\D'), ''),
+      _currencyCode,
+      _travelers,
+      _selectedImage ?? '',
+    ].join('\u001F');
   }
 
-  void _save() {
+  bool get _hasUnsavedChanges => _draftSignature() != _savedDraftSignature;
+
+  Trip _draftTrip() {
     final destination = _destination.text.trim().isEmpty
         ? widget.trip.destination
         : _destination.text.trim();
@@ -129,32 +127,183 @@ class _TripSettingsScreenState extends State<TripSettingsScreen> {
       ..._searchedImages.where((image) => image != selected),
     ].where((image) => image.trim().isNotEmpty).toSet().toList();
 
+    return widget.trip.copyWith(
+      title: title,
+      destination: destination,
+      startDate: _startDate.text.trim(),
+      endDate: _endDate.text.trim(),
+      budget: int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0,
+      currency: _currencyCode,
+      numOfTravelers: _travelers,
+      images: images.isEmpty ? _imagesForDestination(destination) : images,
+      clearDestinationPlace: destination != widget.trip.destination,
+    );
+  }
+
+  void _save({bool showNotice = true}) {
     setState(() => _isSaving = true);
-    widget.onSave(
-      widget.trip.copyWith(
-        title: title,
-        destination: destination,
-        startDate: _startDate.text.trim(),
-        endDate: _endDate.text.trim(),
-        budget: int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0,
-        currency: _currency.text.trim().isEmpty
-            ? widget.trip.currency
-            : _currency.text.trim().toUpperCase(),
-        numOfTravelers: _travelers,
-        status: _status,
-        images: images.isEmpty ? _imagesForDestination(destination) : images,
-        clearDestinationPlace: destination != widget.trip.destination,
+    widget.onSave(_draftTrip());
+    _savedDraftSignature = _draftSignature();
+    if (showNotice) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(appText(context, 'Trip settings saved')),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+    if (mounted) setState(() => _isSaving = false);
+  }
+
+  Future<void> _handleBack() async {
+    if (!_hasUnsavedChanges) {
+      widget.onBack();
+      return;
+    }
+    final action = await showDialog<_UnsavedTripSettingsAction>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(appText(dialogContext, 'Save changes?')),
+        content: Text(
+          appText(
+            dialogContext,
+            'You have unsaved trip settings. Save them before leaving?',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(appText(dialogContext, 'Cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(
+              dialogContext,
+            ).pop(_UnsavedTripSettingsAction.discard),
+            child: Text(appText(dialogContext, 'Discard')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(
+              dialogContext,
+            ).pop(_UnsavedTripSettingsAction.save),
+            child: Text(appText(dialogContext, 'Save')),
+          ),
+        ],
       ),
     );
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(appText(context, 'Trip settings saved')),
-          behavior: SnackBarBehavior.floating,
-        ),
+    if (!mounted || action == null) return;
+    if (action == _UnsavedTripSettingsAction.save) {
+      _save(showNotice: false);
+    }
+    widget.onBack();
+  }
+
+  Future<void> _showBannerSourceSheet() async {
+    final action = await _showTravelFormSheet<_BannerImageSourceAction>(
+      context: context,
+      builder: (sheetContext) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            appText(sheetContext, 'Change banner image'),
+            style: Theme.of(
+              sheetContext,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 14),
+          _BannerSourceButton(
+            icon: Icons.travel_explore_rounded,
+            title: 'Search for a banner image',
+            subtitle: 'Find travel photos based on this trip destination.',
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_BannerImageSourceAction.search),
+          ),
+          const SizedBox(height: 10),
+          _BannerSourceButton(
+            icon: Icons.upload_rounded,
+            title: 'Upload your own image',
+            subtitle: 'Choose an image from this device.',
+            onTap: () =>
+                Navigator.of(sheetContext).pop(_BannerImageSourceAction.upload),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _BannerImageSourceAction.search:
+        await _openBannerImageSearch();
+      case _BannerImageSourceAction.upload:
+        await _uploadBannerImage();
+    }
+  }
+
+  Future<void> _openBannerImageSearch() async {
+    final destination = _destination.text.trim().isEmpty
+        ? widget.trip.destination
+        : _destination.text.trim();
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      builder: (sheetContext) => _BannerImageSearchSheet(
+        initialQuery: destination,
+        selectedImage: _selectedImage,
+        existingImages: widget.trip.images,
+      ),
+    );
+    if (selected == null || !mounted) return;
+    final merged = _mergedTripSettingsImages(
+      destination: destination,
+      selectedImage: selected,
+      existingImages: widget.trip.images,
+      searchedImages: _searchedImages,
+    );
+    setState(() {
+      _selectedImage = selected;
+      _searchedImages = merged;
+    });
+  }
+
+  Future<void> _uploadBannerImage() async {
+    if (_isUploadingBanner) return;
+    setState(() => _isUploadingBanner = true);
+    try {
+      final uploaded = await _bannerUploader.pickAndUpload(
+        accountId: widget.accountId,
+        tripId: widget.trip.id,
+        imageQuality: PerformanceScope.settingsOf(context).imageQuality,
       );
-    if (mounted) setState(() => _isSaving = false);
+      if (uploaded == null || !mounted) return;
+      setState(() {
+        _selectedImage = uploaded;
+        _searchedImages = _mergedTripSettingsImages(
+          destination: _destination.text.trim().isEmpty
+              ? widget.trip.destination
+              : _destination.text.trim(),
+          selectedImage: uploaded,
+          existingImages: widget.trip.images,
+          searchedImages: _searchedImages,
+        );
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              appText(context, 'Could not update banner image: $error'),
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _isUploadingBanner = false);
+    }
   }
 
   @override
@@ -162,185 +311,196 @@ class _TripSettingsScreenState extends State<TripSettingsScreen> {
     final filterQuality = PerformanceScope.maybeSettingsOf(
       context,
     ).filterQuality;
+    final currencyScope = CurrencyScope.maybeOf(context);
+    final currencyOptions = _tripSettingsCurrencyCodes(
+      currencyScope?.currencies ?? CurrencyExchangeData.fallback.currencies,
+      _currencyCode,
+    );
 
-    return ScreenScaffold(
-      child: ListView(
-        padding: _responsivePagePadding(context, top: 18, bottom: 40),
-        children: [
-          TopBar(title: 'Trip settings', onBack: widget.onBack),
-          const SizedBox(height: 18),
-          GlassPanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: _title,
-                  decoration: InputDecoration(
-                    labelText: appText(context, 'Trip title'),
-                    prefixIcon: const Icon(Icons.badge_outlined),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) unawaited(_handleBack());
+      },
+      child: ScreenScaffold(
+        child: ListView(
+          padding: _responsivePagePadding(context, top: 18, bottom: 140),
+          children: [
+            TopBar(
+              title: 'Trip settings',
+              onBack: () => unawaited(_handleBack()),
+            ),
+            const SizedBox(height: 18),
+            GlassPanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _title,
+                    decoration: InputDecoration(
+                      labelText: appText(context, 'Trip title'),
+                      prefixIcon: const Icon(Icons.badge_outlined),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _destination,
-                  decoration: InputDecoration(
-                    labelText: appText(context, 'Destination'),
-                    prefixIcon: const Icon(Icons.place_outlined),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _destination,
+                    enabled: false,
+                    decoration: InputDecoration(
+                      labelText: appText(context, 'Destination'),
+                      prefixIcon: const Icon(Icons.place_outlined),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 560;
-                    final fields = [
-                      _DateField(
-                        controller: _startDate,
-                        label: 'Start date',
-                        onTap: () => _pickDate(_startDate),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _DateField(
+                          controller: _startDate,
+                          label: 'Start date',
+                          onTap: () => _pickDate(_startDate),
+                        ),
                       ),
-                      _DateField(
-                        controller: _endDate,
-                        label: 'End date',
-                        onTap: () => _pickDate(_endDate),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _DateField(
+                          controller: _endDate,
+                          label: 'End date',
+                          onTap: () => _pickDate(_endDate),
+                        ),
                       ),
-                    ];
-                    if (compact) {
-                      return Column(
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _TravelerStepper(
+                    travelers: _travelers,
+                    onChanged: (value) => setState(() => _travelers = value),
+                  ),
+                  const SizedBox(height: 12),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final compact = constraints.maxWidth < 560;
+                      final fields = [
+                        TextField(
+                          controller: _budget,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: appText(context, 'Budget'),
+                            prefixIcon: const Icon(
+                              Icons.account_balance_wallet_outlined,
+                            ),
+                          ),
+                        ),
+                        DropdownButtonFormField<String>(
+                          initialValue: currencyOptions.contains(_currencyCode)
+                              ? _currencyCode
+                              : currencyOptions.first,
+                          isExpanded: true,
+                          menuMaxHeight: 320,
+                          decoration: InputDecoration(
+                            labelText: appText(context, 'Currency'),
+                            prefixIcon: const Icon(Icons.payments_outlined),
+                          ),
+                          items: [
+                            for (final code in currencyOptions)
+                              DropdownMenuItem(
+                                value: code,
+                                child: Text(
+                                  code,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                          ],
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setState(() => _currencyCode = value);
+                          },
+                        ),
+                      ];
+                      if (compact) {
+                        return Column(
+                          children: [
+                            fields[0],
+                            const SizedBox(height: 12),
+                            fields[1],
+                          ],
+                        );
+                      }
+                      return Row(
                         children: [
-                          fields[0],
-                          const SizedBox(height: 12),
-                          fields[1],
+                          Expanded(child: fields[0]),
+                          const SizedBox(width: 12),
+                          Expanded(child: fields[1]),
                         ],
                       );
-                    }
-                    return Row(
-                      children: [
-                        Expanded(child: fields[0]),
-                        const SizedBox(width: 12),
-                        Expanded(child: fields[1]),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                _TravelerStepper(
-                  travelers: _travelers,
-                  onChanged: (value) => setState(() => _travelers = value),
-                ),
-                const SizedBox(height: 12),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 560;
-                    final fields = [
-                      TextField(
-                        controller: _budget,
-                        keyboardType: TextInputType.number,
-                        decoration: InputDecoration(
-                          labelText: appText(context, 'Budget'),
-                          prefixIcon: const Icon(
-                            Icons.account_balance_wallet_outlined,
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            GlassPanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          appText(context, 'Banner image'),
+                          style: const TextStyle(
+                            color: _primary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
                           ),
                         ),
                       ),
-                      TextField(
-                        controller: _currency,
-                        textCapitalization: TextCapitalization.characters,
-                        decoration: InputDecoration(
-                          labelText: appText(context, 'Currency'),
-                          prefixIcon: const Icon(Icons.payments_outlined),
-                        ),
-                      ),
-                    ];
-                    if (compact) {
-                      return Column(
-                        children: [
-                          fields[0],
-                          const SizedBox(height: 12),
-                          fields[1],
-                        ],
-                      );
-                    }
-                    return Row(
-                      children: [
-                        Expanded(child: fields[0]),
-                        const SizedBox(width: 12),
-                        Expanded(child: fields[1]),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<TripStatus>(
-                  initialValue: _status,
-                  decoration: InputDecoration(
-                    labelText: appText(context, 'Status'),
-                    prefixIcon: const Icon(Icons.flag_outlined),
+                    ],
                   ),
-                  items: [
-                    for (final status in TripStatus.values)
-                      DropdownMenuItem(
-                        value: status,
-                        child: Text(appText(context, _tripStatusLabel(status))),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) setState(() => _status = value);
-                  },
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-          GlassPanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        appText(context, 'Banner image'),
-                        style: const TextStyle(
-                          color: _primary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
+                  const SizedBox(height: 12),
+                  if (_selectedImage != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: Image.network(
+                          _selectedImage!,
+                          fit: BoxFit.cover,
+                          filterQuality: filterQuality,
+                          errorBuilder: (context, error, stackTrace) =>
+                              Container(
+                                color: const Color(0xFFF4F8FA),
+                                child: const Icon(
+                                  Icons.image_not_supported_rounded,
+                                  color: Color(0xFFACCBE0),
+                                ),
+                              ),
                         ),
                       ),
                     ),
-                    FilledButton.icon(
-                      onPressed: _isSearchingImages ? null : _searchImages,
-                      icon: _isSearchingImages
-                          ? const SizedBox.square(
-                              dimension: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.travel_explore_rounded),
-                      label: Text(
-                        appText(
-                          context,
-                          _isSearchingImages ? 'Searching...' : 'Search',
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _TripSettingsImageGrid(
-                  images: _searchedImages,
-                  selectedImage: _selectedImage,
-                  filterQuality: filterQuality,
-                  onSelect: (image) => setState(() => _selectedImage = image),
-                ),
-              ],
+                  const SizedBox(height: 12),
+                  PrimaryButton(
+                    label: _isUploadingBanner
+                        ? 'Uploading banner image'
+                        : 'Change banner image',
+                    icon: _isUploadingBanner
+                        ? Icons.hourglass_top_rounded
+                        : Icons.add_photo_alternate_rounded,
+                    onPressed: _isUploadingBanner
+                        ? null
+                        : _showBannerSourceSheet,
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          PrimaryButton(
-            label: _isSaving ? 'Saving' : 'Save changes',
-            icon: Icons.save_rounded,
-            onPressed: _isSaving ? null : _save,
-          ),
-        ],
+            const SizedBox(height: 16),
+            PrimaryButton(
+              label: _isSaving ? 'Saving' : 'Save changes',
+              icon: Icons.save_rounded,
+              onPressed: _isSaving ? null : _save,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -420,54 +580,6 @@ class _TravelerStepper extends StatelessWidget {
   }
 }
 
-class _TripSettingsImageGrid extends StatelessWidget {
-  const _TripSettingsImageGrid({
-    required this.images,
-    required this.selectedImage,
-    required this.filterQuality,
-    required this.onSelect,
-  });
-
-  final List<String> images;
-  final String? selectedImage;
-  final FilterQuality filterQuality;
-  final ValueChanged<String> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    if (images.isEmpty) return const SizedBox.shrink();
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 720
-            ? 3
-            : constraints.maxWidth >= 420
-            ? 2
-            : 1;
-        const spacing = 10.0;
-        final width =
-            (constraints.maxWidth - spacing * (columns - 1)) / columns;
-        return Wrap(
-          spacing: spacing,
-          runSpacing: spacing,
-          children: [
-            for (final image in images)
-              SizedBox(
-                width: width,
-                height: columns == 1 ? 170 : 132,
-                child: _TripSettingsImageTile(
-                  image: image,
-                  selected: image == selectedImage,
-                  filterQuality: filterQuality,
-                  onTap: () => onSelect(image),
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-}
-
 class _TripSettingsImageTile extends StatelessWidget {
   const _TripSettingsImageTile({
     required this.image,
@@ -525,6 +637,276 @@ class _TripSettingsImageTile extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _BannerSourceButton extends StatelessWidget {
+  const _BannerSourceButton({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFF8FAFC),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              IconBadge(icon: icon, size: 44),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      appText(context, title),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _primary,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      appText(context, subtitle),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _secondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: _primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BannerImageSearchSheet extends StatefulWidget {
+  const _BannerImageSearchSheet({
+    required this.initialQuery,
+    required this.selectedImage,
+    required this.existingImages,
+  });
+
+  final String initialQuery;
+  final String? selectedImage;
+  final List<String> existingImages;
+
+  @override
+  State<_BannerImageSearchSheet> createState() =>
+      _BannerImageSearchSheetState();
+}
+
+class _BannerImageSearchSheetState extends State<_BannerImageSearchSheet> {
+  late final TextEditingController _query = TextEditingController(
+    text: widget.initialQuery,
+  );
+  late List<String> _images = _mergedTripSettingsImages(
+    destination: widget.initialQuery,
+    selectedImage: widget.selectedImage,
+    existingImages: widget.existingImages,
+    searchedImages: const [],
+  );
+  var _isSearching = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _search());
+  }
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
+  }
+
+  Future<void> _search() async {
+    if (_isSearching) return;
+    final query = _query.text.trim().isEmpty
+        ? widget.initialQuery
+        : _query.text.trim();
+    setState(() => _isSearching = true);
+    final images = await _searchTripBannerImages(
+      destination: query,
+      selectedImage: widget.selectedImage,
+      existingImages: widget.existingImages,
+    );
+    if (!mounted) return;
+    setState(() {
+      _images = images;
+      _isSearching = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filterQuality = PerformanceScope.maybeSettingsOf(
+      context,
+    ).filterQuality;
+    return SizedBox(
+      height: MediaQuery.sizeOf(context).height * .86,
+      child: Column(
+        children: [
+          Container(
+            width: 42,
+            height: 4,
+            margin: const EdgeInsets.only(top: 10, bottom: 12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.outlineVariant,
+              borderRadius: BorderRadius.circular(99),
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: _responsiveHorizontalPadding(context),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _query,
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => unawaited(_search()),
+                    decoration: InputDecoration(
+                      hintText: appText(context, 'Search banner images'),
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      suffixIcon: _isSearching
+                          ? const Padding(
+                              padding: EdgeInsets.all(14),
+                              child: SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : IconButton(
+                              tooltip: appText(context, 'Search'),
+                              onPressed: () => unawaited(_search()),
+                              icon: const Icon(Icons.arrow_forward_rounded),
+                            ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: appText(context, 'Close'),
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: GridView.builder(
+              padding: EdgeInsets.fromLTRB(
+                _responsiveHorizontalPadding(context),
+                0,
+                _responsiveHorizontalPadding(context),
+                24,
+              ),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: MediaQuery.sizeOf(context).width >= 720
+                    ? 4
+                    : MediaQuery.sizeOf(context).width >= 420
+                    ? 3
+                    : 2,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                childAspectRatio: .86,
+              ),
+              itemCount: _images.length,
+              itemBuilder: (context, index) {
+                final image = _images[index];
+                return _TripSettingsImageTile(
+                  image: image,
+                  selected: image == widget.selectedImage,
+                  filterQuality: filterQuality,
+                  onTap: () => Navigator.of(context).pop(image),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TripBannerImageService {
+  _TripBannerImageService({ImagePicker? picker, FirebaseStorage? storage})
+    : _picker = picker ?? ImagePicker(),
+      _storage = storage ?? FirebaseStorage.instance;
+
+  static const _maximumUploadBytes = 8 * 1024 * 1024;
+
+  final ImagePicker _picker;
+  final FirebaseStorage _storage;
+
+  Future<String?> pickAndUpload({
+    required String accountId,
+    required String tripId,
+    required ImageQualityPreference imageQuality,
+  }) async {
+    final settings = switch (imageQuality) {
+      ImageQualityPreference.high => (quality: 90, maximumDimension: 2200.0),
+      ImageQualityPreference.balanced => (
+        quality: 76,
+        maximumDimension: 1600.0,
+      ),
+      ImageQualityPreference.low => (quality: 58, maximumDimension: 1000.0),
+    };
+    final image = await _picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: settings.quality,
+      maxWidth: settings.maximumDimension,
+      maxHeight: settings.maximumDimension,
+      requestFullMetadata: false,
+    );
+    if (image == null) return null;
+
+    final bytes = await image.readAsBytes();
+    if (bytes.length > _maximumUploadBytes) {
+      throw StateError('The selected image must be smaller than 8 MB.');
+    }
+
+    final contentType =
+        image.mimeType ?? _tripBannerContentTypeForName(image.name);
+    final reference = _storage.ref('trip_banners/$accountId/$tripId/banner');
+    await reference.putData(
+      bytes,
+      SettableMetadata(
+        contentType: contentType,
+        cacheControl: 'public,max-age=3600',
+      ),
+    );
+    final url = await reference.getDownloadURL();
+    final separator = url.contains('?') ? '&' : '?';
+    return '$url${separator}v=${DateTime.now().millisecondsSinceEpoch}';
   }
 }
 
@@ -593,6 +975,40 @@ Future<List<String>> _searchTripBannerImages({
     return fallback;
   }
 }
+
+List<String> _tripSettingsCurrencyCodes(
+  List<CurrencyInfo> currencies,
+  String selected,
+) {
+  final seen = <String>{};
+  return [
+        selected,
+        AppCurrency.fallbackCurrencyCode,
+        ...currencies.map((currency) => currency.code),
+      ]
+      .map(_normalizedCurrencyCode)
+      .where((code) => code.isNotEmpty && seen.add(code))
+      .toList();
+}
+
+String _normalizedCurrencyCode(String value) {
+  final code = value.trim().toUpperCase();
+  return code.isEmpty ? AppCurrency.fallbackCurrencyCode : code;
+}
+
+String _tripBannerContentTypeForName(String name) {
+  final normalized = name.toLowerCase();
+  if (normalized.endsWith('.png')) return 'image/png';
+  if (normalized.endsWith('.webp')) return 'image/webp';
+  if (normalized.endsWith('.heic') || normalized.endsWith('.heif')) {
+    return 'image/heic';
+  }
+  return 'image/jpeg';
+}
+
+enum _BannerImageSourceAction { search, upload }
+
+enum _UnsavedTripSettingsAction { save, discard }
 
 bool _isTripSettingsImageUrl(String? value) {
   if (value == null || value.trim().isEmpty) return false;
@@ -688,12 +1104,4 @@ void _showUndoSnackBar(
         ),
       ),
     );
-}
-
-String _tripStatusLabel(TripStatus status) {
-  return switch (status) {
-    TripStatus.upcoming => 'Upcoming',
-    TripStatus.ongoing => 'Ongoing',
-    TripStatus.past => 'Past',
-  };
 }

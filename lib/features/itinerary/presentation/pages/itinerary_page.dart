@@ -96,7 +96,6 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
     final selectedIndex = _selectedSectionIndex.clamp(0, sections.length - 1);
 
     return ScreenScaffold(
-      bottomPadding: 92,
       child: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           _TripDetailSliverAppBar(
