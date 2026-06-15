@@ -52,6 +52,8 @@ void main() {
         .first;
     await tester.drag(scrollable, const Offset(0, -160));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(details);
+    await tester.pumpAndSettle();
     await tester.tap(details);
     await tester.pump(const Duration(milliseconds: 50));
 

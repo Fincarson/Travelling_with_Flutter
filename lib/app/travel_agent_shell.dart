@@ -763,9 +763,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text(
-              appText(context, 'Could not save trip: $error'),
-            ),
+            content: Text(appText(context, 'Could not save trip: $error')),
           ),
         );
       return false;
@@ -1183,6 +1181,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       onOpenPerformance: () => _go('/profile/performance'),
       archivedItemCount: _tripMemories.length + _archivedNotificationIds.length,
       onOpenArchived: () => context.go('/profile/archived'),
+      onShowTutorial: () => setState(() => _helpOpen = true),
     );
   }
 
