@@ -477,6 +477,12 @@ bool _messageNeedsLocation(String message) {
       text.contains('current location');
 }
 
+bool _isInvalidAiProviderKeyError(Object error) {
+  final text = error.toString().toLowerCase();
+  return text.contains('ai_provider_key_invalid') ||
+      text.contains('configured openai key is invalid or revoked');
+}
+
 class GeneratedTripPlan {
   const GeneratedTripPlan({
     required this.items,

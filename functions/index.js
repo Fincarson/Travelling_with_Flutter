@@ -1561,14 +1561,6 @@ exports.chatWithAssistant = onCall(
       publicMessage: "AI chat is unavailable.",
     });
 
-    if (!response.ok) {
-      logger.error("OpenAI chat failed", {
-        status: response.status,
-        messageLength: message.length,
-      });
-      throw new HttpsError("unavailable", "AI chat is unavailable.");
-    }
-
     const body = await response.json();
     const reply = outputText(body).trim();
     if (!reply) {
@@ -2972,15 +2964,6 @@ async function createStructuredResponse({
     timeoutMs,
   });
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    logger.error(logContext, {
-      status: response.status,
-      detail: detail.slice(0, 500),
-    });
-    throw new HttpsError("unavailable", publicMessage);
-  }
-
   const body = await response.json();
   return decodeJsonObject(outputText(body));
 }
@@ -3001,7 +2984,7 @@ async function fetchOpenAiResponses({
   }
 
   try {
-    return await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
@@ -3010,7 +2993,15 @@ async function fetchOpenAiResponses({
       signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify(payload),
     });
+    if (!response.ok) {
+      await throwOpenAiResponseError(response, {
+        logContext,
+        publicMessage,
+      });
+    }
+    return response;
   } catch (error) {
+    if (error instanceof HttpsError) throw error;
     const timedOut = error?.name === "AbortError" ||
       error?.name === "TimeoutError";
     logger.error(logContext, {
@@ -3022,6 +3013,41 @@ async function fetchOpenAiResponses({
       publicMessage,
     );
   }
+}
+
+async function throwOpenAiResponseError(
+  response,
+  {logContext, publicMessage},
+) {
+  const detail = await response.text().catch(() => "");
+  let providerCode = "";
+  let providerType = "";
+  try {
+    const parsed = JSON.parse(detail);
+    providerCode = String(parsed?.error?.code ?? "");
+    providerType = String(parsed?.error?.type ?? "");
+  } catch {
+    // Keep malformed provider responses out of user-facing errors.
+  }
+  logger.error(logContext, {
+    status: response.status,
+    providerCode,
+    providerType,
+  });
+
+  if (response.status === 401 || providerCode === "invalid_api_key") {
+    throw new HttpsError(
+        "failed-precondition",
+        "AI_PROVIDER_KEY_INVALID: The configured OpenAI key is invalid or revoked.",
+    );
+  }
+  if (response.status === 429) {
+    throw new HttpsError(
+        "resource-exhausted",
+        "The AI provider is rate limited. Please try again shortly.",
+    );
+  }
+  throw new HttpsError("unavailable", publicMessage);
 }
 
 function outputText(responseBody) {

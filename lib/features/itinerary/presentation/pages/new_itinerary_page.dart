@@ -1268,6 +1268,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
   String _friendlyAiError(Object error) {
     final text = error.toString();
+    if (_isInvalidAiProviderKeyError(error)) {
+      return 'The server OpenAI key is invalid or revoked. Replace the OPENAI_API_KEY Firebase secret, then redeploy the AI Functions.';
+    }
     if (error is TimeoutException || text.contains('TimeoutException')) {
       return 'AI took longer than expected to answer. Please try generating again.';
     }
