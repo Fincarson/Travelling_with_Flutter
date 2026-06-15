@@ -902,6 +902,68 @@ exports.chatWithAssistant = onCall(
   },
 );
 
+exports.recommendDestinations = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Sign in to get travel recommendations.",
+      );
+    }
+    const data = request.data ?? {};
+    const candidates = Array.isArray(data.candidates) ?
+      data.candidates.map((value) => String(value).trim()).filter(Boolean) :
+      [];
+    if (!candidates.length || candidates.length > 30) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Destination candidates are required.",
+      );
+    }
+
+    return createStructuredResponse({
+      instructions: [
+        "Rank up to five travel destinations from the supplied candidate list.",
+        "Use interests, saved places, travel pace, and prior ratings.",
+        "A low rating or negative feedback should reduce similar suggestions.",
+        "Never invent a destination and return destination names exactly as supplied.",
+      ].join(" "),
+      input: {
+        interests: data.interests ?? [],
+        travelPace: String(data.travelPace ?? "Balanced"),
+        favoritePlaces: data.favoritePlaces ?? [],
+        tripRatings: data.tripRatings ?? [],
+        candidates,
+      },
+      format: {
+        type: "json_schema",
+        name: "destination_recommendations",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            destinations: {
+              type: "array",
+              maxItems: 5,
+              items: {
+                type: "string",
+                enum: candidates,
+              },
+            },
+          },
+          required: ["destinations"],
+        },
+      },
+      logContext: "OpenAI destination recommendations failed",
+      publicMessage: "AI recommendations are unavailable.",
+    });
+  },
+);
+
 exports.generateTripPlan = onCall(
   {
     region: "us-central1",

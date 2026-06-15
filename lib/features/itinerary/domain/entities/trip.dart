@@ -251,6 +251,8 @@ class TripMemory {
     required this.missedStops,
     required this.imageUrls,
     required this.archivedAtKey,
+    this.rating,
+    this.feedback = '',
   });
 
   final String id;
@@ -266,6 +268,28 @@ class TripMemory {
   final List<String> missedStops;
   final List<String> imageUrls;
   final String archivedAtKey;
+  final int? rating;
+  final String feedback;
+
+  TripMemory copyWith({int? rating, String? feedback}) {
+    return TripMemory(
+      id: id,
+      title: title,
+      destination: destination,
+      startDate: startDate,
+      endDate: endDate,
+      currency: currency,
+      plannedBudget: plannedBudget,
+      actualSpend: actualSpend,
+      summary: summary,
+      favoritePlaces: favoritePlaces,
+      missedStops: missedStops,
+      imageUrls: imageUrls,
+      archivedAtKey: archivedAtKey,
+      rating: rating ?? this.rating,
+      feedback: feedback ?? this.feedback,
+    );
+  }
 
   Map<String, dynamic> toMap() => {
     'title': title,
@@ -280,6 +304,8 @@ class TripMemory {
     'missedStops': missedStops,
     'imageUrls': imageUrls,
     'archivedAtKey': archivedAtKey,
+    if (rating != null) 'rating': rating,
+    if (feedback.isNotEmpty) 'feedback': feedback,
     'archivedAt': FieldValue.serverTimestamp(),
   };
 
@@ -318,6 +344,8 @@ class TripMemory {
       missedStops: missedStops.take(4).toList(growable: false),
       imageUrls: trip.images.take(3).toList(growable: false),
       archivedAtKey: _dateKey(archivedAt),
+      rating: null,
+      feedback: '',
     );
   }
 
@@ -343,6 +371,8 @@ class TripMemory {
           .whereType<String>()
           .toList(),
       archivedAtKey: (map['archivedAtKey'] as String?) ?? '',
+      rating: (map['rating'] as num?)?.toInt(),
+      feedback: (map['feedback'] as String?) ?? '',
     );
   }
 }

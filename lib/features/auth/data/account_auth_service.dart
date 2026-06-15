@@ -223,6 +223,10 @@ class AccountAuthService {
     required String name,
     required String email,
     required String password,
+    List<String> interests = const [],
+    String? ageRange,
+    String travelPace = 'Balanced',
+    String? termsVersion,
   }) async {
     final credential = await _auth.createUserWithEmailAndPassword(
       email: email.trim(),
@@ -234,9 +238,13 @@ class AccountAuthService {
       await credential.user?.updateDisplayName(trimmedName);
       await credential.user?.reload();
     }
-    await _markOnboardingPendingForNewAccount(
+    await _saveNewAccountProfile(
       credential,
       displayName: trimmedName,
+      interests: interests,
+      ageRange: ageRange,
+      travelPace: travelPace,
+      termsVersion: termsVersion,
     );
   }
 
@@ -629,9 +637,13 @@ class AccountAuthService {
     throw AccountAuthException(message);
   }
 
-  static Future<void> _markOnboardingPendingForNewAccount(
+  static Future<void> _saveNewAccountProfile(
     UserCredential credential, {
     String? displayName,
+    List<String> interests = const [],
+    String? ageRange,
+    String travelPace = 'Balanced',
+    String? termsVersion,
   }) async {
     if (credential.additionalUserInfo?.isNewUser != true) return;
     final user = credential.user ?? FirebaseAuth.instance.currentUser;
@@ -641,20 +653,44 @@ class AccountAuthService {
     final trimmedName = (displayName ?? user?.displayName ?? '').trim();
     final trimmedEmail = (user?.email ?? '').trim();
     final photoUrl = user?.photoURL;
+    final completedOnboarding =
+        termsVersion != null && termsVersion.trim().isNotEmpty;
     final profileData = <String, dynamic>{
-      'settings': {'onboardingRequired': true, 'onboardingCompleted': false},
+      'interests': interests,
+      'onboarding': {'ageRange': ageRange, 'travelPace': travelPace},
+      'settings': {
+        'onboardingRequired': !completedOnboarding,
+        'onboardingCompleted': completedOnboarding,
+      },
       'updatedAt': FieldValue.serverTimestamp(),
     };
+    if (completedOnboarding) {
+      profileData['legalConsent'] = {
+        'termsVersion': termsVersion.trim(),
+        'acceptedAt': FieldValue.serverTimestamp(),
+        'draftTerms': true,
+      };
+    }
     if (trimmedName.isNotEmpty) profileData['name'] = trimmedName;
     if (trimmedEmail.isNotEmpty) profileData['email'] = trimmedEmail;
     if (photoUrl != null && photoUrl.trim().isNotEmpty) {
       profileData['photoUrl'] = photoUrl.trim();
     }
 
-    await FirebaseFirestore.instance
-        .collection('travel_users')
-        .doc(uid)
-        .set(profileData, SetOptions(merge: true));
+    final firestore = FirebaseFirestore.instance;
+    final batch = firestore.batch();
+    batch.set(
+      firestore.collection('travel_users').doc(uid),
+      profileData,
+      SetOptions(merge: true),
+    );
+    batch.set(firestore.collection('public_users').doc(uid), {
+      'displayName': trimmedName.isEmpty ? 'Explorer' : trimmedName,
+      'emailLower': trimmedEmail.toLowerCase(),
+      'photoUrl': photoUrl,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    await batch.commit();
   }
 }
 

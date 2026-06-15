@@ -14,6 +14,99 @@ class TravelAssistantService {
   final FirebaseFunctions _functions;
   final _deviceContext = AppDeviceContextService();
 
+  Future<List<String>> recommendDestinationNames({
+    required UserProfile user,
+    required List<TripMemory> memories,
+    required List<Destination> candidates,
+  }) async {
+    final candidateNames = candidates
+        .map((destination) => destination.name)
+        .toList(growable: false);
+    if (candidateNames.isEmpty) return const [];
+    final ratings = memories
+        .where((memory) => memory.rating != null)
+        .map(
+          (memory) => {
+            'destination': memory.destination,
+            'rating': memory.rating,
+            'feedback': memory.feedback,
+          },
+        )
+        .toList(growable: false);
+    final input = {
+      'interests': user.interests,
+      'travelPace': user.travelPace,
+      'favoritePlaces': user.favoritePlaces
+          .map((place) => place.name)
+          .toList(growable: false),
+      'tripRatings': ratings,
+      'candidates': candidateNames,
+    };
+
+    Map<String, dynamic> data;
+    if (!LocalApiKeys.hasOpenAiApiKey) {
+      final callable = _functions.httpsCallable('recommendDestinations');
+      final response = await callable
+          .call<Map<String, dynamic>>(input)
+          .timeout(_chatTimeout);
+      data = response.data;
+    } else {
+      final response = await http
+          .post(
+            Uri.https('api.openai.com', '/v1/responses'),
+            headers: {
+              'Authorization': 'Bearer ${LocalApiKeys.openAiApiKey}',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'model': 'gpt-5.5',
+              'instructions':
+                  'Rank up to five travel destinations from the supplied candidate list. '
+                  'Use interests, favorites, travel pace, and prior trip ratings. '
+                  'Return strict JSON only and never invent a destination.',
+              'input': jsonEncode(input),
+              'store': false,
+              'reasoning': {'effort': 'low'},
+              'text': {
+                'verbosity': 'low',
+                'format': {
+                  'type': 'json_schema',
+                  'name': 'destination_recommendations',
+                  'strict': true,
+                  'schema': {
+                    'type': 'object',
+                    'additionalProperties': false,
+                    'properties': {
+                      'destinations': {
+                        'type': 'array',
+                        'maxItems': 5,
+                        'items': {'type': 'string'},
+                      },
+                    },
+                    'required': ['destinations'],
+                  },
+                },
+              },
+            }),
+          )
+          .timeout(_chatTimeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('AI recommendations are unavailable.');
+      }
+      data = _decodeJsonObject(
+        _responseOutputText(jsonDecode(response.body) as Map<String, dynamic>),
+      );
+    }
+
+    final allowed = candidateNames.toSet();
+    return ((data['destinations'] as List<dynamic>?) ?? const [])
+        .whereType<String>()
+        .where(allowed.contains)
+        .toSet()
+        .take(5)
+        .toList(growable: false);
+  }
+
   Future<String> sendMessage(String message) async {
     final trimmed = message.trim();
     if (trimmed.isEmpty) return '';

@@ -86,7 +86,7 @@ class _MyAppState extends State<MyApp> {
                       localizationsDelegates:
                           GlobalMaterialLocalizations.delegates,
                       supportedLocales: appSupportedLocales,
-                      home: widget.home ?? AccountGate(),
+                      home: widget.home ?? const AccountGate(),
                       builder: (context, child) {
                         final mediaQuery = MediaQuery.of(context);
                         final content = MediaQuery(
