@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../core/localization/app_text.dart';
+import '../../../../core/localization/app_localizations_extension.dart';
 import '../../../../shared/widgets/page_placeholder.dart';
 
 class SearchPage extends StatelessWidget {
@@ -8,6 +8,6 @@ class SearchPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PagePlaceholder(title: appText(context, 'Search page'));
+    return PagePlaceholder(title: context.l10n.searchPage);
   }
 }

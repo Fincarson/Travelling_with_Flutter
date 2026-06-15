@@ -118,7 +118,7 @@ class BookingTab extends StatelessWidget {
                     .toList(),
               ),
             ),
-            child: BookingTile(booking: booking, currency: trip.currency),
+            child: BookingTile(booking: booking),
           ),
       ],
     );

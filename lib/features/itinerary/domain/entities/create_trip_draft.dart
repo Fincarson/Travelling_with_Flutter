@@ -9,7 +9,7 @@ class CreateTripDraft {
     this.endDate,
     this.budget,
     this.currency,
-    this.numOfTravelers,
+    this.groupType,
     this.preferences = const [],
   });
 
@@ -18,7 +18,7 @@ class CreateTripDraft {
   final DateTime? endDate;
   final String? budget;
   final String? currency;
-  final int? numOfTravelers;
+  final String? groupType;
   final List<String> preferences;
 
   CreateTripDraft copyWith({
@@ -27,7 +27,7 @@ class CreateTripDraft {
     DateTime? endDate,
     String? budget,
     String? currency,
-    int? numOfTravelers,
+    String? groupType,
     List<String>? preferences,
   }) {
     return CreateTripDraft(
@@ -36,7 +36,7 @@ class CreateTripDraft {
       endDate: endDate ?? this.endDate,
       budget: budget ?? this.budget,
       currency: currency ?? this.currency,
-      numOfTravelers: numOfTravelers ?? this.numOfTravelers,
+      groupType: groupType ?? this.groupType,
       preferences: preferences ?? this.preferences,
     );
   }
@@ -47,7 +47,7 @@ class CreateTripDraft {
     'endDate': endDate == null ? null : _dateKey(endDate!),
     'budget': budget,
     'currency': currency,
-    'numOfTravelers': numOfTravelers,
+    'groupType': groupType,
     'preferences': preferences,
   };
 
@@ -63,10 +63,7 @@ class CreateTripDraft {
       endDate: _parseIsoDate(map['endDate']) ?? fallback.endDate,
       budget: _nonEmptyString(map['budget']) ?? fallback.budget,
       currency: _normalCurrencyCode(map['currency']) ?? fallback.currency,
-      numOfTravelers:
-          _normalTravelerCount(map['numOfTravelers']) ??
-          _legacyTravelerCountFromGroupType(map['groupType']) ??
-          fallback.numOfTravelers,
+      groupType: _normalGroupType(map['groupType']) ?? fallback.groupType,
       preferences: ((map['preferences'] as List<dynamic>?) ?? const [])
           .whereType<String>()
           .where((item) => item.trim().isNotEmpty)
@@ -208,7 +205,6 @@ String? _normalCurrencyCode(Object? value) {
   if (text == 'usd' || text == 'dollar' || text == 'dollars') return 'USD';
   if (text == 'jpy' || text == 'yen') return 'JPY';
   if (text == 'eur' || text == 'euro' || text == 'euros') return 'EUR';
-  if (RegExp(r'^[a-z]{3}$').hasMatch(text)) return text.toUpperCase();
   return null;
 }
 
@@ -229,22 +225,12 @@ DateTime? _parseIsoDate(Object? value) {
   return DateTime.tryParse(value.trim());
 }
 
-int? _normalTravelerCount(Object? value) {
-  if (value is num) return value.toInt().clamp(1, 99).toInt();
-  final text = _nonEmptyString(value);
-  if (text == null) return null;
-  final match = RegExp(r'\d+').firstMatch(text);
-  final count = int.tryParse(match?.group(0) ?? '');
-  if (count == null) return null;
-  return count.clamp(1, 99).toInt();
-}
-
-int? _legacyTravelerCountFromGroupType(Object? value) {
+String? _normalGroupType(Object? value) {
   final text = _nonEmptyString(value)?.toLowerCase();
   if (text == null) return null;
-  if (text.contains('solo')) return 1;
-  if (text.contains('family')) return 4;
-  if (text.contains('tour')) return 12;
-  if (text.contains('friend')) return 2;
+  if (text.contains('solo')) return 'Solo';
+  if (text.contains('family')) return 'Family';
+  if (text.contains('tour')) return 'Tour';
+  if (text.contains('friend')) return 'Friends';
   return null;
 }

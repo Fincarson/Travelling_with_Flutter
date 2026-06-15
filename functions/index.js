@@ -3,26 +3,14 @@
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const {onDocumentCreated} = require("firebase-functions/v2/firestore");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
-const {
-  onDocumentCreated,
-  onDocumentWritten,
-} = require("firebase-functions/v2/firestore");
-const {TranslationServiceClient} = require("@google-cloud/translate").v3;
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
-const {randomInt} = require("crypto");
 
 admin.initializeApp();
 
 const openAiChatModel = "gpt-5.4-mini";
 const openAiItineraryModel = "gpt-5.5";
 const openAiTimeoutMs = 30000;
-const translationClient = new TranslationServiceClient();
-const currencyRatesCacheLifetimeMs = 24 * 60 * 60 * 1000;
-const currencyRatesDocument = admin
-    .firestore()
-    .collection("app_config")
-    .doc("currencyRates");
 
 function geoapifyApiKey() {
   return String(process.env.GEOAPIFY_API_KEY ?? "").trim();
@@ -30,12 +18,6 @@ function geoapifyApiKey() {
 
 function openAiApiKey() {
   return String(process.env.OPENAI_API_KEY ?? "").trim();
-}
-
-function safeTravelerCount(value) {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) return 1;
-  return Math.min(99, Math.max(1, parsed));
 }
 
 const travelAssistantInstructions = [
@@ -54,13 +36,13 @@ const tripPlanInstructions = [
   "For each distinctive tag, include at least one matching schedule item, venue area, event search, food stop, accessibility choice, or practical constraint.",
   "For example, anime should trigger anime convention/event-calendar research when dates match, or anime districts, stores, themed cafes, arcades, museums, or pop-culture stops when no convention is current.",
   "Halal food should trigger halal restaurants or Muslim-friendly food areas. Wheelchair access should trigger accessible transit and step-free venues.",
-  "Keep activities suitable for the destination, dates, budget, number of travelers, and tags.",
+  "Keep activities suitable for the destination, dates, budget, group, and tags.",
   "Use appContext.localDate and appContext.timeZoneOffset as today's context.",
   "Use startLocation as the trip origin when provided. If startLocation is missing, use appContext.location when available.",
   "If startLocation has an address, use that address as the origin reference; do not show raw coordinates in user-facing itinerary text.",
   "Use web search to identify the nearest practical station, bus stop, airport, ferry terminal, HSR/rail station, or transit hub from the origin address before recommending transport to the destination.",
   "Distribute activities across every date in the trip. Do not leave middle or later days empty.",
-  "For trips of 3 or more days, include at least 2 useful schedule items per day and 3 on full sightseeing days.",
+  "For trips of 3 or more days, include at least 4 useful schedule items on every full sightseeing day; do not make later days thinner or more generic than earlier days.",
   "Day 1 must start with realistic transportation from the trip origin to the destination before destination activities.",
   "The final trip day must include realistic return transportation home after destination activities.",
   "Every day must include realistic place-to-place movement between separated stops, such as walk, metro, taxi, train, airport transfer, or buffer time before the next venue.",
@@ -86,12 +68,18 @@ const createTripInstructions = [
   "Ask for exactly one missing important field at a time.",
   "When useful, create a tappable widget with 2 to 4 options.",
   "Widget option values must be short user messages the app can send back.",
-  "When asking for dates, include a 'Pick exact dates' option with value '__pick_dates__'.",
+  "When dates are missing and the user has given a destination or trip length, choose smart date range options instead of fixed offsets.",
+  "For smart date range options, consider appContext location/timezone, likely origin country public holidays or long weekends, destination seasonality, distance/travel friction, weekends, and how soon booking is practical.",
+  "Use web search when needed to check current public holidays, school breaks, destination events, weather seasons, or closures.",
+  "When asking for dates, include 2 or 3 smart date range options with values as exact ISO ranges like '2026-07-02 to 2026-07-06', plus a 'Pick exact dates' option with value '__pick_dates__'.",
   "Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset as the source of truth for today, tomorrow, next weekend, and relative dates.",
-  "Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.",
-  "Required final fields: destination, startDate, endDate, budget, numOfTravelers.",
-  "Dates must be ISO yyyy-MM-dd. numOfTravelers must be an integer from 1 to 99.",
-  "If the user names a currency, set currency to its three-letter ISO 4217 code.",
+  "Use appContext.location as current-origin context for timing suggestions when available, especially for holidays in the user location country.",
+  "Required final fields: destination, startDate, endDate, budget, groupType.",
+  "Budget must be a plain number string in the selected currency, not a tier label such as mid-range or luxury.",
+  "Preserve currentDraft.currency unless the latest user message explicitly names another currency.",
+  "If the user gives an amount without a currency, interpret it in currentDraft.currency. Treat shorthand like '50K' as 50000.",
+  "Dates must be ISO yyyy-MM-dd. groupType must be Solo, Friends, Family, or Tour.",
+  "If the user names a currency, set currency to USD, TWD, IDR, JPY, or EUR.",
 ].join(" ");
 
 function aiLanguageName(profileLanguage, outputLanguage) {
@@ -148,7 +136,7 @@ const tripPlanFormat = {
       items: {
         type: "array",
         minItems: 3,
-        maxItems: 24,
+        maxItems: 60,
         items: {
           type: "object",
           additionalProperties: false,
@@ -254,7 +242,7 @@ const createTripReplyFormat = {
           endDate: {type: ["string", "null"]},
           budget: {type: ["string", "null"]},
           currency: {type: ["string", "null"]},
-          numOfTravelers: {type: ["integer", "null"]},
+          groupType: {type: ["string", "null"]},
           preferences: {
             type: "array",
             items: {type: "string"},
@@ -266,7 +254,7 @@ const createTripReplyFormat = {
           "endDate",
           "budget",
           "currency",
-          "numOfTravelers",
+          "groupType",
           "preferences",
         ],
       },
@@ -277,7 +265,7 @@ const createTripReplyFormat = {
           title: {type: "string"},
           options: {
             type: "array",
-            minItems: 2,
+            minItems: 1,
             maxItems: 4,
             items: {
               type: "object",
@@ -333,242 +321,98 @@ const scheduleStopFormat = {
   },
 };
 
-exports.translateUiStrings = onCall(
-  {
-    region: "us-central1",
-    timeoutSeconds: 60,
+const dayPlanEditFormat = {
+  type: "json_schema",
+  name: "day_plan_edit",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      feasible: {type: "boolean"},
+      warning: {type: "string"},
+      items: {
+        type: "array",
+        maxItems: 8,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            day: {type: "integer"},
+            time: {type: "string"},
+            activity: {type: "string"},
+            type: {
+              type: "string",
+              enum: [
+                "place",
+                "food",
+                "restaurant",
+                "walk",
+                "museum",
+                "beach",
+                "shopping",
+                "train",
+                "flight",
+                "hotel",
+                "cafe",
+                "hiking",
+                "temple",
+              ],
+            },
+            cost: {type: "integer"},
+          },
+          required: ["day", "time", "activity", "type", "cost"],
+        },
+      },
+    },
+    required: ["feasible", "warning", "items"],
   },
-  async (request) => {
-    if (!request.auth) {
-      throw new HttpsError(
-        "unauthenticated",
-        "Sign in to translate the app interface.",
-      );
-    }
+};
 
-    const targetCode = String(request.data?.targetCode ?? "").trim();
-    const targetLanguage = String(request.data?.targetLanguage ?? "")
-      .trim()
-      .replace(/[^\p{L}\p{M} ()-]/gu, "")
-      .slice(0, 80);
-    const strings = Array.isArray(request.data?.strings) ?
-      request.data.strings :
-      [];
-
-    if (!/^[A-Za-z_]{2,16}$/.test(targetCode) || !targetLanguage) {
-      throw new HttpsError(
-        "invalid-argument",
-        "Choose a supported target language.",
-      );
-    }
-    if (
-      strings.length < 1 ||
-      strings.length > 40 ||
-      strings.some((value) =>
-        typeof value !== "string" ||
-        value.length < 1 ||
-        value.length > 500
-      )
-    ) {
-      throw new HttpsError(
-        "invalid-argument",
-        "Translation requests must contain 1 to 40 short strings.",
-      );
-    }
-
-    if (targetCode === "en") {
-      return {translations: strings};
-    }
-
-    const projectId =
-      process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT;
-    if (!projectId) {
-      logger.error("translateUiStrings has no Firebase project ID");
-      throw new HttpsError(
-        "unavailable",
-        "Could not translate the app interface right now.",
-      );
-    }
-
-    try {
-      const [response] = await translationClient.translateText({
-        parent: `projects/${projectId}/locations/global`,
-        contents: strings,
-        mimeType: "text/plain",
-        sourceLanguageCode: "en",
-        targetLanguageCode: cloudTranslationCode(targetCode),
-      });
-      const translations = response.translations?.map((translation) =>
-        String(translation.translatedText ?? ""),
-      ) ?? [];
-      if (
-        translations.length !== strings.length ||
-        translations.some((value) => !value)
-      ) {
-        throw new Error("The translation response was incomplete.");
-      }
-      return {translations};
-    } catch (error) {
-      logger.error("translateUiStrings failed", {
-        targetCode,
-        targetLanguage,
-        error,
-      });
-      throw new HttpsError(
-        "unavailable",
-        "Could not translate the app interface right now.",
-      );
-    }
+const transportRecommendationsFormat = {
+  type: "json_schema",
+  name: "transport_recommendations",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      summary: {type: "string"},
+      options: {
+        type: "array",
+        minItems: 1,
+        maxItems: 8,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            mode: {type: "string"},
+            provider: {type: "string"},
+            route: {type: "string"},
+            duration: {type: "string"},
+            price: {type: "integer"},
+            currency: {type: "string"},
+            bookingHint: {type: "string"},
+            sourceName: {type: "string"},
+            sourceUrl: {type: "string"},
+          },
+          required: [
+            "mode",
+            "provider",
+            "route",
+            "duration",
+            "price",
+            "currency",
+            "bookingHint",
+            "sourceName",
+            "sourceUrl",
+          ],
+        },
+      },
+    },
+    required: ["summary", "options"],
   },
-);
-
-function cloudTranslationCode(targetCode) {
-  switch (targetCode) {
-    case "zh_Hans":
-      return "zh-CN";
-    case "zh_Hant_TW":
-      return "zh-TW";
-    case "tl":
-      return "fil";
-    case "gsw":
-      return "de";
-    case "nb":
-      return "no";
-    default:
-      return targetCode.replaceAll("_", "-");
-  }
-}
-
-exports.getExchangeRates = onCall(
-  {
-    region: "us-central1",
-  },
-  async (request) => {
-    if (!request.auth) {
-      throw new HttpsError(
-        "unauthenticated",
-        "Sign in to load currency rates.",
-      );
-    }
-
-    const cachedSnapshot = await currencyRatesDocument.get();
-    const cached = cachedSnapshot.data();
-    const cachedAt = cached?.fetchedAt?.toDate?.();
-    if (
-      cached &&
-      cachedAt &&
-      Date.now() - cachedAt.getTime() < currencyRatesCacheLifetimeMs
-    ) {
-      return currencyRatesResponse(cached, cachedAt);
-    }
-
-    try {
-      const fresh = await fetchCurrencyRates();
-      await currencyRatesDocument.set({
-        ...fresh,
-        fetchedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      return {
-        ...fresh,
-        fetchedAt: new Date().toISOString(),
-      };
-    } catch (error) {
-      if (cached && cachedAt) {
-        logger.warn("Using stale currency rates after refresh failure", {
-          message: error?.message,
-        });
-        return currencyRatesResponse(cached, cachedAt);
-      }
-
-      logger.error("Currency rate refresh failed", {
-        message: error?.message,
-      });
-      throw new HttpsError(
-        "unavailable",
-        "Currency rates are temporarily unavailable.",
-      );
-    }
-  },
-);
-
-function currencyRatesResponse(data, fetchedAt) {
-  return {
-    baseCurrency: data.baseCurrency ?? "USD",
-    asOf: data.asOf ?? "",
-    rates: data.rates ?? {USD: 1},
-    currencies: data.currencies ?? [],
-    fetchedAt: fetchedAt.toISOString(),
-  };
-}
-
-async function fetchCurrencyRates() {
-  const [ratesResponse, currenciesResponse] = await Promise.all([
-    fetch("https://api.frankfurter.dev/v2/rates?base=USD"),
-    fetch("https://api.frankfurter.dev/v2/currencies"),
-  ]);
-  if (!ratesResponse.ok || !currenciesResponse.ok) {
-    throw new Error(
-      `Frankfurter request failed: rates=${ratesResponse.status}, ` +
-      `currencies=${currenciesResponse.status}`,
-    );
-  }
-
-  const rateRows = await ratesResponse.json();
-  const currencyRows = await currenciesResponse.json();
-  if (!Array.isArray(rateRows) || !Array.isArray(currencyRows)) {
-    throw new Error("Frankfurter returned an unexpected response.");
-  }
-
-  const rates = {USD: 1};
-  let asOf = "";
-  for (const row of rateRows) {
-    const code = String(row?.quote ?? "").trim().toUpperCase();
-    const rate = Number(row?.rate);
-    if (!/^[A-Z]{3}$/.test(code) || !Number.isFinite(rate) || rate <= 0) {
-      continue;
-    }
-    rates[code] = rate;
-    const date = String(row?.date ?? "");
-    if (date > asOf) asOf = date;
-  }
-
-  const excludedCodes = new Set(["XAG", "XAU", "XDR", "XPD", "XPT"]);
-  const currencies = currencyRows
-      .map((row) => ({
-        code: String(row?.iso_code ?? "").trim().toUpperCase(),
-        name: String(row?.name ?? "").trim(),
-        symbol: String(row?.symbol ?? "").trim(),
-        isoNumeric: String(row?.iso_numeric ?? "").trim(),
-      }))
-      .filter((item) =>
-        /^[A-Z]{3}$/.test(item.code) &&
-        item.isoNumeric &&
-        rates[item.code] &&
-        !excludedCodes.has(item.code),
-      )
-      .map(({code, name, symbol}) => ({
-        code,
-        name: name || code,
-        symbol: symbol || code,
-      }))
-      .sort((a, b) => a.code.localeCompare(b.code));
-
-  if (!currencies.some((item) => item.code === "USD")) {
-    currencies.push({
-      code: "USD",
-      name: "United States Dollar",
-      symbol: "$",
-    });
-    currencies.sort((a, b) => a.code.localeCompare(b.code));
-  }
-
-  return {
-    baseCurrency: "USD",
-    asOf,
-    rates,
-    currencies,
-  };
-}
+};
 
 exports.searchPlaces = onCall(
   {
@@ -869,9 +713,6 @@ function normalizeGeoapifyResult(item) {
     [];
   const resultType = properties.result_type ?? properties.type ?? null;
   const country = properties.country ?? null;
-  const countryCode = String(properties.country_code ?? "")
-      .trim()
-      .toUpperCase() || null;
   const locality = properties.name ??
     properties.city ??
     properties.county ??
@@ -887,7 +728,6 @@ function normalizeGeoapifyResult(item) {
     longitude: properties.lon ?? coordinates[0] ?? 0,
     placeId: properties.place_id ?? formatted,
     country,
-    countryCode,
     resultType,
     distanceMeters: properties.distance ?? null,
     categories: Array.isArray(properties.categories) ?
@@ -1480,7 +1320,7 @@ exports.generateScheduleStop = onCall(
         endDate: String(data.endDate ?? ""),
         currency: String(data.currency ?? "USD"),
         budget: Number.parseInt(data.budget, 10) || 0,
-        numOfTravelers: safeTravelerCount(data.numOfTravelers),
+        groupType: String(data.groupType ?? "Solo"),
         preferences: Array.isArray(data.preferences) ? data.preferences : [],
         targetDay,
         request: requestText || "Suggest a useful trip stop.",
@@ -1495,6 +1335,131 @@ exports.generateScheduleStop = onCall(
     });
 
     return {item};
+  },
+);
+
+exports.generateDayPlanEdit = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const data = request.data ?? {};
+    const destination = String(data.destination ?? "").trim();
+    const targetDay = Number.parseInt(data.targetDay, 10);
+    const placeRequest = String(data.placeRequest ?? "").trim();
+
+    if (!destination || !Number.isFinite(targetDay)) {
+      throw new HttpsError("invalid-argument", "Trip day is required.");
+    }
+    if (!placeRequest) {
+      throw new HttpsError("invalid-argument", "Place is required.");
+    }
+    if (placeRequest.length > 500) {
+      throw new HttpsError("invalid-argument", "Place request is too long.");
+    }
+
+    const result = await createStructuredResponse({
+      instructions: [
+        "You are editing one day of a travel itinerary inside a mobile app.",
+        "First judge whether the requested place can realistically fit into the target day.",
+        "Consider existing stop density, time gaps, route geography, city/region distance, opening hours when searchable, and whether adding the place would make the day rushed or impossible.",
+        "Treat broad but valid requests such as 'anime convention', 'food market', 'PC store', or 'festival' as category searches in or near the destination and target date; do not reject them just because they are not exact venue names.",
+        "For event requests, search event calendars where possible. If no exact event is confirmed for the target date, add a practical event-calendar check or relevant district/venue alternative and include a warning to verify dates/tickets.",
+        "If the request is too far, impossible, or the day is already too packed, set feasible=false, keep items as the existing target day schedule, and write a concise warning explaining why.",
+        "If feasible=true, return the complete revised target-day schedule with realistic times, preserving useful existing stops and adding the requested place in an efficient route order.",
+        "Do not move the requested place to another day unless warning says it should be planned on a different day.",
+        "Return only JSON matching the schema.",
+      ].join(" "),
+      input: {
+        destination,
+        startDate: String(data.startDate ?? ""),
+        endDate: String(data.endDate ?? ""),
+        currency: String(data.currency ?? "USD"),
+        budget: Number.parseInt(data.budget, 10) || 0,
+        groupType: String(data.groupType ?? "Solo"),
+        preferences: Array.isArray(data.preferences) ? data.preferences : [],
+        targetDay,
+        placeRequest,
+        targetDaySchedule: Array.isArray(data.targetDaySchedule)
+          ? data.targetDaySchedule
+          : [],
+        fullSchedule: Array.isArray(data.fullSchedule) ? data.fullSchedule : [],
+        appContext: data.appContext ?? null,
+      },
+      format: dayPlanEditFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "low",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "required",
+      logContext: "OpenAI day plan edit failed",
+      publicMessage: "AI day edit failed.",
+    });
+
+    return {result};
+  },
+);
+
+exports.generateTransportRecommendations = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const data = request.data ?? {};
+    const origin = String(data.origin ?? "").trim();
+    const destination = String(data.destination ?? "").trim();
+    if (!origin || !destination) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Start location and destination are required.",
+      );
+    }
+
+    const result = await createStructuredResponse({
+      instructions: [
+        "Find practical transportation options for a travel app booking workspace.",
+        "Use web search data from multiple booking or travel information sources when available, such as airline sites, rail operators, bus operators, Traveloka, Klook, Skyscanner, Google Flights snippets, Rome2Rio-style route data, or local transit providers.",
+        "Return options sorted from cheapest to most expensive.",
+        "Use the requested currency when prices can be estimated; if a source gives another currency, convert approximately.",
+        "If exact live booking prices are unavailable, use realistic current public fare ranges and clearly say approximate in bookingHint.",
+        "Include only useful bookable route options for the origin and destination.",
+        "Return only JSON matching the schema.",
+      ].join(" "),
+      input: {
+        origin,
+        destination,
+        startDate: String(data.startDate ?? ""),
+        endDate: String(data.endDate ?? ""),
+        currency: String(data.currency ?? "USD"),
+        groupType: String(data.groupType ?? "Solo"),
+        travelers: String(data.travelers ?? ""),
+        appContext: data.appContext ?? null,
+      },
+      format: transportRecommendationsFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "medium",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "required",
+      logContext: "OpenAI transport recommendations failed",
+      publicMessage: "AI transport recommendations failed.",
+    });
+
+    const options = Array.isArray(result.options)
+      ? result.options
+          .map((option) => ({
+            ...option,
+            price: Number.parseInt(option.price, 10) || 0,
+          }))
+          .sort((a, b) => a.price - b.price)
+      : [];
+    return {result: {...result, options}};
   },
 );
 
@@ -1581,567 +1546,6 @@ exports.runTripAutomationReminders = onSchedule(
     });
   },
 );
-
-exports.ensureGroupChatJoinCode = onDocumentCreated(
-    "chat_groups/{chatId}",
-    async (event) => {
-      const chat = event.data?.data();
-      if (!chat) return;
-      await createOrRotateGroupJoinCode({
-        db: admin.firestore(),
-        chatId: String(event.params.chatId),
-        actorId: String(chat.ownerId || ""),
-        regenerate: false,
-        system: true,
-      }).catch((error) => {
-        logger.error("Could not create group join code", {
-          chatId: event.params.chatId,
-          message: error?.message,
-        });
-      });
-    },
-);
-
-exports.getGroupChatJoinCode = onCall(
-  {
-    region: "us-central1",
-  },
-  async (request) => {
-    if (!request.auth) {
-      throw new HttpsError(
-        "unauthenticated",
-        "Sign in to manage a group code.",
-      );
-    }
-    const chatId = String(request.data?.chatId || "").trim();
-    if (!chatId) {
-      throw new HttpsError("invalid-argument", "Choose a group chat.");
-    }
-
-    const code = await createOrRotateGroupJoinCode({
-      db: admin.firestore(),
-      chatId,
-      actorId: request.auth.uid,
-      regenerate: request.data?.regenerate === true,
-      system: false,
-    });
-    return {chatId, code};
-  },
-);
-
-exports.joinGroupChatByCode = onCall(
-  {
-    region: "us-central1",
-  },
-  async (request) => {
-    if (!request.auth) {
-      throw new HttpsError("unauthenticated", "Sign in to join a group.");
-    }
-
-    const rawCode = normalizeGroupJoinCode(request.data?.code);
-    if (!rawCode) {
-      throw new HttpsError(
-        "invalid-argument",
-        "Enter a valid group code.",
-      );
-    }
-
-    const db = admin.firestore();
-    const codeRef = db.collection("chat_join_codes").doc(rawCode);
-    const accountId = request.auth.uid;
-    const result = await db.runTransaction(async (transaction) => {
-      const codeSnapshot = await transaction.get(codeRef);
-      if (!codeSnapshot.exists || codeSnapshot.data()?.active !== true) {
-        throw new HttpsError("not-found", "This group code is not valid.");
-      }
-
-      const codeData = codeSnapshot.data() || {};
-      const chatId = String(codeData.chatId || "");
-      const chatRef = db.collection("chat_groups").doc(chatId);
-      const memberRef = chatRef.collection("members").doc(accountId);
-      const membershipRef = db
-          .collection("travel_users")
-          .doc(accountId)
-          .collection("chatMemberships")
-          .doc(chatId);
-      const profileRef = db.collection("travel_users").doc(accountId);
-      const [
-        chatSnapshot,
-        memberSnapshot,
-        profileSnapshot,
-      ] = await Promise.all([
-        transaction.get(chatRef),
-        transaction.get(memberRef),
-        transaction.get(profileRef),
-      ]);
-      if (!chatSnapshot.exists) {
-        throw new HttpsError("not-found", "This group no longer exists.");
-      }
-
-      const chat = chatSnapshot.data() || {};
-      if (normalizeGroupJoinCode(chat.joinCode) !== rawCode) {
-        throw new HttpsError(
-          "failed-precondition",
-          "This group code was replaced.",
-        );
-      }
-
-      const existingMember = memberSnapshot.data() || {};
-      if (
-        existingMember.status === "active" &&
-        Array.isArray(chat.memberIds) &&
-        chat.memberIds.includes(accountId)
-      ) {
-        return {
-          chatId,
-          title: String(chat.title || "Group chat"),
-          role: String(existingMember.role || "member"),
-          alreadyMember: true,
-        };
-      }
-
-      const profile = profileSnapshot.data() || {};
-      const role = "member";
-      const now = admin.firestore.FieldValue.serverTimestamp();
-      const memberIds = Array.isArray(chat.memberIds)
-        ? chat.memberIds.map(String)
-        : [];
-      const roles = {...(chat.roles || {}), [accountId]: role};
-      const displayName = String(
-          profile.name || request.auth.token.name || "Explorer",
-      ).trim() || "Explorer";
-      const photoUrl = typeof profile.photoUrl === "string" ?
-        profile.photoUrl :
-        null;
-
-      transaction.set(
-          chatRef,
-          {
-            memberIds: memberIds.includes(accountId) ?
-              memberIds :
-              [...memberIds, accountId],
-            roles,
-            updatedAt: now,
-          },
-          {merge: true},
-      );
-      transaction.set(
-          memberRef,
-          {
-            role,
-            status: "active",
-            displayNameSnapshot: displayName,
-            photoUrlSnapshot: photoUrl,
-            joinedAt: now,
-            invitedBy: String(codeData.createdBy || chat.ownerId || ""),
-            inviteCode: formatGroupJoinCode(rawCode),
-            updatedAt: now,
-          },
-          {merge: true},
-      );
-      transaction.set(
-          membershipRef,
-          {
-            chatId,
-            role,
-            status: "active",
-            titleSnapshot: String(chat.title || "Group chat"),
-            lastMessageText: String(chat.lastMessageText || ""),
-            lastMessageAt: chat.lastMessageAt || null,
-            unreadCount: 0,
-            mutedUntil: null,
-            mutedForever: false,
-            createdAt: now,
-            updatedAt: now,
-          },
-          {merge: true},
-      );
-
-      return {
-        chatId,
-        title: String(chat.title || "Group chat"),
-        role,
-        alreadyMember: false,
-      };
-    });
-
-    return result;
-  },
-);
-
-async function createOrRotateGroupJoinCode({
-  db,
-  chatId,
-  actorId,
-  regenerate,
-  system,
-}) {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const candidate = newGroupJoinCode();
-    try {
-      return await db.runTransaction(async (transaction) => {
-        const chatRef = db.collection("chat_groups").doc(chatId);
-        const memberRef = chatRef.collection("members").doc(actorId);
-        const candidateRef = db.collection("chat_join_codes").doc(candidate);
-        const reads = [
-          transaction.get(chatRef),
-          transaction.get(candidateRef),
-        ];
-        if (!system) reads.push(transaction.get(memberRef));
-        const snapshots = await Promise.all(reads);
-        const chatSnapshot = snapshots[0];
-        const candidateSnapshot = snapshots[1];
-        const memberSnapshot = system ? null : snapshots[2];
-
-        if (!chatSnapshot.exists) {
-          throw new HttpsError("not-found", "Group chat not found.");
-        }
-        const chat = chatSnapshot.data() || {};
-        const existingCode = normalizeGroupJoinCode(chat.joinCode);
-
-        if (!system) {
-          const member = memberSnapshot?.data() || {};
-          const activeMember =
-            memberSnapshot?.exists === true &&
-            member.status === "active" &&
-            Array.isArray(chat.memberIds) &&
-            chat.memberIds.includes(actorId);
-          if (!activeMember) {
-            throw new HttpsError(
-              "permission-denied",
-              "You are not an active member of this group.",
-            );
-          }
-          if (
-            regenerate &&
-            !["owner", "admin"].includes(String(member.role || ""))
-          ) {
-            throw new HttpsError(
-              "permission-denied",
-              "Only the owner or an admin can change the group code.",
-            );
-          }
-        }
-
-        if (!regenerate && existingCode) {
-          return formatGroupJoinCode(existingCode);
-        }
-
-        if (candidateSnapshot.exists) {
-          const collision = new Error("join-code-collision");
-          collision.joinCodeCollision = true;
-          throw collision;
-        }
-
-        const now = admin.firestore.FieldValue.serverTimestamp();
-        if (existingCode && existingCode !== candidate) {
-          transaction.delete(
-              db.collection("chat_join_codes").doc(existingCode),
-          );
-        }
-        transaction.set(candidateRef, {
-          chatId,
-          active: true,
-          createdBy: actorId || String(chat.ownerId || ""),
-          createdAt: now,
-          updatedAt: now,
-        });
-        transaction.set(
-            chatRef,
-            {
-              joinCode: formatGroupJoinCode(candidate),
-              joinCodeUpdatedAt: now,
-              updatedAt: now,
-            },
-            {merge: true},
-        );
-        return formatGroupJoinCode(candidate);
-      });
-    } catch (error) {
-      if (error?.joinCodeCollision === true) continue;
-      throw error;
-    }
-  }
-  throw new HttpsError(
-    "internal",
-    "Could not generate a unique group code.",
-  );
-}
-
-function newGroupJoinCode() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from(
-      {length: 10},
-      () => alphabet[randomInt(0, alphabet.length)],
-  ).join("");
-}
-
-function normalizeGroupJoinCode(value) {
-  const code = String(value || "")
-      .trim()
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, "");
-  return code.length === 10 ? code : "";
-}
-
-function formatGroupJoinCode(value) {
-  const code = normalizeGroupJoinCode(value);
-  return code ? `${code.slice(0, 5)}-${code.slice(5)}` : "";
-}
-
-exports.notifyGroupChatMembers = onDocumentCreated(
-    "chat_groups/{chatId}/messages/{messageId}",
-    async (event) => {
-      const message = event.data?.data();
-      if (!message) return;
-
-      const db = admin.firestore();
-      const chatId = String(event.params.chatId);
-      const chatSnapshot = await db.collection("chat_groups").doc(chatId).get();
-      if (!chatSnapshot.exists) return;
-
-      const chat = chatSnapshot.data() || {};
-      const senderId = String(message.senderId || "");
-      const memberIds = Array.isArray(chat.memberIds)
-        ? chat.memberIds.map(String).filter((id) => id && id !== senderId)
-        : [];
-      if (!memberIds.length) return;
-
-      const title = String(chat.title || "Group chat");
-      const sender = String(message.senderNameSnapshot || "Someone");
-      const body = chatMessageNotificationBody(message, sender);
-      await sendNotificationToUsers({
-        db,
-        userIds: memberIds,
-        title,
-        body,
-        chatId,
-        data: {
-          chatId,
-          messageId: String(event.params.messageId),
-          type: "group_chat",
-          tag: `group-chat-${chatId}`,
-          targetPath: `/chat/${encodeURIComponent(chatId)}`,
-        },
-      });
-    },
-);
-
-exports.notifyGroupChatMemberJoined = onDocumentWritten(
-    "chat_groups/{chatId}/members/{memberId}",
-    async (event) => {
-      const before = event.data?.before.data();
-      const after = event.data?.after.data();
-      if (!after || after.status !== "active" || before?.status === "active") {
-        return;
-      }
-
-      const db = admin.firestore();
-      const chatId = String(event.params.chatId);
-      const joinedMemberId = String(event.params.memberId);
-      const chatSnapshot = await db.collection("chat_groups").doc(chatId).get();
-      if (!chatSnapshot.exists) return;
-
-      const chat = chatSnapshot.data() || {};
-      const memberIds = Array.isArray(chat.memberIds)
-        ? chat.memberIds
-            .map(String)
-            .filter((id) => id && id !== joinedMemberId)
-        : [];
-      if (!memberIds.length) return;
-
-      const joinedName = String(
-          after.displayNameSnapshot || "Someone",
-      ).trim() || "Someone";
-      const title = String(chat.title || "Group chat");
-      await sendNotificationToUsers({
-        db,
-        userIds: memberIds,
-        title,
-        body: `${joinedName} joined the group.`,
-        chatId,
-        data: {
-          chatId,
-          memberId: joinedMemberId,
-          type: "group_member_joined",
-          tag: `group-member-${chatId}`,
-          targetPath: `/chat/${encodeURIComponent(chatId)}`,
-        },
-      });
-    },
-);
-
-function chatMessageNotificationBody(message, sender) {
-  const attachment = Array.isArray(message.attachments)
-    ? message.attachments[0]
-    : null;
-  if (String(attachment?.type || "") === "image") {
-    return `${sender} just sent a photo.`;
-  }
-  if (String(message.type || "") === "poll") {
-    const question = String(message.poll?.question || "").trim();
-    return question ?
-      `${sender} started a poll: ${question}` :
-      `${sender} started a poll.`;
-  }
-  return `${sender}: ${chatMessagePreview(message)}`;
-}
-
-function chatMessagePreview(message) {
-  const text = String(message.text || "").trim();
-  if (text) {
-    return text.length <= 120 ? text : `${text.slice(0, 117)}...`;
-  }
-  const attachment = Array.isArray(message.attachments)
-    ? message.attachments[0]
-    : null;
-  switch (String(attachment?.type || "")) {
-    case "image":
-      return "Photo";
-    case "gif":
-      return "GIF";
-    case "video":
-      return "Video";
-    case "pdf":
-      return `PDF: ${String(attachment?.name || "document")}`;
-    default:
-      return `File: ${String(attachment?.name || "attachment")}`;
-  }
-}
-
-async function sendNotificationToUsers({
-  db,
-  userIds,
-  title,
-  body,
-  data,
-  chatId,
-}) {
-  const recipients = await loadNotificationRecipients({
-    db,
-    userIds,
-    chatId,
-  });
-  if (!recipients.length) return 0;
-
-  const payloadData = {
-    title: String(title),
-    body: String(body),
-    ...Object.fromEntries(
-        Object.entries(data || {}).map(([key, value]) => [
-          key,
-          String(value),
-        ]),
-    ),
-  };
-  const targetPath = payloadData.targetPath || "/";
-  let sent = 0;
-
-  for (let start = 0; start < recipients.length; start += 500) {
-    const chunk = recipients.slice(start, start + 500);
-    const response = await admin.messaging().sendEachForMulticast({
-      tokens: chunk.map((recipient) => recipient.token),
-      notification: {title, body},
-      data: payloadData,
-      webpush: {
-        notification: {
-          title,
-          body,
-          icon: "/icons/Icon-192.png",
-          tag: payloadData.tag || payloadData.type || "travel-agent",
-          data: payloadData,
-        },
-        fcmOptions: {
-          link: targetPath,
-        },
-      },
-      android: {
-        priority: "high",
-        notification: {
-          tag: payloadData.tag || payloadData.type || "travel-agent",
-          clickAction: "FLUTTER_NOTIFICATION_CLICK",
-          sound: "default",
-        },
-      },
-      apns: {
-        payload: {
-          aps: {
-            sound: "default",
-          },
-        },
-      },
-    });
-
-    sent += response.successCount;
-    const deletes = [];
-    response.responses.forEach((result, offset) => {
-      if (!result.error) return;
-      const code = result.error.code;
-      if (
-        code === "messaging/registration-token-not-registered" ||
-        code === "messaging/invalid-registration-token"
-      ) {
-        deletes.push(chunk[offset].ref.delete());
-      }
-    });
-    await Promise.all(deletes);
-  }
-
-  return sent;
-}
-
-async function loadNotificationRecipients({db, userIds, chatId}) {
-  const recipients = [];
-  const uniqueUserIds = [...new Set(userIds.map(String).filter(Boolean))];
-  const now = Date.now();
-  const activePresenceLifetimeMs = 2 * 60 * 1000;
-
-  for (const userId of uniqueUserIds) {
-    const userRef = db.collection("travel_users").doc(userId);
-    const reads = [userRef.get()];
-    if (chatId) {
-      reads.push(userRef.collection("chatMemberships").doc(chatId).get());
-    }
-    const snapshots = await Promise.all(reads);
-    const user = snapshots[0].data() || {};
-    if (user.settings?.notificationsEnabled === false) continue;
-
-    if (chatId) {
-      const membership = snapshots[1].data() || {};
-      const mutedUntil = membership.mutedUntil?.toDate?.();
-      if (
-        membership.status !== "active" ||
-        membership.mutedForever === true ||
-        (mutedUntil instanceof Date && mutedUntil.getTime() > now)
-      ) {
-        continue;
-      }
-    }
-
-    const tokenSnapshot = await userRef
-        .collection("notificationTokens")
-        .where("enabled", "==", true)
-        .get();
-    for (const tokenDoc of tokenSnapshot.docs) {
-      const tokenData = tokenDoc.data() || {};
-      const token = tokenData.token;
-      if (typeof token !== "string" || !token.trim()) continue;
-
-      const presenceUpdatedAt = tokenData.presenceUpdatedAt?.toDate?.();
-      const viewingThisChat =
-        Boolean(chatId) &&
-        tokenData.appState === "foreground" &&
-        tokenData.activeChatId === chatId &&
-        presenceUpdatedAt instanceof Date &&
-        now - presenceUpdatedAt.getTime() <= activePresenceLifetimeMs;
-      if (viewingThisChat) continue;
-
-      recipients.push({token, ref: tokenDoc.ref});
-    }
-  }
-
-  return recipients;
-}
 
 const aiChecklistMarker = "[AI] ";
 const aiGuardianCategory = "AI Trip Guardian";
@@ -2343,20 +1747,77 @@ function withRainChecklist(checklistValue, rainyDays) {
 
 async function notifyTripMembers(db, tripId, trip, rainyDays) {
   const memberIds = Array.isArray(trip.memberIds) ? trip.memberIds : [];
+  const tokens = [];
+  const tokenRefs = [];
+
+  for (const memberId of memberIds) {
+    const tokenSnapshot = await db
+      .collection("travel_users")
+      .doc(String(memberId))
+      .collection("notificationTokens")
+      .where("enabled", "==", true)
+      .get();
+    for (const tokenDoc of tokenSnapshot.docs) {
+      const token = tokenDoc.data().token;
+      if (typeof token !== "string" || !token.trim()) continue;
+      tokens.push(token);
+      tokenRefs.push(tokenDoc.ref);
+    }
+  }
+
+  if (!tokens.length) return 0;
+
   const title = `${trip.destination || "Your trip"} weather update`;
   const body = rainPushBody(rainyDays);
-  return sendNotificationToUsers({
-    db,
-    userIds: memberIds,
-    title,
-    body,
-    data: {
-      tripId,
-      tag: `trip-weather-${tripId}-${dateKey(new Date())}`,
-      type: "trip_weather",
-      targetPath: `/trips/${encodeURIComponent(tripId)}`,
-    },
-  });
+  let sent = 0;
+
+  for (let start = 0; start < tokens.length; start += 500) {
+    const chunk = tokens.slice(start, start + 500);
+    const response = await admin.messaging().sendEachForMulticast({
+      tokens: chunk,
+      notification: {title, body},
+      data: {
+        title,
+        body,
+        tripId,
+        tag: `trip-weather-${tripId}-${dateKey(new Date())}`,
+        type: "trip_weather",
+      },
+      webpush: {
+        notification: {
+          title,
+          body,
+          icon: "/icons/Icon-192.png",
+          tag: `trip-weather-${tripId}-${dateKey(new Date())}`,
+        },
+        fcmOptions: {
+          link: "/",
+        },
+      },
+      android: {
+        priority: "high",
+        notification: {
+          tag: `trip-weather-${tripId}`,
+        },
+      },
+    });
+
+    sent += response.successCount;
+    const deletes = [];
+    response.responses.forEach((result, offset) => {
+      if (!result.error) return;
+      const code = result.error.code;
+      if (
+        code === "messaging/registration-token-not-registered" ||
+        code === "messaging/invalid-registration-token"
+      ) {
+        deletes.push(tokenRefs[start + offset].delete());
+      }
+    });
+    await Promise.all(deletes);
+  }
+
+  return sent;
 }
 
 function rainPushBody(rainyDays) {

@@ -223,13 +223,12 @@ class TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Row(
       children: [
         IconButton.filled(
           style: IconButton.styleFrom(
-            backgroundColor: colorScheme.surfaceContainerHigh,
-            foregroundColor: colorScheme.onSurface,
+            backgroundColor: Colors.white,
+            foregroundColor: _primary,
           ),
           onPressed: onBack,
           icon: const Icon(Icons.chevron_left_rounded),
@@ -248,8 +247,8 @@ class TopBar extends StatelessWidget {
         if (action != null)
           IconButton.filled(
             style: IconButton.styleFrom(
-              backgroundColor: colorScheme.surfaceContainerHigh,
-              foregroundColor: colorScheme.onSurface,
+              backgroundColor: Colors.white,
+              foregroundColor: _primary,
             ),
             onPressed: onAction,
             icon: Icon(action),
@@ -313,11 +312,10 @@ class PrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return FilledButton.icon(
       style: FilledButton.styleFrom(
-        backgroundColor: colorScheme.primary,
-        foregroundColor: colorScheme.onPrimary,
+        backgroundColor: _primary,
+        foregroundColor: Colors.white,
         minimumSize: const Size.fromHeight(56),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       ),
@@ -344,17 +342,15 @@ class GlassPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isDark = colorScheme.brightness == Brightness.dark;
     return Container(
       padding: padding,
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLow,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: colorScheme.outlineVariant),
+        border: Border.all(color: const Color(0xFFEFF3F6)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? .16 : .025),
+            color: Colors.black.withValues(alpha: .025),
             blurRadius: 24,
             offset: const Offset(0, 8),
           ),
@@ -372,63 +368,32 @@ class IconBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: colorScheme.primaryContainer,
+        color: _accent.withValues(alpha: .28),
         borderRadius: BorderRadius.circular(size / 3),
       ),
-      child: Icon(icon, color: colorScheme.onPrimaryContainer, size: size * .5),
+      child: Icon(icon, color: _primary, size: size * .5),
     );
   }
 }
 
 class IconSquare extends StatelessWidget {
-  const IconSquare({required this.icon, this.onTap, this.tooltip, super.key});
+  const IconSquare({required this.icon, super.key});
   final IconData icon;
-  final VoidCallback? onTap;
-  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final content = Container(
+    return Container(
       width: 50,
       height: 50,
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHigh,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(18),
       ),
-      child: Icon(icon, color: colorScheme.onSurface),
-    );
-
-    if (onTap == null) return content;
-
-    final interactiveContent = Semantics(
-      button: true,
-      label: tooltip == null ? null : appText(context, tooltip!),
-      child: Material(
-        color: colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(18),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(18),
-          onTap: onTap,
-          child: SizedBox(
-            width: 50,
-            height: 50,
-            child: Icon(icon, color: colorScheme.onSurface),
-          ),
-        ),
-      ),
-    );
-
-    if (tooltip == null) return interactiveContent;
-
-    return Tooltip(
-      message: appText(context, tooltip!),
-      child: interactiveContent,
+      child: Icon(icon, color: _primary),
     );
   }
 }
@@ -486,7 +451,6 @@ class NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Center(
       child: Semantics(
         button: true,
@@ -496,9 +460,7 @@ class NavItem extends StatelessWidget {
           width: 68,
           height: 68,
           child: Material(
-            color: active
-                ? colorScheme.primary.withValues(alpha: .16)
-                : Colors.transparent,
+            color: active ? _accent.withValues(alpha: .18) : Colors.transparent,
             shape: const CircleBorder(),
             child: InkWell(
               customBorder: const CircleBorder(),
@@ -509,8 +471,8 @@ class NavItem extends StatelessWidget {
                   Icon(
                     icon,
                     color: active
-                        ? colorScheme.primary
-                        : colorScheme.onSurfaceVariant,
+                        ? _primary
+                        : _secondary.withValues(alpha: .65),
                     size: active ? 28 : 24,
                   ),
                   const SizedBox(height: 3),
@@ -522,8 +484,8 @@ class NavItem extends StatelessWidget {
                       fontSize: 10,
                       fontWeight: FontWeight.w900,
                       color: active
-                          ? colorScheme.primary
-                          : colorScheme.onSurfaceVariant,
+                          ? _primary
+                          : _secondary.withValues(alpha: .65),
                     ),
                   ),
                 ],

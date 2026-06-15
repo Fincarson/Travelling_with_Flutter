@@ -26,124 +26,53 @@ class AppFontSource {
 
 class TravelAgentTheme {
   static ThemeData light() {
-    final colorScheme =
-        ColorScheme.fromSeed(
-          seedColor: TravelAgentColors.primary,
-          brightness: Brightness.light,
-          primary: TravelAgentColors.primary,
-          secondary: TravelAgentColors.secondary,
-          surface: Colors.white,
-        ).copyWith(
-          surfaceContainerLowest: Colors.white,
-          surfaceContainerLow: const Color(0xFFFCFDF8),
-          surfaceContainer: const Color(0xFFF5F7F2),
-          surfaceContainerHigh: const Color(0xFFEDF2F3),
-          surfaceContainerHighest: const Color(0xFFE3EBEE),
-          outlineVariant: const Color(0xFFD9E2E5),
-        );
-    return _build(
-      colorScheme: colorScheme,
-      scaffoldBackground: TravelAgentColors.background,
-    );
-  }
-
-  static ThemeData dark() {
-    final colorScheme =
-        ColorScheme.fromSeed(
-          seedColor: TravelAgentColors.accent,
-          brightness: Brightness.dark,
-        ).copyWith(
-          primary: const Color(0xFF9CD5FF),
-          onPrimary: const Color(0xFF082A3A),
-          primaryContainer: const Color(0xFF244A61),
-          onPrimaryContainer: const Color(0xFFD8EEFF),
-          secondary: const Color(0xFF9DC8E8),
-          onSecondary: const Color(0xFF102C3B),
-          surface: const Color(0xFF101A20),
-          onSurface: const Color(0xFFEAF2F6),
-          onSurfaceVariant: const Color(0xFFB8C8D0),
-          surfaceContainerLowest: const Color(0xFF0B1419),
-          surfaceContainerLow: const Color(0xFF18242B),
-          surfaceContainer: const Color(0xFF1D2B33),
-          surfaceContainerHigh: const Color(0xFF263740),
-          surfaceContainerHighest: const Color(0xFF30434D),
-          outline: const Color(0xFF82949D),
-          outlineVariant: const Color(0xFF3C505A),
-        );
-    return _build(
-      colorScheme: colorScheme,
-      scaffoldBackground: const Color(0xFF101A20),
-    );
-  }
-
-  static ThemeData _build({
-    required ColorScheme colorScheme,
-    required Color scaffoldBackground,
-  }) {
     final base = ThemeData(
       useMaterial3: true,
-      brightness: colorScheme.brightness,
-      colorScheme: colorScheme,
-      scaffoldBackgroundColor: scaffoldBackground,
-      canvasColor: colorScheme.surface,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: TravelAgentColors.primary,
+        primary: TravelAgentColors.primary,
+        secondary: TravelAgentColors.secondary,
+        surface: Colors.white,
+      ),
+      scaffoldBackgroundColor: TravelAgentColors.background,
       fontFamily: AppFontSource.family,
-    );
-    final fieldBorder = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(20),
-      borderSide: BorderSide(color: colorScheme.outlineVariant),
     );
 
     return base.copyWith(
       textTheme: base.textTheme.apply(
-        bodyColor: colorScheme.onSurface,
-        displayColor: colorScheme.onSurface,
-      ),
-      iconTheme: IconThemeData(color: colorScheme.onSurface),
-      appBarTheme: AppBarTheme(
-        elevation: 0,
-        backgroundColor: scaffoldBackground,
-        foregroundColor: colorScheme.onSurface,
-        surfaceTintColor: Colors.transparent,
-      ),
-      bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: colorScheme.surface,
-        surfaceTintColor: Colors.transparent,
-      ),
-      dialogTheme: DialogThemeData(
-        backgroundColor: colorScheme.surfaceContainerLow,
-        surfaceTintColor: Colors.transparent,
-      ),
-      cardTheme: CardThemeData(
-        color: colorScheme.surfaceContainerLow,
-        surfaceTintColor: Colors.transparent,
+        bodyColor: TravelAgentColors.primary,
+        displayColor: TravelAgentColors.primary,
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: colorScheme.surfaceContainerLow,
-        labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
-        hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
-        prefixIconColor: colorScheme.onSurfaceVariant,
-        suffixIconColor: colorScheme.onSurfaceVariant,
-        border: fieldBorder,
-        enabledBorder: fieldBorder,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(color: Color(0xFFEFF3F6)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(color: Color(0xFFEFF3F6)),
+        ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(20),
-          borderSide: BorderSide(color: colorScheme.primary, width: 2),
-        ),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: colorScheme.onSurface,
-          side: BorderSide(color: colorScheme.outline),
-          minimumSize: const Size.fromHeight(50),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
+          borderSide: const BorderSide(
+            color: TravelAgentColors.accent,
+            width: 2,
           ),
         ),
       ),
-      snackBarTheme: SnackBarThemeData(
-        backgroundColor: colorScheme.inverseSurface,
-        contentTextStyle: TextStyle(color: colorScheme.onInverseSurface),
+    );
+  }
+
+  static ThemeData dark() {
+    final base = light();
+    return base.copyWith(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: const Color(0xFF17232A),
+      colorScheme: base.colorScheme.copyWith(
+        brightness: Brightness.dark,
+        surface: const Color(0xFF22313A),
       ),
     );
   }

@@ -92,21 +92,6 @@ Current guidance:
 - User/trip data is Firebase-backed and must stay in sync with the shared trip schema below.
 - Do not sync new local-only settings to Firebase unless the user explicitly approves it.
 
-## Settings Organization
-
-Keep user-adjustable controls on the dedicated Settings page rather than mixing
-them into Profile or unrelated feature pages. When adding or modifying a
-setting:
-
-- Place it under a clear, standard section such as `Account`, `General`,
-  `Travel preferences`, `Appearance & performance`, or `Data`.
-- Reuse an existing section when the setting fits; create a new section only
-  when it represents a genuinely distinct group.
-- Keep section names, descriptions, control labels, and ordering consistent.
-- Keep account actions such as linked providers, sign out, and account deletion
-  together under `Account`.
-- Preserve responsive behavior and the setting's existing persistence source.
-
 ## Firebase Data Organization
 
 Firestore is the source of truth for account, trip, collaboration, and chat-ready data. Do not add new trip features that only mutate local app state. Whenever trips, plans, itinerary items, bookings, budgets, checklist data, members, invites, chat, or AI results change, update the backend repository/rules so Firestore remains authoritative.

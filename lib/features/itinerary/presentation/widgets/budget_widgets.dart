@@ -35,9 +35,8 @@ class BudgetBar extends StatelessWidget {
               ),
               Flexible(
                 child: Text(
-                  '${_displayMoney(context, actual, currency)} / '
-                  '${_displayMoney(context, planned, currency)}',
-                  maxLines: 3,
+                  '$currency $actual / $currency $planned',
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.end,
                   style: const TextStyle(fontWeight: FontWeight.w800),

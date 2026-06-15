@@ -1,391 +1,16 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:math' as math;
-
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/widgets.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
-import 'app_language.dart';
-import 'app_locale_controller.dart';
 
 String appText(BuildContext context, String source) {
-  final language = AppLocaleController.profileLanguage.value;
-  if (language == 'en') return source;
-  if (language == 'zh_Hant_TW') {
-    if (source.startsWith('of ')) return '總預算 ${source.substring(3)}';
-    if (source.contains(' route / ')) {
-      return source
-          .replaceFirst(' route / ', ' 路線 / ')
-          .replaceFirst(' stops', ' 站');
-    }
-    return _zhHantTwText[source] ??
-        AppTextController.translationFor(language, source);
+  final locale = Localizations.maybeLocaleOf(context);
+  if (locale?.languageCode != 'zh') return source;
+  if (source.startsWith('of ')) return '總預算 ${source.substring(3)}';
+  if (source.contains(' route / ')) {
+    return source
+        .replaceFirst(' route / ', ' 路線 / ')
+        .replaceFirst(' stops', ' 站');
   }
-  return AppTextController.translationFor(language, source);
+  return _zhHantTwText[source] ?? source;
 }
-
-class AppTextController {
-  static final ValueNotifier<int> revision = ValueNotifier(0);
-  static final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
-    region: 'us-central1',
-  );
-  static final Map<String, Map<String, String>> _translations = {};
-  static final Set<String> _pending = {};
-  static String _activeLanguage = 'en';
-  static Timer? _batchTimer;
-  static bool _requestInFlight = false;
-  static DateTime? _retryAfter;
-
-  static Future<void> activateLanguage(String language) async {
-    _activeLanguage = language;
-    _pending.clear();
-    _batchTimer?.cancel();
-    if (language == 'en') return;
-    if (_translations.containsKey(language)) return;
-
-    final preferences = await SharedPreferences.getInstance();
-    final raw = preferences.getString('travel_agent.ui_translations.$language');
-    if (raw == null || raw.isEmpty) {
-      _translations[language] = <String, String>{};
-      return;
-    }
-    try {
-      final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
-      _translations[language] = decoded.map(
-        (key, value) => MapEntry(key, value.toString()),
-      );
-      revision.value++;
-    } catch (_) {
-      _translations[language] = <String, String>{};
-    }
-  }
-
-  static Future<void> prepareLanguage(
-    String language, {
-    ValueChanged<double>? onProgress,
-  }) async {
-    await activateLanguage(language);
-    if (language == 'en') {
-      onProgress?.call(1);
-      return;
-    }
-
-    final cache = _translations.putIfAbsent(language, () => <String, String>{});
-    final alreadyTranslated = language == 'zh_Hant_TW'
-        ? _zhHantTwText.keys.toSet()
-        : const <String>{};
-    final sources = _translatableUiSources
-        .where(
-          (source) =>
-              !alreadyTranslated.contains(source) &&
-              (cache[source]?.trim().isEmpty ?? true),
-        )
-        .toList(growable: false);
-    final total = _translatableUiSources.length;
-    var completed = total - sources.length;
-    onProgress?.call(total == 0 ? 1 : completed / total);
-
-    for (var start = 0; start < sources.length; start += 40) {
-      final end = math.min(start + 40, sources.length);
-      final batch = sources.sublist(start, end);
-      final translated = await _requestTranslations(language, batch);
-      for (var index = 0; index < batch.length; index++) {
-        cache[batch[index]] = translated[index];
-      }
-      completed += batch.length;
-      await _saveCache(language, cache);
-      onProgress?.call(total == 0 ? 1 : completed / total);
-    }
-
-    _retryAfter = null;
-    revision.value++;
-    onProgress?.call(1);
-  }
-
-  static String translationFor(String language, String source) {
-    final translated = _translations[language]?[source];
-    if (translated != null && translated.trim().isNotEmpty) return translated;
-    if (_isTranslatableUiText(source)) {
-      _pending.add(source);
-      _scheduleBatch();
-    }
-    return source;
-  }
-
-  static bool _isTranslatableUiText(String source) {
-    return source.isNotEmpty &&
-        source.length <= 500 &&
-        (_zhHantTwText.containsKey(source) ||
-            _additionalTranslatableUiText.contains(source));
-  }
-
-  static void _scheduleBatch() {
-    final retryAfter = _retryAfter;
-    if (_requestInFlight ||
-        _activeLanguage == 'en' ||
-        (retryAfter != null && DateTime.now().isBefore(retryAfter))) {
-      return;
-    }
-    _batchTimer ??= Timer(const Duration(milliseconds: 180), () {
-      _batchTimer = null;
-      unawaited(_flush());
-    });
-  }
-
-  static Future<void> _flush() async {
-    if (_requestInFlight || _pending.isEmpty) return;
-    final language = _activeLanguage;
-    final sources = _pending.take(40).toList(growable: false);
-    _pending.removeAll(sources);
-    _requestInFlight = true;
-    try {
-      final translated = await _requestTranslations(language, sources);
-      final cache = _translations.putIfAbsent(
-        language,
-        () => <String, String>{},
-      );
-      for (var index = 0; index < sources.length; index++) {
-        cache[sources[index]] = translated[index];
-      }
-      await _saveCache(language, cache);
-      if (_activeLanguage == language) revision.value++;
-      _retryAfter = null;
-    } catch (_) {
-      _pending.addAll(sources);
-      _retryAfter = DateTime.now().add(const Duration(minutes: 1));
-    } finally {
-      _requestInFlight = false;
-      if (_pending.isNotEmpty) _scheduleBatch();
-    }
-  }
-
-  static Future<List<String>> _requestTranslations(
-    String language,
-    List<String> sources,
-  ) async {
-    final option = appLanguageForCode(language);
-    final result = await _functions.httpsCallable('translateUiStrings').call({
-      'targetCode': language,
-      'targetLanguage': option.englishName,
-      'strings': sources,
-    });
-    final data = Map<String, dynamic>.from(result.data as Map);
-    final translated = (data['translations'] as List<dynamic>? ?? const [])
-        .map((value) => value.toString())
-        .toList(growable: false);
-    if (translated.length != sources.length) {
-      throw const FormatException('Translation count did not match.');
-    }
-    return translated;
-  }
-
-  static Future<void> _saveCache(
-    String language,
-    Map<String, String> cache,
-  ) async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setString(
-      'travel_agent.ui_translations.$language',
-      jsonEncode(cache),
-    );
-  }
-}
-
-final Set<String> _translatableUiSources = {
-  ..._zhHantTwText.keys,
-  ..._additionalTranslatableUiText,
-};
-
-const _additionalTranslatableUiText = {
-  '1 linked account',
-  '2 linked accounts',
-  '3 linked accounts',
-  'A new itinerary will be created from this preview. You can edit dates, bookings, and activities after it is created.',
-  'Accept',
-  'Accept invite',
-  'Add option',
-  'Add budget',
-  'Add stops to build this schedule.',
-  'Add the basics now, then build the day-by-day schedule after creation.',
-  'Add with AI',
-  'Adjust dates',
-  'AI cover suggestions',
-  'AI focus',
-  'AI focuses',
-  'AI planning workspace',
-  'AI suggestions',
-  'AI will use your picks as signals, then build a starter itinerary you can still edit.',
-  'An unexpected error has occurred. Please try again later.',
-  'Archive',
-  'Archived',
-  'Ask about this trip',
-  'Automatic',
-  'Automatic checks your country when the app opens and asks before changing currency. Manual only changes currency from Settings.',
-  'Back',
-  'Chat invite',
-  'Check official requirements',
-  'Check Spam, Junk, and Promotions. Also confirm the address is exactly the one used to create the account. Google-only accounts do not have an email password to reset.',
-  'Check your email',
-  'Choose a destination',
-  'Choose a starting point',
-  'Close',
-  'Code',
-  'Connect and sign in',
-  'Connect Google account',
-  'Copy',
-  'Could not enable notifications.',
-  'Create a group to start messaging.',
-  'Create poll',
-  'Create a trip to see it here.',
-  'Create a trip to use this page.',
-  'Create chat',
-  'Creating your trip',
-  'Currency updates',
-  'days',
-  'Description',
-  'Details',
-  'Detect location changes and ask before switching.',
-  'Display currency',
-  'Done',
-  'Edit day',
-  'Enter the email used for your password account. Firebase will send a secure reset link.',
-  'Enter your existing password.',
-  'Entry, visa, customs, and health rules can change. Confirm them with official authorities for your passport and travel dates.',
-  'Error code',
-  'Example: indoor lunch stop near the museum',
-  'Example: Senso-ji Temple or Hokkaido day trip',
-  'Existing password',
-  'Facebook coming later',
-  'Fill day with AI',
-  'Filter',
-  'Forgot password',
-  'Group name',
-  'Google is now linked to this account.',
-  'Important',
-  'Include archived items in this notification list.',
-  'Invite',
-  'Invite copied.',
-  'Invite link',
-  'Invite link or code',
-  'Link another sign-in method before unlinking this one.',
-  'Link another sign-in method before unlinking your current one.',
-  'Link phone number',
-  'Linked accounts',
-  'Location access',
-  'Manage the ways you can securely sign in to this account.',
-  'Message',
-  'More',
-  'Never check location for currency changes.',
-  'No activities yet',
-  'No chats yet',
-  'No interests added yet.',
-  'No messages yet',
-  'No past trips yet. Completed trips will appear here as reusable templates.',
-  'No stops yet. Add a place and AI will build this day.',
-  'No trip yet',
-  'No trips yet',
-  'Not linked',
-  'OK',
-  'Not sure where to start?',
-  'Notification archived',
-  'Notification type',
-  'Option',
-  'Open the filter panel to change what appears here.',
-  'Open time to adjust after creating the trip.',
-  'or continue with',
-  'Pick travel style',
-  'Place to add',
-  'Preview',
-  'Preview itinerary',
-  'Preview saved past trips or recommendation cards before creating the itinerary.',
-  'Profile saved.',
-  'Question',
-  'Phone number linked successfully.',
-  'Please restart the app to apply the selected language.',
-  'Refresh local context',
-  'Remove activity',
-  'Restore',
-  'Return to sign in',
-  'Review searched images and daily stops before creating the trip.',
-  'Save',
-  'Saving the itinerary, checklist, budget, and daily route.',
-  'Searched images',
-  'Share',
-  'Show archived notifications',
-  'Sign in before changing linked accounts.',
-  'Sign-in method was unlinked.',
-  'Start a different trip?',
-  'Start the conversation.',
-  'Start trip',
-  'Start your trip',
-  'Tap the recommendation cards you want AI to emphasize.',
-  'That sign-in method cannot be unlinked here.',
-  'That sign-in method is not linked.',
-  'Trip Basics',
-  'Trip preview',
-  'Travel Agent',
-  'Unlink',
-  'Unlink sign-in method?',
-  'Unread',
-  'Use current location',
-  'Use template',
-  'Use this template?',
-  'User ID or email',
-  'Waiting for budget',
-  'Waiting for destination',
-  'You can use this number to sign in after it is verified.',
-  'You will no longer be able to sign in with this method.',
-  'Add members',
-  'Admin',
-  'Attach',
-  'Camera',
-  'Chat notifications are muted.',
-  'Chat notifications are on.',
-  'Created',
-  'Creation date unavailable',
-  'Edit group details',
-  'Exit',
-  'Exit chat',
-  'Exit chat?',
-  'Files',
-  'Group description',
-  'Group info',
-  'Group media',
-  'Group title',
-  'Make admin',
-  'Make member',
-  'Manage member',
-  'Media',
-  'Member',
-  'Members',
-  'Mute for 1 hour',
-  'Mute for 24 hours',
-  'Mute for 30 minutes',
-  'Mute forever',
-  'Muted',
-  'No files yet.',
-  'No links yet.',
-  'No photos, videos, or GIFs yet.',
-  'Open GIF',
-  'Owner',
-  'Photos',
-  'Remove',
-  'Remove member',
-  'Remove option',
-  'Remove member?',
-  'Report',
-  'Report received. No data was submitted.',
-  'Saving...',
-  'Tap to play GIF',
-  'This file is unavailable or has expired.',
-  'This link could not be opened.',
-  'Unmute notifications',
-  'Video',
-  'Videos',
-  'will no longer have access to this chat.',
-  'You will lose access until another member invites you again.',
-};
 
 const _zhHantTwText = {
   'Home': '首頁',
@@ -528,7 +153,7 @@ const _zhHantTwText = {
   'Booking': '訂位',
   'Budget': '預算',
   'Dates': '日期',
-  'Travelers': '旅行人數',
+  'Party': '旅伴',
   'ongoing': '進行中',
   'upcoming': '即將開始',
   'completed': '已完成',
@@ -553,27 +178,14 @@ const _zhHantTwText = {
   'Bookings': '預訂',
   'First schedule stops': '前幾個日程停靠點',
   'Add schedule stop': '新增日程停靠點',
-  'Add destination': '新增目的地',
   'Activity': '活動',
   'Time': '時間',
   'Cost': '費用',
   'Cancel': '取消',
   'Add': '新增',
-  'Edit': '編輯',
-  'Save': '儲存',
-  'Amount': '金額',
-  'Note': '備註',
-  'Used': '已使用',
-  'Unused': '未使用',
-  'Create new spending': '新增支出',
-  'Edit spending': '編輯支出',
-  'No spendings yet': '尚無支出',
   'Route map': '路線地圖',
   'Open map': '開啟地圖',
   'Checklist item': '清單項目',
-  'Category name': '分類名稱',
-  'New item': '新項目',
-  'Add category': '新增分類',
   'Add booking': '新增預訂',
   'Title': '標題',
   'Date': '日期',
@@ -623,7 +235,7 @@ const _zhHantTwText = {
   'Plan with AI': '用 AI 規劃',
   'Search a real city, choose dates, tags, and generate.': '搜尋真實城市、選擇日期與標籤後產生。',
   'Create Manually': '手動建立',
-  'Enter destination, dates, budget, people, and tags.': '輸入目的地、日期、預算、人數與標籤。',
+  'Enter destination, dates, budget, people, and tags.': '輸入目的地、日期、預算、旅伴與標籤。',
   'Use Saved Trip Template': '使用已儲存旅程範本',
   'Start from a polished Kyoto sample and edit later.': '從整理好的京都範例開始，之後再編輯。',
   'Hello, where would you like to go?': '你好，想去哪裡？',
@@ -638,30 +250,24 @@ const _zhHantTwText = {
   'Destination': '目的地',
   'Search a real city': '搜尋真實城市',
   'Currency': '貨幣',
-  'Local': '本地',
-  'Original': '原始',
-  'Local / Original': '本地 / 原始',
   'Total budget': '總預算',
   'US dollars': '美元',
   'New Taiwan dollars': '新台幣',
   'Indonesian rupiah': '印尼盾',
   'Japanese yen': '日圓',
   'euros': '歐元',
-  'Number of travelers': '旅行人數',
-  'Decrease travelers': '減少旅客',
-  'Increase travelers': '增加旅客',
-  '1 traveler': '1 位旅客',
-  '2 travelers': '2 位旅客',
-  '4 travelers': '4 位旅客',
-  'Single-traveler pacing': '單人旅行節奏',
-  'Pair-friendly route': '適合兩人的路線',
-  'Small group timing': '小團體行程節奏',
+  'Who is coming': '同行者',
   'Airline optional': '航空公司（選填）',
   'Confirmation': '確認碼',
   'Add custom tag': '新增自訂標籤',
   'Save draft edits': '儲存草稿修改',
   'Popular starting points': '熱門起點',
   'Trip length': '旅程長度',
+  'Travel party': '同行者',
+  'Solo': '獨旅',
+  'Friends': '朋友',
+  'Family': '家人',
+  'Tour': '旅行團',
   'Comfortable timing': '舒適的時間安排',
   'Shared plans and votes': '共享計畫與投票',
   'Personal route and pace': '個人路線與節奏',
@@ -703,42 +309,4 @@ const _zhHantTwText = {
   'Remember me for 30 days': '記住我 30 天',
   'Useful while debugging. Sign out anytime from Profile.':
       '除錯時很方便。可隨時在個人資料登出。',
-  'Welcome Back': '歡迎回來',
-  'Current trip': '目前旅程',
-  'Settings': '設定',
-  'General': '一般',
-  'Travel preferences': '旅行偏好',
-  'Appearance & performance': '外觀與效能',
-  'Data': '資料',
-  'Account actions': '帳戶操作',
-  'Profile identity, sign-in methods, and account access.': '個人身分、登入方式與帳戶存取。',
-  'Language, notifications, and device permissions.': '語言、通知與裝置權限。',
-  'Currency behavior and the interests used for trip planning.':
-      '貨幣顯示方式與旅程規劃使用的興趣。',
-  'Theme, animation, image quality, and battery behavior.':
-      '主題、動畫、圖片品質與電池使用方式。',
-  'Review content that is no longer active.': '查看已不再使用的內容。',
-  'Sign out of this device or permanently delete data.': '登出此裝置或永久刪除資料。',
-  'Display name': '顯示名稱',
-  'Edit display name': '編輯顯示名稱',
-  'Display name cannot be empty.': '顯示名稱不能空白。',
-  'Display name updated.': '顯示名稱已更新。',
-  'Change profile photo': '更換個人照片',
-  'Take a photo': '拍照',
-  'Choose from gallery': '從相簿選擇',
-  'Profile photo updated.': '個人照片已更新。',
-  'Search languages': '搜尋語言',
-  'Search currency or code': '搜尋貨幣或代碼',
-  'No results found.': '找不到結果。',
-  'Account': '帳戶',
-  'Google': 'Google',
-  'Linked': '已連結',
-  'Link': '連結',
-  'On': '開啟',
-  'Delete account?': '刪除帳戶？',
-  'This deletes your sign-in account, profile, and saved trips. This cannot be undone.':
-      '這會刪除你的登入帳戶、個人資料和已儲存旅程，且無法復原。',
-  'Add custom interest': '新增自訂興趣',
-  'Save interests': '儲存興趣',
-  'That interest is not allowed.': '不允許使用這個興趣。',
 };

@@ -5,16 +5,12 @@ class ChatListScreen extends StatefulWidget {
     required this.account,
     required this.user,
     this.onRoomOpenChanged,
-    this.onOpenChat,
-    this.onAppBarActionsChanged,
     super.key,
   });
 
   final AuthenticatedAccount account;
   final UserProfile user;
   final ValueChanged<bool>? onRoomOpenChanged;
-  final ValueChanged<String>? onOpenChat;
-  final ValueChanged<ChatListAppBarActions?>? onAppBarActionsChanged;
 
   @override
   State<ChatListScreen> createState() => _ChatListScreenState();
@@ -30,7 +26,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
   void initState() {
     super.initState();
     unawaited(_syncPublicUser());
-    _publishAppBarActions();
   }
 
   @override
@@ -40,27 +35,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
         oldWidget.account.uid != widget.account.uid) {
       unawaited(_syncPublicUser());
     }
-    if (oldWidget.onAppBarActionsChanged != widget.onAppBarActionsChanged) {
-      _publishAppBarActions();
-    }
   }
 
   @override
   void dispose() {
-    widget.onAppBarActionsChanged?.call(null);
+    widget.onRoomOpenChanged?.call(false);
     super.dispose();
-  }
-
-  void _publishAppBarActions() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      widget.onAppBarActionsChanged?.call(
-        ChatListAppBarActions(
-          onReviewInvite: _reviewInviteCode,
-          onCreateChat: _showCreateChatSheet,
-        ),
-      );
-    });
   }
 
   Future<void> _syncPublicUser() async {
@@ -80,28 +60,53 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final chat = _activeChat;
     final membership = _activeMembership;
     if (chat != null && membership != null) {
-      return PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, _) {
-          if (didPop) return;
-          _closeActiveChat();
-        },
-        child: GroupChatRoomScreen(
-          chat: chat,
-          membership: membership,
-          account: widget.account,
-          user: widget.user,
-          repository: _repository,
-          onBack: _closeActiveChat,
-        ),
+      return GroupChatRoomScreen(
+        chat: chat,
+        membership: membership,
+        account: widget.account,
+        user: widget.user,
+        repository: _repository,
+        onBack: _closeActiveChat,
       );
     }
 
     return ScreenScaffold(
       bottomPadding: 92,
       child: ListView(
-        padding: _responsivePagePadding(context, top: 12, bottom: 112),
+        padding: _responsivePagePadding(context, top: 28, bottom: 112),
         children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  appText(context, 'Chat'),
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              IconButton.filled(
+                tooltip: appText(context, 'Accept invite'),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: _primary,
+                ),
+                onPressed: _reviewInviteCode,
+                icon: const Icon(Icons.link_rounded),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                tooltip: appText(context, 'Create chat'),
+                style: IconButton.styleFrom(
+                  backgroundColor: _primary,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: _showCreateChatSheet,
+                icon: const Icon(Icons.add_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
           if (_error != null) ...[
             FormNotice(message: _error!),
             const SizedBox(height: 12),
@@ -139,8 +144,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       const SizedBox(height: 6),
                       Text(
                         appText(context, 'Create a group to start messaging.'),
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        style: const TextStyle(
+                          color: _secondary,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -348,11 +353,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     TextField(
                       controller: controller,
                       decoration: InputDecoration(
-                        labelText: appText(
-                          context,
-                          'Invite link or group code',
-                        ),
-                        prefixIcon: const Icon(Icons.key_rounded),
+                        labelText: appText(context, 'Invite link or code'),
+                        prefixIcon: const Icon(Icons.link_rounded),
                       ),
                       textInputAction: TextInputAction.done,
                       onSubmitted: (_) =>
@@ -360,7 +362,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     ),
                     const SizedBox(height: 18),
                     PrimaryButton(
-                      label: 'Continue',
+                      label: 'Review invite',
                       icon: Icons.search_rounded,
                       onPressed: () =>
                           Navigator.of(context).pop(controller.text),
@@ -373,18 +375,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ),
       );
       if (code == null || code.trim().isEmpty) return;
-      try {
-        final result = await _repository.joinGroupByCode(code);
-        if (!mounted) return;
-        await _openJoinedGroup(result);
-      } on FirebaseFunctionsException catch (error) {
-        if (error.code != 'not-found' && error.code != 'invalid-argument') {
-          rethrow;
-        }
-        final invite = await _repository.loadInvite(code);
-        if (!mounted) return;
-        await _showInviteReview(invite);
-      }
+      final invite = await _repository.loadInvite(code);
+      if (!mounted) return;
+      await _showInviteReview(invite);
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = _chatErrorMessage(error));
@@ -444,24 +437,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
-  Future<void> _openJoinedGroup(GroupChatJoinResult result) async {
-    final chat = await _repository.loadChat(result.chatId);
-    if (!mounted) return;
-    if (chat == null) {
-      setState(() => _error = 'Chat was not found.');
-      return;
-    }
-    _showChat(
-      chat,
-      GroupChatMembership(
-        chatId: result.chatId,
-        role: result.role,
-        status: GroupChatMemberStatus.active.name,
-        titleSnapshot: result.title,
-      ),
-    );
-  }
-
   Future<void> _declineInvite(GroupChatInvite invite) async {
     try {
       await _repository.declineInvite(
@@ -477,12 +452,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   void _showChat(GroupChat chat, GroupChatMembership membership) {
-    final onOpenChat = widget.onOpenChat;
-    if (onOpenChat != null) {
-      onOpenChat(chat.id);
-      return;
-    }
-
     setState(() {
       _activeChat = chat;
       _activeMembership = membership;
@@ -498,138 +467,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
     });
     widget.onRoomOpenChanged?.call(false);
   }
-}
-
-class ChatListAppBarActions {
-  const ChatListAppBarActions({
-    required this.onReviewInvite,
-    required this.onCreateChat,
-  });
-
-  final VoidCallback onReviewInvite;
-  final VoidCallback onCreateChat;
-}
-
-class RoutedGroupChatRoomScreen extends StatefulWidget {
-  const RoutedGroupChatRoomScreen({
-    required this.chatId,
-    required this.account,
-    required this.user,
-    required this.onBack,
-    required this.onVisibilityChanged,
-    super.key,
-  });
-
-  final String chatId;
-  final AuthenticatedAccount account;
-  final UserProfile user;
-  final VoidCallback onBack;
-  final ValueChanged<String?> onVisibilityChanged;
-
-  @override
-  State<RoutedGroupChatRoomScreen> createState() =>
-      _RoutedGroupChatRoomScreenState();
-}
-
-class _RoutedGroupChatRoomScreenState extends State<RoutedGroupChatRoomScreen> {
-  final _repository = GroupChatRepository(FirebaseFirestore.instance);
-  late Future<_LoadedGroupChatRoom> _room;
-
-  @override
-  void initState() {
-    super.initState();
-    _room = _loadRoom();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.onVisibilityChanged(widget.chatId);
-    });
-  }
-
-  @override
-  void didUpdateWidget(covariant RoutedGroupChatRoomScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.chatId != widget.chatId ||
-        oldWidget.account.uid != widget.account.uid) {
-      _room = _loadRoom();
-    }
-    if (oldWidget.chatId != widget.chatId) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) widget.onVisibilityChanged(widget.chatId);
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    widget.onVisibilityChanged(null);
-    super.dispose();
-  }
-
-  Future<_LoadedGroupChatRoom> _loadRoom() async {
-    final chat = await _repository.loadChat(widget.chatId);
-    if (chat == null) throw StateError('Chat was not found.');
-
-    final membership = await _repository.loadMembership(
-      accountId: widget.account.uid,
-      chatId: widget.chatId,
-    );
-    if (membership == null || !membership.isActive) {
-      throw StateError('You are not an active member of this chat.');
-    }
-
-    return _LoadedGroupChatRoom(chat: chat, membership: membership);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        widget.onBack();
-      },
-      child: FutureBuilder<_LoadedGroupChatRoom>(
-        future: _room,
-        builder: (context, snapshot) {
-          final room = snapshot.data;
-          if (room != null) {
-            return GroupChatRoomScreen(
-              chat: room.chat,
-              membership: room.membership,
-              account: widget.account,
-              user: widget.user,
-              repository: _repository,
-              onBack: widget.onBack,
-            );
-          }
-
-          if (snapshot.hasError) {
-            return SimpleToolScreen(
-              title: 'Chat',
-              onBack: widget.onBack,
-              children: [
-                FormNotice(
-                  message: _chatErrorMessage(
-                    snapshot.error ?? 'Could not load chat.',
-                  ),
-                ),
-              ],
-            );
-          }
-
-          return const ScreenScaffold(
-            child: Center(child: CircularProgressIndicator()),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _LoadedGroupChatRoom {
-  const _LoadedGroupChatRoom({required this.chat, required this.membership});
-
-  final GroupChat chat;
-  final GroupChatMembership membership;
 }
 
 class GroupChatRoomScreen extends StatefulWidget {
@@ -658,28 +495,13 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   final _input = TextEditingController();
   final _inputFocusNode = FocusNode();
   final _scrollController = ScrollController();
-  final _attachmentService = ChatAttachmentService();
-  late String _chatTitle;
-  late GroupChatMembership _membership;
   var _isSending = false;
-  var _isSendingAttachment = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _chatTitle = widget.chat.title;
-    _membership = widget.membership;
     _inputFocusNode.addListener(_refreshComposer);
-  }
-
-  @override
-  void didUpdateWidget(covariant GroupChatRoomScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.chat.id != widget.chat.id) {
-      _chatTitle = widget.chat.title;
-      _membership = widget.membership;
-    }
   }
 
   @override
@@ -703,10 +525,10 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
           Padding(
             padding: _responsivePagePadding(context, top: 18, bottom: 8),
             child: TopBar(
-              title: _chatTitle,
+              title: widget.chat.title,
               onBack: widget.onBack,
-              action: Icons.more_vert_rounded,
-              onAction: _showGroupMenu,
+              action: Icons.person_add_alt_1_rounded,
+              onAction: _showInviteSheet,
             ),
           ),
           if (_error != null)
@@ -720,7 +542,6 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
               builder: (context, snapshot) {
                 final messages = snapshot.data ?? const <GroupChatMessage>[];
                 WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
                   if (!_scrollController.hasClients) return;
                   _scrollController.animateTo(
                     _scrollController.position.maxScrollExtent,
@@ -746,10 +567,8 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                             Expanded(
                               child: Text(
                                 appText(context, 'Start the conversation.'),
-                                style: TextStyle(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
+                                style: const TextStyle(
+                                  color: _secondary,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
@@ -764,29 +583,10 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                   controller: _scrollController,
                   padding: _responsivePagePadding(context, top: 12, bottom: 12),
                   itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    final message = messages[index];
-                    return GroupMessageBubble(
-                      message: message,
-                      isMine: message.senderId == widget.account.uid,
-                      currentUserId: widget.account.uid,
-                      pollVotes: message.poll == null
-                          ? null
-                          : widget.repository.watchPollVotes(
-                              chatId: widget.chat.id,
-                              messageId: message.id,
-                            ),
-                      onPollVote: message.poll == null
-                          ? null
-                          : (optionIndex) => widget.repository.voteInPoll(
-                              chatId: widget.chat.id,
-                              messageId: message.id,
-                              accountId: widget.account.uid,
-                              profile: widget.user,
-                              optionIndex: optionIndex,
-                            ),
-                    );
-                  },
+                  itemBuilder: (context, index) => GroupMessageBubble(
+                    message: messages[index],
+                    isMine: messages[index].senderId == widget.account.uid,
+                  ),
                 );
               },
             ),
@@ -800,19 +600,6 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
             ),
             child: Row(
               children: [
-                IconButton.filledTonal(
-                  tooltip: appText(context, 'Attach'),
-                  onPressed: _isSending || _isSendingAttachment
-                      ? null
-                      : _showAttachmentMenu,
-                  icon: _isSendingAttachment
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.add_rounded),
-                ),
-                const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
                     controller: _input,
@@ -825,9 +612,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                           ? null
                           : appText(context, 'Message'),
                       hintStyle: TextStyle(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurfaceVariant.withValues(alpha: .72),
+                        color: _secondary.withValues(alpha: .55),
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -837,17 +622,17 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                 const SizedBox(width: 10),
                 IconButton.filled(
                   style: IconButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                    backgroundColor: _primary,
+                    foregroundColor: Colors.white,
                     fixedSize: const Size(54, 54),
                   ),
                   onPressed: _isSending ? null : _sendMessage,
                   icon: _isSending
-                      ? SizedBox.square(
+                      ? const SizedBox.square(
                           dimension: 18,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Theme.of(context).colorScheme.onPrimary,
+                            color: Colors.white,
                           ),
                         )
                       : const Icon(Icons.send_rounded),
@@ -884,405 +669,11 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
     }
   }
 
-  Future<void> _showGroupMenu() async {
-    final action = await showModalBottomSheet<_GroupChatMenuAction>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.person_add_alt_1_rounded),
-                title: Text(appText(context, 'Add members')),
-                onTap: () =>
-                    Navigator.of(context).pop(_GroupChatMenuAction.addMembers),
-              ),
-              ListTile(
-                leading: const Icon(Icons.info_outline_rounded),
-                title: Text(appText(context, 'Group info')),
-                onTap: () =>
-                    Navigator.of(context).pop(_GroupChatMenuAction.info),
-              ),
-              ListTile(
-                leading: const Icon(Icons.perm_media_outlined),
-                title: Text(appText(context, 'Group media')),
-                onTap: () =>
-                    Navigator.of(context).pop(_GroupChatMenuAction.media),
-              ),
-              ListTile(
-                leading: Icon(
-                  _membership.isMuted
-                      ? Icons.notifications_off_rounded
-                      : Icons.notifications_outlined,
-                ),
-                title: Text(appText(context, 'Notifications')),
-                subtitle: _membership.isMuted
-                    ? Text(appText(context, 'Muted'))
-                    : null,
-                onTap: () => Navigator.of(
-                  context,
-                ).pop(_GroupChatMenuAction.notifications),
-              ),
-              ListTile(
-                leading: const Icon(Icons.more_horiz_rounded),
-                title: Text(appText(context, 'More')),
-                onTap: () =>
-                    Navigator.of(context).pop(_GroupChatMenuAction.more),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (!mounted || action == null) return;
-    switch (action) {
-      case _GroupChatMenuAction.addMembers:
-        await _showInviteSheet();
-      case _GroupChatMenuAction.info:
-        await _showGroupInfo();
-      case _GroupChatMenuAction.media:
-        await _showGroupMedia();
-      case _GroupChatMenuAction.notifications:
-        await _showNotificationOptions();
-      case _GroupChatMenuAction.more:
-        await _showMoreOptions();
-    }
-  }
-
-  Future<void> _showGroupInfo() async {
-    await _showFullHeightChatSheet(
-      GroupChatInfoPanel(
-        chatId: widget.chat.id,
-        accountId: widget.account.uid,
-        repository: widget.repository,
-        onAddMembers: () {
-          Navigator.of(context).pop();
-          Future<void>.delayed(Duration.zero, _showInviteSheet);
-        },
-        onOpenMedia: () {
-          Navigator.of(context).pop();
-          Future<void>.delayed(Duration.zero, _showGroupMedia);
-        },
-      ),
-    );
-    final chat = await widget.repository.loadChat(widget.chat.id);
-    if (mounted && chat != null) {
-      setState(() => _chatTitle = chat.title);
-    }
-  }
-
-  Future<void> _showGroupMedia() {
-    return _showFullHeightChatSheet(
-      GroupChatMediaPanel(
-        chatId: widget.chat.id,
-        repository: widget.repository,
-      ),
-    );
-  }
-
-  Future<void> _showFullHeightChatSheet(Widget child) {
-    return showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => FractionallySizedBox(
-        heightFactor: MediaQuery.sizeOf(context).height < 700 ? 1 : .92,
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: child,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showNotificationOptions() async {
-    final selected = await showModalBottomSheet<_ChatMuteChoice>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.notifications_active_rounded),
-                title: Text(appText(context, 'Unmute notifications')),
-                onTap: () => Navigator.of(context).pop(_ChatMuteChoice.unmuted),
-              ),
-              ListTile(
-                leading: const Icon(Icons.timer_outlined),
-                title: Text(appText(context, 'Mute for 30 minutes')),
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatMuteChoice.thirtyMinutes),
-              ),
-              ListTile(
-                leading: const Icon(Icons.timer_outlined),
-                title: Text(appText(context, 'Mute for 1 hour')),
-                onTap: () => Navigator.of(context).pop(_ChatMuteChoice.oneHour),
-              ),
-              ListTile(
-                leading: const Icon(Icons.schedule_rounded),
-                title: Text(appText(context, 'Mute for 24 hours')),
-                onTap: () => Navigator.of(context).pop(_ChatMuteChoice.oneDay),
-              ),
-              ListTile(
-                leading: const Icon(Icons.notifications_off_rounded),
-                title: Text(appText(context, 'Mute forever')),
-                onTap: () => Navigator.of(context).pop(_ChatMuteChoice.forever),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (!mounted || selected == null) return;
-    try {
-      final now = DateTime.now();
-      final until = switch (selected) {
-        _ChatMuteChoice.thirtyMinutes => now.add(const Duration(minutes: 30)),
-        _ChatMuteChoice.oneHour => now.add(const Duration(hours: 1)),
-        _ChatMuteChoice.oneDay => now.add(const Duration(days: 1)),
-        _ => null,
-      };
-      await widget.repository.setMute(
-        chatId: widget.chat.id,
-        accountId: widget.account.uid,
-        until: until,
-        forever: selected == _ChatMuteChoice.forever,
-      );
-      final membership = await widget.repository.loadMembership(
-        accountId: widget.account.uid,
-        chatId: widget.chat.id,
-      );
-      if (!mounted) return;
-      if (membership != null) {
-        setState(() => _membership = membership);
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            appText(
-              context,
-              selected == _ChatMuteChoice.unmuted
-                  ? 'Chat notifications are on.'
-                  : 'Chat notifications are muted.',
-            ),
-          ),
-        ),
-      );
-    } catch (error) {
-      if (mounted) setState(() => _error = _chatErrorMessage(error));
-    }
-  }
-
-  Future<void> _showMoreOptions() async {
-    final action = await showModalBottomSheet<_ChatMoreAction>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.flag_outlined),
-                title: Text(appText(context, 'Report')),
-                onTap: () => Navigator.of(context).pop(_ChatMoreAction.report),
-              ),
-              ListTile(
-                leading: Icon(
-                  Icons.exit_to_app_rounded,
-                  color: Theme.of(context).colorScheme.error,
-                ),
-                title: Text(
-                  appText(context, 'Exit chat'),
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-                onTap: () => Navigator.of(context).pop(_ChatMoreAction.exit),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (!mounted || action == null) return;
-    if (action == _ChatMoreAction.report) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            appText(context, 'Report received. No data was submitted.'),
-          ),
-        ),
-      );
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(appText(context, 'Exit chat?')),
-        content: Text(
-          appText(
-            context,
-            'You will lose access until another member invites you again.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(appText(context, 'Cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(appText(context, 'Exit')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      await widget.repository.leaveChat(
-        chatId: widget.chat.id,
-        accountId: widget.account.uid,
-      );
-      if (mounted) widget.onBack();
-    } catch (error) {
-      if (mounted) setState(() => _error = _chatErrorMessage(error));
-    }
-  }
-
-  Future<void> _showAttachmentMenu() async {
-    final action = await showModalBottomSheet<_ChatComposerAction>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _AttachmentSourceButton(
-                icon: Icons.photo_camera_rounded,
-                label: 'Camera',
-                enabled: _attachmentService.cameraAvailable,
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatComposerAction.camera),
-              ),
-              _AttachmentSourceButton(
-                icon: Icons.photo_library_rounded,
-                label: 'Photos',
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatComposerAction.photos),
-              ),
-              _AttachmentSourceButton(
-                icon: Icons.video_library_rounded,
-                label: 'Videos',
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatComposerAction.videos),
-              ),
-              _AttachmentSourceButton(
-                icon: Icons.attach_file_rounded,
-                label: 'Files',
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatComposerAction.files),
-              ),
-              _AttachmentSourceButton(
-                icon: Icons.poll_rounded,
-                label: 'Poll',
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatComposerAction.poll),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (!mounted || action == null) return;
-    if (action == _ChatComposerAction.poll) {
-      await _showCreatePollSheet();
-      return;
-    }
-    final source = switch (action) {
-      _ChatComposerAction.camera => ChatAttachmentSource.camera,
-      _ChatComposerAction.photos => ChatAttachmentSource.photos,
-      _ChatComposerAction.videos => ChatAttachmentSource.videos,
-      _ChatComposerAction.files => ChatAttachmentSource.files,
-      _ChatComposerAction.poll => throw StateError(
-        'Poll is not an attachment.',
-      ),
-    };
-    setState(() {
-      _isSendingAttachment = true;
-      _error = null;
-    });
-    try {
-      final settings = PerformanceScope.maybeSettingsOf(context);
-      final attachment = await _attachmentService.pick(
-        source: source,
-        imageQuality: settings.imageQuality,
-      );
-      if (attachment == null) return;
-      await widget.repository.sendAttachment(
-        chatId: widget.chat.id,
-        accountId: widget.account.uid,
-        profile: widget.user,
-        senderPhotoUrl: widget.user.photoUrl ?? widget.account.photoUrl,
-        attachment: attachment,
-      );
-    } catch (error) {
-      if (mounted) setState(() => _error = _chatErrorMessage(error));
-    } finally {
-      if (mounted) setState(() => _isSendingAttachment = false);
-    }
-  }
-
-  Future<void> _showCreatePollSheet() async {
-    final draft = await showModalBottomSheet<ChatPollDraft>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => const _CreatePollSheet(),
-    );
-    if (!mounted || draft == null) return;
-
-    setState(() {
-      _isSending = true;
-      _error = null;
-    });
-    try {
-      await widget.repository.sendPoll(
-        chatId: widget.chat.id,
-        accountId: widget.account.uid,
-        profile: widget.user,
-        senderPhotoUrl: widget.user.photoUrl ?? widget.account.photoUrl,
-        draft: draft,
-      );
-    } catch (error) {
-      if (mounted) setState(() => _error = _chatErrorMessage(error));
-    } finally {
-      if (mounted) setState(() => _isSending = false);
-    }
-  }
-
   Future<void> _showInviteSheet() async {
     final controller = TextEditingController();
     String? sheetError;
     var isInviting = false;
     var isSharing = false;
-    var isChangingCode = false;
-    var codeFuture = widget.repository.getGroupJoinCode(chatId: widget.chat.id);
-    final canChangeCode =
-        _membership.role == GroupChatRole.owner.name ||
-        _membership.role == GroupChatRole.admin.name;
     try {
       await showModalBottomSheet<void>(
         context: context,
@@ -1292,7 +683,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
         builder: (context) => StatefulBuilder(
           builder: (sheetContext, setSheetState) {
             Future<void> inviteUser() async {
-              if (isInviting || isSharing || isChangingCode) return;
+              if (isInviting || isSharing) return;
               final navigator = Navigator.of(sheetContext);
               setSheetState(() {
                 isInviting = true;
@@ -1318,7 +709,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
             }
 
             Future<void> shareLink() async {
-              if (isInviting || isSharing || isChangingCode) return;
+              if (isInviting || isSharing) return;
               final navigator = Navigator.of(sheetContext);
               setSheetState(() {
                 isSharing = true;
@@ -1342,58 +733,8 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
               }
             }
 
-            Future<void> changeCode() async {
-              if (!canChangeCode || isInviting || isSharing || isChangingCode) {
-                return;
-              }
-              final confirmed = await showDialog<bool>(
-                context: sheetContext,
-                builder: (dialogContext) => AlertDialog(
-                  title: Text(appText(dialogContext, 'Change group code?')),
-                  content: Text(
-                    appText(
-                      dialogContext,
-                      'The current code will stop working immediately.',
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(false),
-                      child: Text(appText(dialogContext, 'Cancel')),
-                    ),
-                    FilledButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(true),
-                      child: Text(appText(dialogContext, 'Change code')),
-                    ),
-                  ],
-                ),
-              );
-              if (confirmed != true || !sheetContext.mounted) return;
-              setSheetState(() {
-                isChangingCode = true;
-                sheetError = null;
-              });
-              try {
-                final code = await widget.repository.getGroupJoinCode(
-                  chatId: widget.chat.id,
-                  regenerate: true,
-                );
-                if (!sheetContext.mounted) return;
-                setSheetState(() {
-                  codeFuture = Future.value(code);
-                  isChangingCode = false;
-                });
-              } catch (error) {
-                if (!sheetContext.mounted) return;
-                setSheetState(() {
-                  isChangingCode = false;
-                  sheetError = _chatErrorMessage(error);
-                });
-              }
-            }
-
             return PopScope(
-              canPop: !isInviting && !isSharing && !isChangingCode,
+              canPop: !isInviting && !isSharing,
               child: SafeArea(
                 child: Center(
                   child: ConstrainedBox(
@@ -1423,8 +764,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                                 ),
                                 IconButton(
                                   tooltip: appText(sheetContext, 'Cancel'),
-                                  onPressed:
-                                      isInviting || isSharing || isChangingCode
+                                  onPressed: isInviting || isSharing
                                       ? null
                                       : () => Navigator.of(sheetContext).pop(),
                                   icon: const Icon(Icons.close_rounded),
@@ -1432,151 +772,6 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                               ],
                             ),
                             const SizedBox(height: 14),
-                            GlassPanel(
-                              padding: const EdgeInsets.all(16),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.key_rounded),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          appText(sheetContext, 'Group code'),
-                                          style: Theme.of(sheetContext)
-                                              .textTheme
-                                              .titleMedium
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w900,
-                                              ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    appText(
-                                      sheetContext,
-                                      'Anyone signed in with this code can join as a member.',
-                                    ),
-                                    style: TextStyle(
-                                      color: Theme.of(
-                                        sheetContext,
-                                      ).colorScheme.onSurfaceVariant,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  FutureBuilder<String>(
-                                    future: codeFuture,
-                                    builder: (context, snapshot) {
-                                      final code = snapshot.data;
-                                      if (snapshot.hasError) {
-                                        return FormNotice(
-                                          message: _chatErrorMessage(
-                                            snapshot.error ??
-                                                'Could not load group code.',
-                                          ),
-                                        );
-                                      }
-                                      if (code == null) {
-                                        return const Center(
-                                          child: CircularProgressIndicator(),
-                                        );
-                                      }
-                                      return Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.stretch,
-                                        children: [
-                                          SelectableText(
-                                            code,
-                                            textAlign: TextAlign.center,
-                                            style: Theme.of(sheetContext)
-                                                .textTheme
-                                                .headlineSmall
-                                                ?.copyWith(
-                                                  fontWeight: FontWeight.w900,
-                                                  letterSpacing: 2,
-                                                ),
-                                          ),
-                                          const SizedBox(height: 12),
-                                          Wrap(
-                                            alignment: WrapAlignment.center,
-                                            spacing: 10,
-                                            runSpacing: 10,
-                                            children: [
-                                              OutlinedButton.icon(
-                                                onPressed: isChangingCode
-                                                    ? null
-                                                    : () async {
-                                                        await Clipboard.setData(
-                                                          ClipboardData(
-                                                            text: code,
-                                                          ),
-                                                        );
-                                                        if (!sheetContext
-                                                            .mounted) {
-                                                          return;
-                                                        }
-                                                        ScaffoldMessenger.of(
-                                                          sheetContext,
-                                                        ).showSnackBar(
-                                                          SnackBar(
-                                                            content: Text(
-                                                              appText(
-                                                                sheetContext,
-                                                                'Code copied.',
-                                                              ),
-                                                            ),
-                                                          ),
-                                                        );
-                                                      },
-                                                icon: const Icon(
-                                                  Icons.copy_rounded,
-                                                ),
-                                                label: Text(
-                                                  appText(
-                                                    sheetContext,
-                                                    'Copy code',
-                                                  ),
-                                                ),
-                                              ),
-                                              if (canChangeCode)
-                                                OutlinedButton.icon(
-                                                  onPressed: isChangingCode
-                                                      ? null
-                                                      : () => unawaited(
-                                                          changeCode(),
-                                                        ),
-                                                  icon: isChangingCode
-                                                      ? const SizedBox.square(
-                                                          dimension: 16,
-                                                          child:
-                                                              CircularProgressIndicator(
-                                                                strokeWidth: 2,
-                                                              ),
-                                                        )
-                                                      : const Icon(
-                                                          Icons.refresh_rounded,
-                                                        ),
-                                                  label: Text(
-                                                    appText(
-                                                      sheetContext,
-                                                      'Change code',
-                                                    ),
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
-                                        ],
-                                      );
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 16),
                             TextField(
                               controller: controller,
                               decoration: InputDecoration(
@@ -1601,15 +796,13 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                               icon: isInviting
                                   ? Icons.hourglass_top_rounded
                                   : Icons.person_add_rounded,
-                              onPressed:
-                                  isInviting || isSharing || isChangingCode
+                              onPressed: isInviting || isSharing
                                   ? null
                                   : () => unawaited(inviteUser()),
                             ),
                             const SizedBox(height: 12),
                             OutlinedButton.icon(
-                              onPressed:
-                                  isInviting || isSharing || isChangingCode
+                              onPressed: isInviting || isSharing
                                   ? null
                                   : () => unawaited(shareLink()),
                               icon: isSharing
@@ -1694,222 +887,6 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   }
 }
 
-enum _GroupChatMenuAction { addMembers, info, media, notifications, more }
-
-enum _ChatMuteChoice { unmuted, thirtyMinutes, oneHour, oneDay, forever }
-
-enum _ChatMoreAction { report, exit }
-
-enum _ChatComposerAction { camera, photos, videos, files, poll }
-
-class _CreatePollSheet extends StatefulWidget {
-  const _CreatePollSheet();
-
-  @override
-  State<_CreatePollSheet> createState() => _CreatePollSheetState();
-}
-
-class _CreatePollSheetState extends State<_CreatePollSheet> {
-  final _question = TextEditingController();
-  final List<TextEditingController> _options = [
-    TextEditingController(),
-    TextEditingController(),
-  ];
-  String? _error;
-
-  @override
-  void dispose() {
-    _question.dispose();
-    for (final option in _options) {
-      option.dispose();
-    }
-    super.dispose();
-  }
-
-  void _addOption() {
-    if (_options.length >= 6) return;
-    setState(() => _options.add(TextEditingController()));
-  }
-
-  void _removeOption(int index) {
-    if (_options.length <= 2) return;
-    final controller = _options.removeAt(index);
-    controller.dispose();
-    setState(() {});
-  }
-
-  void _createPoll() {
-    final question = _question.text.trim();
-    final options = _options
-        .map((controller) => controller.text.trim())
-        .where((option) => option.isNotEmpty)
-        .toList(growable: false);
-    if (question.isEmpty) {
-      setState(() => _error = 'Enter a poll question.');
-      return;
-    }
-    if (options.length < 2) {
-      setState(() => _error = 'Enter at least two poll options.');
-      return;
-    }
-    if (options.toSet().length != options.length) {
-      setState(() => _error = 'Poll options must be different.');
-      return;
-    }
-    Navigator.of(
-      context,
-    ).pop(ChatPollDraft(question: question, options: options));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-          20,
-          8,
-          20,
-          MediaQuery.viewInsetsOf(context).bottom + 20,
-        ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 620),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  appText(context, 'Create poll'),
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: _question,
-                  autofocus: true,
-                  maxLength: 300,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: InputDecoration(
-                    labelText: appText(context, 'Question'),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                for (var index = 0; index < _options.length; index++) ...[
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _options[index],
-                          maxLength: 120,
-                          textCapitalization: TextCapitalization.sentences,
-                          decoration: InputDecoration(
-                            labelText:
-                                '${appText(context, 'Option')} ${index + 1}',
-                          ),
-                        ),
-                      ),
-                      if (_options.length > 2) ...[
-                        const SizedBox(width: 6),
-                        IconButton(
-                          tooltip: appText(context, 'Remove option'),
-                          onPressed: () => _removeOption(index),
-                          icon: const Icon(Icons.remove_circle_outline_rounded),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                ],
-                if (_options.length < 6)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: _addOption,
-                      icon: const Icon(Icons.add_rounded),
-                      label: Text(appText(context, 'Add option')),
-                    ),
-                  ),
-                if (_error != null) ...[
-                  const SizedBox(height: 8),
-                  FormNotice(message: _error!),
-                ],
-                const SizedBox(height: 14),
-                Wrap(
-                  alignment: WrapAlignment.end,
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: Text(appText(context, 'Cancel')),
-                    ),
-                    FilledButton.icon(
-                      onPressed: _createPoll,
-                      icon: const Icon(Icons.poll_rounded),
-                      label: Text(appText(context, 'Create poll')),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AttachmentSourceButton extends StatelessWidget {
-  const _AttachmentSourceButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.enabled = true,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 130,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: enabled ? onTap : null,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 32,
-                color: enabled
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).disabledColor,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                appText(context, label),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: enabled ? null : Theme.of(context).disabledColor,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _PendingInvites extends StatelessWidget {
   const _PendingInvites({
     required this.accountId,
@@ -1987,24 +964,8 @@ class _PendingInvites extends StatelessWidget {
 }
 
 String _chatErrorMessage(Object error) {
-  if (error is FirebaseException) {
-    return switch (error.code) {
-      'permission-denied' || 'unauthorized'
-          when error.plugin == 'firebase_storage' =>
-        'Firebase Storage denied the file upload. Reopen the chat and try again.',
-      'permission-denied' || 'unauthorized' =>
-        'Firebase denied the chat update. Refresh the chat and try again.',
-      'object-not-found' => 'The uploaded file could not be found.',
-      'canceled' => 'The upload was canceled.',
-      'retry-limit-exceeded' =>
-        'The upload timed out. Check your connection and try again.',
-      'network-request-failed' || 'unavailable' =>
-        'The network is unavailable. Check your connection and try again.',
-      _ =>
-        error.message?.trim().isNotEmpty == true
-            ? error.message!.trim()
-            : 'Firebase could not complete this action.',
-    };
+  if (error is FirebaseException && error.code == 'permission-denied') {
+    return 'Firebase blocked this action. Refresh the app and try again.';
   }
   return error
       .toString()

@@ -4,6 +4,7 @@ class TripsScreen extends StatelessWidget {
   const TripsScreen({
     required this.trips,
     required this.memories,
+    required this.onBack,
     required this.onCreate,
     required this.onOpenTrip,
     required this.onStartTrip,
@@ -12,6 +13,7 @@ class TripsScreen extends StatelessWidget {
   });
   final List<Trip> trips;
   final List<TripMemory> memories;
+  final VoidCallback onBack;
   final VoidCallback onCreate;
   final ValueChanged<Trip> onOpenTrip;
   final ValueChanged<Trip> onStartTrip;
@@ -24,6 +26,13 @@ class TripsScreen extends StatelessWidget {
       child: ListView(
         padding: _responsivePagePadding(context, top: 18, bottom: 112),
         children: [
+          TopBar(
+            title: 'Trips',
+            onBack: onBack,
+            action: Icons.add_rounded,
+            onAction: onCreate,
+          ),
+          const SizedBox(height: 18),
           if (trips.isEmpty)
             GlassPanel(
               padding: const EdgeInsets.all(18),
@@ -175,7 +184,7 @@ class _TripMemoryCard extends StatelessWidget {
                   children: [
                     SmallPill(
                       label:
-                          '${_displayMoney(context, memory.actualSpend, memory.currency)} remembered',
+                          '${memory.currency} ${memory.actualSpend} remembered',
                     ),
                     SmallPill(label: missedLabel),
                     for (final place in memory.favoritePlaces.take(2))

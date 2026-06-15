@@ -1,17 +1,9 @@
 part of travel_agent_app;
 
 class GroupChatRepository {
-  GroupChatRepository(
-    this._firestore, {
-    FirebaseStorage? storage,
-    FirebaseFunctions? functions,
-  }) : _storage = storage ?? FirebaseStorage.instance,
-       _functions =
-           functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
+  const GroupChatRepository(this._firestore);
 
   final FirebaseFirestore _firestore;
-  final FirebaseStorage _storage;
-  final FirebaseFunctions _functions;
 
   CollectionReference<Map<String, dynamic>> get _chatsRef =>
       _firestore.collection('chat_groups');
@@ -55,15 +47,6 @@ class GroupChatRepository {
         );
   }
 
-  Future<GroupChatMembership?> loadMembership({
-    required String accountId,
-    required String chatId,
-  }) async {
-    final snapshot = await _membershipsRef(accountId).doc(chatId).get();
-    if (!snapshot.exists) return null;
-    return GroupChatMembership.fromDoc(snapshot);
-  }
-
   Stream<List<GroupChatInvite>> watchPendingInvites(String accountId) {
     return _userInvitesRef(accountId).snapshots().map((snapshot) {
       final invites = snapshot.docs
@@ -92,71 +75,6 @@ class GroupChatRepository {
         );
   }
 
-  Stream<Map<String, int>> watchPollVotes({
-    required String chatId,
-    required String messageId,
-  }) {
-    return _chatDoc(chatId)
-        .collection('messages')
-        .doc(messageId)
-        .collection('votes')
-        .snapshots()
-        .map(
-          (snapshot) => {
-            for (final doc in snapshot.docs)
-              if (doc.data()['optionIndex'] is int)
-                doc.id: doc.data()['optionIndex'] as int,
-          },
-        );
-  }
-
-  Stream<GroupChat?> watchChat(String chatId) {
-    return _chatDoc(chatId).snapshots().map(
-      (snapshot) => snapshot.exists ? GroupChat.fromDoc(snapshot) : null,
-    );
-  }
-
-  Stream<List<GroupChatMember>> watchMembers(String chatId) {
-    return _chatDoc(chatId).collection('members').snapshots().map((snapshot) {
-      final members = snapshot.docs
-          .map(GroupChatMember.fromDoc)
-          .where((member) => member.isActive)
-          .toList();
-      members.sort((a, b) {
-        final roleOrder = {
-          GroupChatRole.owner.name: 0,
-          GroupChatRole.admin.name: 1,
-          GroupChatRole.member.name: 2,
-        };
-        final roleComparison = (roleOrder[a.role] ?? 3).compareTo(
-          roleOrder[b.role] ?? 3,
-        );
-        if (roleComparison != 0) return roleComparison;
-        return a.displayNameSnapshot.toLowerCase().compareTo(
-          b.displayNameSnapshot.toLowerCase(),
-        );
-      });
-      return members;
-    });
-  }
-
-  Stream<List<GroupChatMessage>> watchSharedContent(String chatId) {
-    return _chatDoc(chatId)
-        .collection('messages')
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map(GroupChatMessage.fromDoc)
-              .where(
-                (message) =>
-                    message.attachments.isNotEmpty ||
-                    _firstUrlIn(message.text) != null,
-              )
-              .toList(),
-        );
-  }
-
   Future<GroupChat?> loadChat(String chatId) async {
     final snapshot = await _chatDoc(chatId).get();
     if (!snapshot.exists) return null;
@@ -181,7 +99,6 @@ class GroupChatRepository {
       'ownerId': accountId,
       'memberIds': [accountId],
       'roles': {accountId: GroupChatRole.owner.name},
-      'description': '',
       'linkedTripId': null,
       'type': 'group',
       'lastMessageText': '',
@@ -204,8 +121,6 @@ class GroupChatRepository {
       'titleSnapshot': cleanTitle,
       'lastMessageText': '',
       'unreadCount': 0,
-      'mutedUntil': null,
-      'mutedForever': false,
       'createdAt': now,
       'updatedAt': now,
     });
@@ -264,356 +179,6 @@ class GroupChatRepository {
     await batch.commit();
   }
 
-  Future<void> sendPoll({
-    required String chatId,
-    required String accountId,
-    required UserProfile profile,
-    required ChatPollDraft draft,
-    String? senderPhotoUrl,
-  }) async {
-    final question = draft.question.trim();
-    final options = draft.options
-        .map((option) => option.trim())
-        .where((option) => option.isNotEmpty)
-        .toSet()
-        .toList(growable: false);
-    if (question.isEmpty || question.length > 300) {
-      throw StateError('Poll questions must be between 1 and 300 characters.');
-    }
-    if (options.length < 2 || options.length > 10) {
-      throw StateError('Polls need between 2 and 10 unique options.');
-    }
-    if (options.any((option) => option.length > 120)) {
-      throw StateError('Poll options must be 120 characters or fewer.');
-    }
-
-    final chat = await _requireActiveChatMember(chatId, accountId);
-    final now = FieldValue.serverTimestamp();
-    final preview = 'Poll: $question';
-    final messageRef = _chatDoc(chatId).collection('messages').doc();
-    final batch = _firestore.batch();
-    batch.set(messageRef, {
-      'senderId': accountId,
-      'senderNameSnapshot': _displayNameFor(profile),
-      'senderPhotoUrlSnapshot': senderPhotoUrl,
-      'text': '',
-      'type': 'poll',
-      'attachments': const <Map<String, dynamic>>[],
-      'poll': ChatPoll(question: question, options: options).toMap(),
-      'createdAt': now,
-      'editedAt': null,
-    });
-    _setChatActivitySnapshots(
-      batch: batch,
-      chat: chat,
-      chatId: chatId,
-      preview: preview,
-      timestamp: now,
-    );
-    await batch.commit();
-  }
-
-  Future<void> voteInPoll({
-    required String chatId,
-    required String messageId,
-    required String accountId,
-    required UserProfile profile,
-    required int optionIndex,
-  }) async {
-    await _requireActiveChatMember(chatId, accountId);
-    final messageRef = _chatDoc(chatId).collection('messages').doc(messageId);
-    final message = await messageRef.get();
-    final poll = ChatPoll.fromMap(message.data()?['poll']);
-    if (!message.exists || poll == null) {
-      throw StateError('This poll is no longer available.');
-    }
-    if (optionIndex < 0 || optionIndex >= poll.options.length) {
-      throw StateError('That poll option is no longer available.');
-    }
-
-    await messageRef.collection('votes').doc(accountId).set({
-      'optionIndex': optionIndex,
-      'voterNameSnapshot': _displayNameFor(profile),
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  Future<void> sendAttachment({
-    required String chatId,
-    required String accountId,
-    required UserProfile profile,
-    required PendingChatAttachment attachment,
-    String? senderPhotoUrl,
-    String caption = '',
-  }) async {
-    if (attachment.sizeBytes > ChatAttachmentService.maximumUploadBytes) {
-      throw StateError('The selected file must be smaller than 50 MB.');
-    }
-    final chat = await _requireActiveChatMember(chatId, accountId);
-
-    final messageRef = _chatDoc(chatId).collection('messages').doc();
-    final safeName = _safeStorageName(attachment.name);
-    final storagePath =
-        'chat_attachments/$chatId/$accountId/${messageRef.id}/$safeName';
-    final storageRef = _storage.ref(storagePath);
-    var uploaded = false;
-    try {
-      await storageRef.putData(
-        attachment.bytes,
-        SettableMetadata(
-          contentType: attachment.mimeType,
-          cacheControl: 'private,max-age=3600',
-          customMetadata: {'uploaderId': accountId, 'messageId': messageRef.id},
-        ),
-      );
-      uploaded = true;
-      final url = await storageRef.getDownloadURL();
-      final now = FieldValue.serverTimestamp();
-      final cleanCaption = caption.trim();
-      final preview = cleanCaption.isEmpty
-          ? _attachmentPreviewText(attachment)
-          : cleanCaption;
-      final attachmentData = <String, dynamic>{
-        'type': attachment.type,
-        'storagePath': storagePath,
-        'url': url,
-        'name': attachment.name,
-        'mimeType': attachment.mimeType,
-        'sizeBytes': attachment.sizeBytes,
-      };
-      final batch = _firestore.batch();
-      batch.set(messageRef, {
-        'senderId': accountId,
-        'senderNameSnapshot': _displayNameFor(profile),
-        'senderPhotoUrlSnapshot': senderPhotoUrl,
-        'text': cleanCaption,
-        'type': 'attachment',
-        'attachments': [attachmentData],
-        'createdAt': now,
-        'editedAt': null,
-      });
-      _setChatActivitySnapshots(
-        batch: batch,
-        chat: chat,
-        chatId: chatId,
-        preview: preview,
-        timestamp: now,
-      );
-      await batch.commit();
-    } catch (_) {
-      if (uploaded) {
-        try {
-          await storageRef.delete();
-        } catch (_) {}
-      }
-      rethrow;
-    }
-  }
-
-  Future<GroupChat> _requireActiveChatMember(
-    String chatId,
-    String accountId,
-  ) async {
-    final authenticatedUser = FirebaseAuth.instance.currentUser;
-    if (authenticatedUser == null || authenticatedUser.uid != accountId) {
-      throw StateError('Your sign-in session expired. Sign in again.');
-    }
-    final results = await Future.wait<DocumentSnapshot<Map<String, dynamic>>>([
-      _chatDoc(chatId).get(),
-      _chatDoc(chatId).collection('members').doc(accountId).get(),
-    ]);
-    final chatSnapshot = results[0];
-    final memberSnapshot = results[1];
-    if (!chatSnapshot.exists ||
-        !memberSnapshot.exists ||
-        memberSnapshot.data()?['status'] != GroupChatMemberStatus.active.name) {
-      throw StateError('You no longer have access to this chat.');
-    }
-    return GroupChat.fromDoc(chatSnapshot);
-  }
-
-  void _setChatActivitySnapshots({
-    required WriteBatch batch,
-    required GroupChat chat,
-    required String chatId,
-    required String preview,
-    required FieldValue timestamp,
-  }) {
-    batch.set(_chatDoc(chatId), {
-      'lastMessageText': preview,
-      'lastMessageAt': timestamp,
-      'updatedAt': timestamp,
-    }, SetOptions(merge: true));
-    for (final memberId in chat.memberIds) {
-      batch.set(_membershipsRef(memberId).doc(chatId), {
-        'chatId': chatId,
-        'titleSnapshot': chat.title,
-        'lastMessageText': preview,
-        'lastMessageAt': timestamp,
-        'updatedAt': timestamp,
-      }, SetOptions(merge: true));
-    }
-  }
-
-  Future<void> updateChatDetails({
-    required String chatId,
-    required String actorId,
-    required String title,
-    required String description,
-  }) async {
-    final chat = await _requireManageableChat(chatId, actorId);
-    final cleanTitle = _cleanChatTitle(title);
-    final cleanDescription = _cleanChatDescription(description);
-    final now = FieldValue.serverTimestamp();
-    final batch = _firestore.batch();
-    batch.set(_chatDoc(chatId), {
-      'title': cleanTitle,
-      'description': cleanDescription,
-      'updatedAt': now,
-    }, SetOptions(merge: true));
-    for (final memberId in chat.memberIds) {
-      batch.set(_membershipsRef(memberId).doc(chatId), {
-        'titleSnapshot': cleanTitle,
-        'updatedAt': now,
-      }, SetOptions(merge: true));
-    }
-    await batch.commit();
-  }
-
-  Future<void> updateMemberRole({
-    required String chatId,
-    required String actorId,
-    required String memberId,
-    required GroupChatRole role,
-  }) async {
-    if (role == GroupChatRole.owner) {
-      throw StateError('Ownership transfer is not available yet.');
-    }
-    final chat = await _requireManageableChat(chatId, actorId);
-    if (memberId == chat.ownerId) {
-      throw StateError("The owner's role cannot be changed.");
-    }
-    if (!chat.memberIds.contains(memberId)) {
-      throw StateError('That person is no longer in this chat.');
-    }
-    final roles = {...chat.roles, memberId: role.name};
-    final now = FieldValue.serverTimestamp();
-    final batch = _firestore.batch();
-    batch.set(_chatDoc(chatId), {
-      'roles': roles,
-      'updatedAt': now,
-    }, SetOptions(merge: true));
-    batch.set(
-      _chatDoc(chatId).collection('members').doc(memberId),
-      {'role': role.name, 'updatedAt': now},
-      SetOptions(merge: true),
-    );
-    batch.set(_membershipsRef(memberId).doc(chatId), {
-      'role': role.name,
-      'updatedAt': now,
-    }, SetOptions(merge: true));
-    await batch.commit();
-  }
-
-  Future<void> removeMember({
-    required String chatId,
-    required String actorId,
-    required String memberId,
-  }) async {
-    await _removeActiveMember(
-      chatId: chatId,
-      actorId: actorId,
-      memberId: memberId,
-      isLeaving: false,
-    );
-  }
-
-  Future<void> leaveChat({
-    required String chatId,
-    required String accountId,
-  }) async {
-    await _removeActiveMember(
-      chatId: chatId,
-      actorId: accountId,
-      memberId: accountId,
-      isLeaving: true,
-    );
-  }
-
-  Future<void> setMute({
-    required String chatId,
-    required String accountId,
-    DateTime? until,
-    bool forever = false,
-  }) {
-    return _membershipsRef(accountId).doc(chatId).set({
-      'mutedForever': forever,
-      'mutedUntil': forever || until == null
-          ? null
-          : Timestamp.fromDate(until.toUtc()),
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-  }
-
-  Future<GroupChat> _requireManageableChat(
-    String chatId,
-    String actorId,
-  ) async {
-    final chat = await loadChat(chatId);
-    if (chat == null) throw StateError('Chat not found.');
-    final role = chat.roles[actorId];
-    if (role != GroupChatRole.owner.name && role != GroupChatRole.admin.name) {
-      throw StateError('Only the owner or an admin can do that.');
-    }
-    return chat;
-  }
-
-  Future<void> _removeActiveMember({
-    required String chatId,
-    required String actorId,
-    required String memberId,
-    required bool isLeaving,
-  }) async {
-    final chat = await loadChat(chatId);
-    if (chat == null) throw StateError('Chat not found.');
-    if (memberId == chat.ownerId) {
-      throw StateError(
-        'The owner must transfer ownership before leaving the chat.',
-      );
-    }
-    if (!isLeaving) {
-      final actorRole = chat.roles[actorId];
-      if (actorRole != GroupChatRole.owner.name &&
-          actorRole != GroupChatRole.admin.name) {
-        throw StateError('Only the owner or an admin can remove members.');
-      }
-    } else if (actorId != memberId) {
-      throw StateError('You can only leave for your own account.');
-    }
-    if (!chat.memberIds.contains(memberId)) return;
-
-    final roles = {...chat.roles}..remove(memberId);
-    final memberIds = [...chat.memberIds]..remove(memberId);
-    final now = FieldValue.serverTimestamp();
-    final batch = _firestore.batch();
-    batch.set(_chatDoc(chatId), {
-      'memberIds': memberIds,
-      'roles': roles,
-      'updatedAt': now,
-    }, SetOptions(merge: true));
-    batch.set(
-      _chatDoc(chatId).collection('members').doc(memberId),
-      {'status': GroupChatMemberStatus.left.name, 'updatedAt': now},
-      SetOptions(merge: true),
-    );
-    batch.set(_membershipsRef(memberId).doc(chatId), {
-      'status': GroupChatMemberStatus.left.name,
-      'updatedAt': now,
-    }, SetOptions(merge: true));
-    await batch.commit();
-  }
-
   Future<GroupChatInvite> createShareInvite({
     required String chatId,
     required String inviterId,
@@ -636,39 +201,6 @@ class GroupChatRepository {
     );
     await _writeInvite(invite: invite, userInviteeId: null);
     return invite;
-  }
-
-  Future<String> getGroupJoinCode({
-    required String chatId,
-    bool regenerate = false,
-  }) async {
-    final callable = _functions.httpsCallable('getGroupChatJoinCode');
-    final result = await callable.call(<String, dynamic>{
-      'chatId': chatId,
-      'regenerate': regenerate,
-    });
-    final data = Map<String, dynamic>.from(
-      (result.data as Map?) ?? const <String, dynamic>{},
-    );
-    final code = (data['code'] as String?)?.trim() ?? '';
-    if (code.isEmpty) {
-      throw StateError('Firebase did not return a group code.');
-    }
-    return code;
-  }
-
-  Future<GroupChatJoinResult> joinGroupByCode(String value) async {
-    final code = _inviteCodeFromText(value);
-    final callable = _functions.httpsCallable('joinGroupChatByCode');
-    final result = await callable.call(<String, dynamic>{'code': code});
-    final data = Map<String, dynamic>.from(
-      (result.data as Map?) ?? const <String, dynamic>{},
-    );
-    final joinResult = GroupChatJoinResult.fromMap(data);
-    if (joinResult.chatId.isEmpty) {
-      throw StateError('Firebase did not return the joined group.');
-    }
-    return joinResult;
   }
 
   Future<GroupChatInvite> inviteByUserInput({
@@ -728,8 +260,6 @@ class GroupChatRepository {
       'lastMessageText': chat.lastMessageText,
       'lastMessageAt': chat.lastMessageAt,
       'unreadCount': 0,
-      'mutedUntil': null,
-      'mutedForever': false,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
     await batch.commit();
@@ -807,8 +337,6 @@ class GroupChatRepository {
       'lastMessageText': chat.lastMessageText,
       'lastMessageAt': chat.lastMessageAt,
       'unreadCount': 0,
-      'mutedUntil': null,
-      'mutedForever': false,
       'updatedAt': acceptedAt,
     }, SetOptions(merge: true));
     _updateInviteStatus(batch, invite, GroupChatInviteStatus.accepted.name);
@@ -908,41 +436,6 @@ String _cleanChatTitle(String value) {
   if (title.isEmpty) return 'New chat';
   if (title.length <= 60) return title;
   return title.substring(0, 60).trim();
-}
-
-String _cleanChatDescription(String value) {
-  final description = value.trim();
-  if (description.length <= 500) return description;
-  return description.substring(0, 500).trim();
-}
-
-String _safeStorageName(String value) {
-  final clean = value
-      .trim()
-      .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')
-      .replaceAll(RegExp(r'_+'), '_');
-  final fallback = clean.isEmpty ? 'attachment' : clean;
-  return '${DateTime.now().millisecondsSinceEpoch}_$fallback';
-}
-
-String _attachmentPreviewText(PendingChatAttachment attachment) {
-  return switch (attachment.type) {
-    'image' => 'Photo',
-    'gif' => 'GIF',
-    'video' => 'Video',
-    'pdf' => 'PDF: ${attachment.name}',
-    _ => 'File: ${attachment.name}',
-  };
-}
-
-Uri? _firstUrlIn(String value) {
-  final match = RegExp(
-    r'https?://[^\s<>()]+',
-    caseSensitive: false,
-  ).firstMatch(value);
-  if (match == null) return null;
-  final raw = match.group(0);
-  return raw == null ? null : Uri.tryParse(raw);
 }
 
 String _newChatId() =>

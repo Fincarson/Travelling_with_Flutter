@@ -23,42 +23,35 @@ class SettingsTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(24),
           onTap: onTap,
           child: GlassPanel(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final colorScheme = Theme.of(context).colorScheme;
-                return Row(
-                  children: [
-                    IconBadge(icon: icon, size: 44),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 5,
-                      child: Text(
-                        appText(context, title),
-                        style: const TextStyle(fontWeight: FontWeight.w900),
-                      ),
+            child: Row(
+              children: [
+                IconBadge(icon: icon, size: 44),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    appText(context, title),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+                Flexible(
+                  child: Text(
+                    appText(context, value),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                    style: const TextStyle(
+                      color: _secondary,
+                      fontWeight: FontWeight.w800,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: constraints.maxWidth < 360 ? 4 : 3,
-                      child: Text(
-                        appText(context, value),
-                        textAlign: TextAlign.end,
-                        style: TextStyle(
-                          color: colorScheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    if (onTap != null) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ],
-                  ],
-                );
-              },
+                  ),
+                ),
+                if (onTap != null) ...[
+                  const SizedBox(width: 6),
+                  const Icon(Icons.chevron_right_rounded, color: _secondary),
+                ],
+              ],
             ),
           ),
         ),
@@ -94,6 +87,8 @@ class LocationAccessTile extends StatelessWidget {
                 children: [
                   Text(
                     appText(context, 'Location access'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                   const SizedBox(height: 3),
@@ -104,8 +99,10 @@ class LocationAccessTile extends StatelessWidget {
                           ? 'AI and trip planning can use your location.'
                           : 'The app will not request or use location.',
                     ),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _secondary,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),

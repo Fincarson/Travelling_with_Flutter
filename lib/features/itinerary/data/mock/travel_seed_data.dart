@@ -108,7 +108,7 @@ const mockKyotoTrip = Trip(
   endDate: '2026-04-27',
   budget: 3500,
   spent: 450,
-  numOfTravelers: 2,
+  groupType: 'Friends',
   status: TripStatus.ongoing,
   currency: 'USD',
   preferences: ['Culture', 'Food', 'Walking'],

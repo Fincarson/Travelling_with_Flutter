@@ -44,7 +44,6 @@ class _PendingAiTripPreview {
     required this.budget,
     required this.currency,
     required this.groupType,
-    required this.numOfTravelers,
     required this.preferences,
     required this.plan,
     required this.startLocation,
@@ -58,7 +57,6 @@ class _PendingAiTripPreview {
   final int budget;
   final String currency;
   final String groupType;
-  final int numOfTravelers;
   final List<String> preferences;
   final GeneratedTripPlan plan;
   final TripStartLocation? startLocation;
@@ -85,7 +83,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   final _startLocation = TextEditingController();
   final _airline = TextEditingController();
   final _flightCode = TextEditingController();
-  final _flightConfirmation = TextEditingController();
   final _ticketPassengerName = TextEditingController();
   final _ticketPaidAmount = TextEditingController();
   final _flightDepartTime = TextEditingController();
@@ -101,18 +98,33 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   PlaceSuggestion? _selectedOriginPlace;
   List<PlaceSuggestion> _placeSuggestions = const [];
   List<PlaceSuggestion> _originSuggestions = const [];
+  List<TransportRecommendation> _transportRecommendations = const [];
+  List<TransportRecommendation> get _visibleTransportRecommendations {
+    final combined = [
+      ..._purchasedTransportRecommendations,
+      ..._transportRecommendations,
+    ];
+    combined.sort((a, b) {
+      final aPrice = a.price <= 0 ? 1 << 30 : a.price;
+      final bPrice = b.price <= 0 ? 1 << 30 : b.price;
+      return aPrice.compareTo(bPrice);
+    });
+    return combined;
+  }
+
   final List<CreateTripChatMessage> _chatMessages = [];
   CreateTripDraft? _pendingDraft;
-  var _numOfTravelers = 2;
+  var _group = 'Friends';
   var _currency = AppCurrency.fallbackCurrencyCode;
   var _mode = 0;
   String? _formError;
   var _isSearching = false;
   var _isOriginSearching = false;
   var _isGenerating = false;
+  var _isLoadingTransport = false;
+  var _isPreparingPreview = false;
   var _isCreatingTrip = false;
   var _isThinking = false;
-  var _isPreparingPreview = false;
   var _pendingDraftConfirmed = false;
   var _appliedDeviceCurrency = false;
   var _hasBudgetText = false;
@@ -121,10 +133,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _plannerSessionLoaded = false;
   var _hasLocalPlannerSessionChanges = false;
   var _suppressPlannerSessionSave = false;
-  List<TransportRecommendation> _transportRecommendations = const [];
   String? _transportRecommendationSummary;
   String? _transportRecommendationError;
-  var _isLoadingTransport = false;
   _PendingAiTripPreview? _pendingAiTripPreview;
   AppDeviceContext? _deviceContext;
   TripStartLocation? _tripStartLocation;
@@ -133,6 +143,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   var _aiPreviewExpanded = false;
   int? _manualExpandedStep;
   final Set<int> _manualCompletedSteps = {};
+  var _manualPreviewExpanded = false;
   DateTime _startDate = _travelAgentNow();
   DateTime _endDate = _travelAgentNow().add(const Duration(days: 5));
   String? _selectedImage;
@@ -153,20 +164,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     'Walking',
   ];
 
-  List<String> get _currencyOptions {
-    final scope = CurrencyScope.maybeOf(context);
-    return scope?.supportedCodes ??
-        CurrencyExchangeData.fallback.currencies
-            .map((item) => item.code)
-            .toList(growable: false);
-  }
-
-  List<TransportRecommendation> get _visibleTransportRecommendations {
-    return [
-      ..._purchasedTransportRecommendations,
-      ..._transportRecommendations,
-    ];
-  }
+  static const _currencyOptions = ['USD', 'TWD', 'IDR', 'JPY', 'EUR'];
+  static const _groupOptions = ['Friends', 'Family', 'Tour'];
+  static const _twdToIdrFallbackRate = 562.0;
 
   static const _planningGoals = [
     PlanningGoal(
@@ -230,7 +230,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         endDate: '2026-09-15',
         budget: 4200,
         spent: 0,
-        numOfTravelers: 2,
+        groupType: 'Friends',
         currency: 'USD',
         status: TripStatus.upcoming,
         images: [
@@ -340,7 +340,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         endDate: '2026-10-11',
         budget: 3200,
         spent: 0,
-        numOfTravelers: 4,
+        groupType: 'Family',
         currency: 'USD',
         status: TripStatus.upcoming,
         images: [
@@ -450,15 +450,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     if (_appliedDeviceCurrency) return;
     _appliedDeviceCurrency = true;
 
-    final displayCurrency =
-        CurrencyScope.maybeOf(context)?.displayCurrencyCode ??
-        AppCurrency.fallbackCurrencyCode;
-    if (!_currencyOptions.contains(displayCurrency) ||
-        displayCurrency == _currency) {
-      return;
-    }
+    final deviceCurrency = AppCurrency.defaultForDevice(
+      supportedCurrencies: _currencyOptions,
+    );
+    if (deviceCurrency == _currency) return;
 
-    _currency = displayCurrency;
+    _currency = deviceCurrency;
   }
 
   @override
@@ -479,7 +476,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     _startLocation.dispose();
     _airline.dispose();
     _flightCode.dispose();
-    _flightConfirmation.dispose();
     _ticketPassengerName.dispose();
     _ticketPaidAmount.dispose();
     _flightDepartTime.dispose();
@@ -705,7 +701,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       budget: job.budget,
       currency: job.currency,
       groupType: job.groupType,
-      numOfTravelers: _numOfTravelers,
       preferences: job.preferences,
       plan: plan,
       startLocation: job.startLocation,
@@ -1447,22 +1442,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       }
     }
 
-    int? numOfTravelers = draft.numOfTravelers;
-    final travelerMatch = RegExp(
-      r'\b(\d{1,2})\s*(?:people|person|travelers?|travellers?|guests?|adults?|kids?|children)\b',
-      caseSensitive: false,
-    ).firstMatch(text);
-    final travelerCount = int.tryParse(travelerMatch?.group(1) ?? '');
-    if (travelerCount != null) {
-      numOfTravelers = travelerCount.clamp(1, 99).toInt();
-    } else {
-      if (lower.contains('solo')) numOfTravelers = 1;
-      if (lower.contains('friend')) numOfTravelers ??= 2;
-      if (lower.contains('family')) numOfTravelers ??= 4;
-      if (lower.contains('tour')) numOfTravelers ??= 12;
-    }
+    String? groupType = draft.groupType;
+    if (lower.contains('solo')) groupType = 'Solo';
+    if (lower.contains('friend')) groupType = 'Friends';
+    if (lower.contains('family')) groupType = 'Family';
+    if (lower.contains('tour')) groupType = 'Tour';
 
-    final currency = _currencyFromText(text) ?? draft.currency ?? _currency;
+    final currency = _currencyFromText(text) ?? _currency;
     String? budget = draft.budget;
     final currencyAmount = _currencyAmountFromText(text);
     if (currencyAmount != null) {
@@ -1474,13 +1460,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
 
     final budgetMatch = RegExp(
-      r'\$\s?(\d{2,7})|(?:budget|under|around|about|usd|dollars?)\D{0,12}(\d{2,7})|(\d{2,7})\s?(?:usd|dollars?)',
+      r'\$\s?(\d{1,7}(?:[,.]\d{3})*|\d{1,7})\s*([kK])?|(?:budget|under|around|about|maybe|roughly)\D{0,12}(\d{1,7}(?:[,.]\d{3})*|\d{1,7})\s*([kK])?|(\d{1,7}(?:[,.]\d{3})*|\d{1,7})\s*([kK])?\s?(?:usd|dollars?)',
       caseSensitive: false,
     ).firstMatch(text);
     budget =
-        budgetMatch?.group(1) ??
-        budgetMatch?.group(2) ??
-        budgetMatch?.group(3) ??
+        _amountMatchToBudget(budgetMatch, const [(1, 2), (3, 4), (5, 6)]) ??
         budget;
     _currency = currency;
 
@@ -1518,12 +1502,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       r'\b(\d{1,2})\s*(?:days?|nights?)\b',
       caseSensitive: false,
     ).firstMatch(text);
-    if (durationMatch != null && (startDate == null || endDate == null)) {
+    if (durationMatch != null &&
+        lower.contains('tomorrow') &&
+        (startDate == null || endDate == null)) {
       final duration = math.max(1, int.parse(durationMatch.group(1)!));
       final today = _today();
-      startDate = lower.contains('tomorrow')
-          ? today.add(const Duration(days: 1))
-          : today;
+      startDate = today.add(const Duration(days: 1));
       endDate = startDate.add(Duration(days: duration - 1));
     }
 
@@ -1541,25 +1525,48 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       endDate: endDate,
       budget: budget,
       currency: currency,
-      numOfTravelers: numOfTravelers,
+      groupType: groupType,
       preferences: preferenceAdds.toList(),
     );
   }
 
   ({int amount, String currency})? _currencyAmountFromText(String text) {
     final match = RegExp(
-      r'(?:\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b\s*([0-9][0-9,._]*))|(?:([0-9][0-9,._]*)\s*\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b)',
+      r'(?:\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b\s*([0-9][0-9,._]*)\s*([kK])?)|(?:([0-9][0-9,._]*)\s*([kK])?\s*\b(idr|rp|rupiah|twd|ntd|nt\$|nt|usd|dollars?|jpy|yen|eur|euros?)\b)',
       caseSensitive: false,
     ).firstMatch(text);
     if (match == null) return null;
 
-    final currency = _normalCurrencyCode(match.group(1) ?? match.group(4));
-    final amountText = match.group(2) ?? match.group(3);
-    final amount = int.tryParse(
-      (amountText ?? '').replaceAll(RegExp(r'[^0-9]'), ''),
+    final currency = _normalCurrencyCode(match.group(1) ?? match.group(6));
+    final amount = _parseCompactAmount(
+      match.group(2) ?? match.group(4),
+      match.group(3) ?? match.group(5),
     );
     if (currency == null || amount == null) return null;
     return (amount: amount, currency: currency);
+  }
+
+  String? _amountMatchToBudget(
+    RegExpMatch? match,
+    List<(int amountGroup, int suffixGroup)> groups,
+  ) {
+    if (match == null) return null;
+    for (final group in groups) {
+      final amount = _parseCompactAmount(
+        match.group(group.$1),
+        match.group(group.$2),
+      );
+      if (amount != null && amount > 0) return amount.toString();
+    }
+    return null;
+  }
+
+  int? _parseCompactAmount(String? value, String? suffix) {
+    final digits = (value ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) return null;
+    final amount = int.tryParse(digits);
+    if (amount == null) return null;
+    return suffix?.toLowerCase() == 'k' ? amount * 1000 : amount;
   }
 
   String? _currencyFromText(String text) {
@@ -1576,14 +1583,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     required String toCurrency,
   }) {
     if (fromCurrency == toCurrency) return amount;
-    return CurrencyScope.maybeOf(context)?.exchangeData
-            .convert(
-              amount: amount,
-              fromCurrency: fromCurrency,
-              toCurrency: toCurrency,
-            )
-            ?.round() ??
-        amount;
+    if (fromCurrency == 'TWD' && toCurrency == 'IDR') {
+      return (amount * _twdToIdrFallbackRate).round();
+    }
+    if (fromCurrency == 'IDR' && toCurrency == 'TWD') {
+      return (amount / _twdToIdrFallbackRate).round();
+    }
+    return amount;
   }
 
   // ignore: unused_element
@@ -1613,7 +1619,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     if ((draft.destination ?? '').trim().isEmpty) missing.add('destination');
     if (draft.startDate == null || draft.endDate == null) missing.add('dates');
     if ((draft.budget ?? '').trim().isEmpty) missing.add('total budget');
-    if (draft.numOfTravelers == null) missing.add('number of travelers');
+    if ((draft.groupType ?? '').trim().isEmpty) missing.add('who is coming');
     return missing;
   }
 
@@ -1622,11 +1628,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       case 'destination':
         return 'Where would you like to go? Pick one or type your own.';
       case 'dates':
-        return 'Choose a date range, like 15/06/2026 to 20/06/2026, or say 5 days.';
+        return 'Choose a suggested date range or pick exact dates.';
       case 'total budget':
         return 'What total budget should I plan around in $_currency?';
-      case 'number of travelers':
-        return 'How many people are coming on this trip?';
+      case 'who is coming':
+        return 'Who is coming with you: Solo, Friends, Family, or Tour?';
       default:
         return 'Tell me one more detail for the trip.';
     }
@@ -1657,68 +1663,33 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ],
         );
       case 'dates':
-        final base = _today().add(const Duration(days: 21));
-        final threeDayEnd = base.add(const Duration(days: 2));
-        final fiveDayEnd = base.add(const Duration(days: 4));
-        final sevenDayEnd = base.add(const Duration(days: 6));
         return CreateTripChoiceWidget(
-          title: 'Trip length',
-          options: [
-            CreateTripChoiceOption(
-              label: '3 days',
-              value: '${_dateKey(base)} to ${_dateKey(threeDayEnd)}',
-              description: 'Fast weekend plan',
-            ),
-            CreateTripChoiceOption(
-              label: '5 days',
-              value: '${_dateKey(base)} to ${_dateKey(fiveDayEnd)}',
-              description: 'Balanced pace',
-            ),
-            CreateTripChoiceOption(
-              label: '7 days',
-              value: '${_dateKey(base)} to ${_dateKey(sevenDayEnd)}',
-              description: 'More room for day trips',
-            ),
-            const CreateTripChoiceOption(
-              label: 'Pick exact dates',
-              value: _customDateRangeValue,
-              description: 'Open the calendar',
-            ),
-          ],
+          title: 'Suggested dates',
+          options: _fallbackDateChoiceOptions(),
         );
       case 'total budget':
-        final options = _budgetOptionsForCurrency(_currency);
         return CreateTripChoiceWidget(
           title: 'Total budget',
-          options: options
-              .map(
-                (option) => CreateTripChoiceOption(
-                  label:
-                      '${option.currency} ${_formatWholeNumber(option.amount)}',
-                  value: 'budget ${option.amount} ${option.currency}',
-                  description: option.description,
-                ),
-              )
-              .toList(),
+          options: _budgetChoiceOptionsForCurrentDraft(),
         );
-      case 'number of travelers':
+      case 'who is coming':
         return const CreateTripChoiceWidget(
-          title: 'Number of travelers',
+          title: 'Travel party',
           options: [
             CreateTripChoiceOption(
-              label: '1',
-              value: '1 traveler',
-              description: 'Single-traveler pacing',
+              label: 'Solo',
+              value: 'Solo',
+              description: 'Personal route and pace',
             ),
             CreateTripChoiceOption(
-              label: '2',
-              value: '2 travelers',
-              description: 'Pair-friendly route',
+              label: 'Friends',
+              value: 'Friends',
+              description: 'Shared plans and votes',
             ),
             CreateTripChoiceOption(
-              label: '4',
-              value: '4 travelers',
-              description: 'Small group timing',
+              label: 'Family',
+              value: 'Family',
+              description: 'Comfortable timing',
             ),
           ],
         );
@@ -1727,56 +1698,228 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
   }
 
+  List<CreateTripChoiceOption> _fallbackDateChoiceOptions() {
+    final today = _today();
+    final destination = (_pendingDraft?.destination ?? _destination.text)
+        .toLowerCase();
+    final international =
+        destination.isNotEmpty &&
+        !_containsAnyText(destination, const [
+          'taiwan',
+          'taipei',
+          'hsinchu',
+          'taichung',
+          'tainan',
+          'kaohsiung',
+        ]);
+    final suggestions = international
+        ? [
+            (
+              label: 'Flight-friendly week',
+              start: _nextSeasonalHolidayStart(today),
+              days: 6,
+              description: 'More buffer for flights and arrival timing',
+            ),
+            (
+              label: 'Longer holiday',
+              start: _nextSeasonalHolidayStart(
+                today.add(const Duration(days: 14)),
+              ),
+              days: 8,
+              description: 'Slower pace with recovery time',
+            ),
+            (
+              label: 'Compact escape',
+              start: _nextWeekday(
+                today.add(const Duration(days: 14)),
+                DateTime.friday,
+              ),
+              days: 4,
+              description: 'Shorter trip with efficient routing',
+            ),
+          ]
+        : [
+            (
+              label: 'Nearest weekend',
+              start: _nextWeekday(today, DateTime.saturday),
+              days: 2,
+              description: 'Quick nearby trip',
+            ),
+            (
+              label: 'Easy 3-day loop',
+              start: _nextWeekday(today, DateTime.friday),
+              days: 3,
+              description: 'Relaxed timing with one extra day',
+            ),
+            (
+              label: 'Balanced local trip',
+              start: _nextLongWeekendStart(today),
+              days: 4,
+              description: 'More room for food and sightseeing',
+            ),
+          ];
+    return [
+      for (final suggestion in suggestions)
+        CreateTripChoiceOption(
+          label: suggestion.label,
+          value:
+              '${_dateKey(suggestion.start)} to ${_dateKey(suggestion.start.add(Duration(days: suggestion.days - 1)))}',
+          description: suggestion.description,
+        ),
+      const CreateTripChoiceOption(
+        label: 'Pick exact dates',
+        value: _customDateRangeValue,
+        description: 'Open the calendar',
+      ),
+    ];
+  }
+
   List<({String currency, int amount, String description})>
   _budgetOptionsForCurrency(String currency) {
-    switch (currency) {
-      case 'IDR':
-        return const [
-          (currency: 'IDR', amount: 8000000, description: 'Lean and efficient'),
-          (
-            currency: 'IDR',
-            amount: 16860000,
-            description: 'Comfortable mid-range',
-          ),
-          (
-            currency: 'IDR',
-            amount: 25000000,
-            description: 'More flexible picks',
-          ),
-        ];
-      case 'TWD':
-        return const [
-          (currency: 'TWD', amount: 15000, description: 'Lean and efficient'),
-          (
-            currency: 'TWD',
-            amount: 30000,
-            description: 'Comfortable mid-range',
-          ),
-          (currency: 'TWD', amount: 50000, description: 'More flexible picks'),
-        ];
-      case 'JPY':
-        return const [
-          (currency: 'JPY', amount: 75000, description: 'Lean and efficient'),
-          (
-            currency: 'JPY',
-            amount: 175000,
-            description: 'Comfortable mid-range',
-          ),
-          (currency: 'JPY', amount: 250000, description: 'More flexible picks'),
-        ];
-      case 'EUR':
-        return const [
-          (currency: 'EUR', amount: 1400, description: 'Lean and efficient'),
-          (currency: 'EUR', amount: 3200, description: 'Comfortable mid-range'),
-          (currency: 'EUR', amount: 4600, description: 'More flexible picks'),
-        ];
-      default:
-        return const [
-          (currency: 'USD', amount: 1500, description: 'Lean and efficient'),
-          (currency: 'USD', amount: 3500, description: 'Comfortable mid-range'),
-          (currency: 'USD', amount: 5000, description: 'More flexible picks'),
-        ];
+    final destination = _pendingDraft?.destination ?? _destination.text;
+    final days = _budgetEstimateDays();
+    final tiers = _usdBudgetTiersForDestination(destination, days);
+    return [
+      (
+        currency: currency,
+        amount: _usdBudgetTierToCurrency(tiers.lean, currency),
+        description: '${days}d lean stays, local food, public transit',
+      ),
+      (
+        currency: currency,
+        amount: _usdBudgetTierToCurrency(tiers.mid, currency),
+        description: '${days}d comfortable hotels and dining',
+      ),
+      (
+        currency: currency,
+        amount: _usdBudgetTierToCurrency(tiers.premium, currency),
+        description: '${days}d flexible stays and experiences',
+      ),
+    ];
+  }
+
+  List<CreateTripChoiceOption> _budgetChoiceOptionsForCurrentDraft() {
+    final options = _budgetOptionsForCurrency(_currency);
+    return [
+      CreateTripChoiceOption(
+        label: 'Budget',
+        value: 'budget ${options[0].amount} ${options[0].currency}',
+        description:
+            '${_formatWholeNumber(options[0].amount)} ${options[0].currency} - ${options[0].description}',
+      ),
+      CreateTripChoiceOption(
+        label: 'Mid-range',
+        value: 'budget ${options[1].amount} ${options[1].currency}',
+        description:
+            '${_formatWholeNumber(options[1].amount)} ${options[1].currency} - ${options[1].description}',
+      ),
+      CreateTripChoiceOption(
+        label: 'Premium',
+        value: 'budget ${options[2].amount} ${options[2].currency}',
+        description:
+            '${_formatWholeNumber(options[2].amount)} ${options[2].currency} - ${options[2].description}',
+      ),
+      const CreateTripChoiceOption(
+        label: 'Custom',
+        value: _customBudgetValue,
+        description: 'Choose your own total budget',
+      ),
+    ];
+  }
+
+  int _budgetEstimateDays() {
+    final draft = _pendingDraft;
+    final start = draft?.startDate ?? _startDate;
+    final end = draft?.endDate ?? _endDate;
+    return math.max(1, end.difference(start).inDays + 1);
+  }
+
+  ({int lean, int mid, int premium}) _usdBudgetTiersForDestination(
+    String? destination,
+    int days,
+  ) {
+    final text = (destination ?? '').toLowerCase();
+    final daily = _destinationDailyUsdTiers(text);
+    final transport = _destinationTransportUsdBuffer(text, days);
+    return (
+      lean: _roundUsdBudget(daily.lean * days + transport.lean),
+      mid: _roundUsdBudget(daily.mid * days + transport.mid),
+      premium: _roundUsdBudget(daily.premium * days + transport.premium),
+    );
+  }
+
+  ({int lean, int mid, int premium}) _destinationDailyUsdTiers(String text) {
+    if (_containsAnyText(text, const ['bali', 'indonesia'])) {
+      return (lean: 65, mid: 135, premium: 260);
     }
+    if (_containsAnyText(text, const ['tokyo', 'kyoto', 'osaka', 'japan'])) {
+      return (lean: 115, mid: 230, premium: 430);
+    }
+    if (_containsAnyText(text, const ['paris', 'france'])) {
+      return (lean: 135, mid: 275, premium: 520);
+    }
+    if (_containsAnyText(text, const ['taipei', 'taiwan'])) {
+      return (lean: 80, mid: 170, premium: 320);
+    }
+    if (_containsAnyText(text, const ['singapore'])) {
+      return (lean: 130, mid: 260, premium: 500);
+    }
+    if (_containsAnyText(text, const ['seoul', 'korea'])) {
+      return (lean: 95, mid: 200, premium: 380);
+    }
+    if (_containsAnyText(text, const [
+      'london',
+      'new york',
+      'usa',
+      'united states',
+    ])) {
+      return (lean: 160, mid: 320, premium: 620);
+    }
+    return (lean: 100, mid: 210, premium: 390);
+  }
+
+  ({int lean, int mid, int premium}) _destinationTransportUsdBuffer(
+    String text,
+    int days,
+  ) {
+    if (days <= 2) return (lean: 40, mid: 80, premium: 160);
+    if (_containsAnyText(text, const [
+      'bali',
+      'japan',
+      'paris',
+      'france',
+      'singapore',
+      'korea',
+      'london',
+      'new york',
+    ])) {
+      return (lean: 250, mid: 500, premium: 900);
+    }
+    return (lean: 100, mid: 220, premium: 420);
+  }
+
+  int _roundUsdBudget(int amount) {
+    final roundTo = amount < 1000 ? 50 : 100;
+    return (amount / roundTo).round() * roundTo;
+  }
+
+  int _usdBudgetTierToCurrency(int usdAmount, String currency) {
+    final rate = switch (currency) {
+      'TWD' => 32.0,
+      'IDR' => 16250.0,
+      'JPY' => 155.0,
+      'EUR' => .92,
+      _ => 1.0,
+    };
+    final raw = usdAmount * rate;
+    final roundTo = switch (currency) {
+      'IDR' => 100000,
+      'JPY' => 1000,
+      'TWD' => 1000,
+      'EUR' => 50,
+      _ => 100,
+    };
+    return (raw / roundTo).round() * roundTo;
   }
 
   int _budgetPresetAmount(int index) {
@@ -2048,15 +2191,17 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final endDate = draft.endDate;
     if (startDate != null) _startDate = startDate;
     if (endDate != null) _endDate = endDate;
-    final budget = draft.budget?.trim();
-    if (budget != null && budget.isNotEmpty) _setBudgetText(budget);
     final currency = draft.currency;
     if (currency != null && _currencyOptions.contains(currency)) {
       _currency = currency;
     }
-    final numOfTravelers = draft.numOfTravelers;
-    if (numOfTravelers != null) {
-      _numOfTravelers = numOfTravelers.clamp(1, 99).toInt();
+    final budget = draft.budget?.trim();
+    if (budget != null && budget.isNotEmpty) {
+      _setBudgetText(_normalizedBudgetInput(budget, _currency));
+    }
+    final groupType = draft.groupType;
+    if (groupType != null && _groupOptions.contains(groupType)) {
+      _group = groupType;
     }
     _preferences
       ..clear()
@@ -2139,7 +2284,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final customTag = TextEditingController();
     var startDate = draft.startDate ?? _startDate;
     var endDate = draft.endDate ?? _endDate;
-    var numOfTravelers = draft.numOfTravelers ?? _numOfTravelers;
+    var groupType = draft.groupType ?? _group;
     final preferences = <String>{...draft.preferences};
 
     try {
@@ -2273,10 +2418,23 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              _TravelerCountPicker(
-                                value: numOfTravelers,
-                                onChanged: (value) =>
-                                    setSheetState(() => numOfTravelers = value),
+                              DropdownButtonFormField<String>(
+                                initialValue: groupType,
+                                decoration: InputDecoration(
+                                  labelText: appText(context, 'Who is coming'),
+                                ),
+                                items:
+                                    const ['Solo', 'Family', 'Friends', 'Tour']
+                                        .map(
+                                          (item) => DropdownMenuItem(
+                                            value: item,
+                                            child: Text(appText(context, item)),
+                                          ),
+                                        )
+                                        .toList(),
+                                onChanged: (value) => setSheetState(
+                                  () => groupType = value ?? groupType,
+                                ),
                               ),
                               const SizedBox(height: 14),
                               const LabelText('Trip tags'),
@@ -2346,7 +2504,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                         .replaceAll(RegExp(r'\D'), '')
                                         .trim(),
                                     currency: draft.currency ?? _currency,
-                                    numOfTravelers: numOfTravelers,
+                                    groupType: groupType,
                                     preferences: preferences.toList(),
                                   ),
                                 ),
@@ -2368,6 +2526,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       setState(() {
         _pendingDraft = edited;
         _pendingDraftConfirmed = false;
+        _pendingAiTripPreview = null;
         _chatMessages.add(
           const CreateTripChatMessage(
             fromUser: false,
@@ -2404,8 +2563,46 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     );
   }
 
-  int _parsedBudget() =>
-      int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+  int _parsedBudget() {
+    final numeric = int.tryParse(_budget.text.replaceAll(RegExp(r'\D'), ''));
+    if (numeric != null && numeric > 0) return numeric;
+    return _budgetTierAmount(_budget.text, _currency) ?? 0;
+  }
+
+  String _normalizedBudgetInput(String value, String currency) {
+    final numeric = int.tryParse(value.replaceAll(RegExp(r'\D'), ''));
+    if (numeric != null && numeric > 0) return numeric.toString();
+    final tierAmount = _budgetTierAmount(value, currency);
+    return tierAmount == null || tierAmount <= 0
+        ? value
+        : tierAmount.toString();
+  }
+
+  int? _budgetTierAmount(String value, String currency) {
+    final lower = value.toLowerCase();
+    if (lower.trim().isEmpty) return null;
+    final options = _budgetOptionsForCurrency(currency);
+    if (lower.contains('lean') ||
+        lower.contains('cheap') ||
+        lower.contains('budget') ||
+        lower.contains('low')) {
+      return options.first.amount;
+    }
+    if (lower.contains('mid') ||
+        lower.contains('medium') ||
+        lower.contains('moderate') ||
+        lower.contains('standard') ||
+        lower.contains('comfortable')) {
+      return options[1].amount;
+    }
+    if (lower.contains('flex') ||
+        lower.contains('premium') ||
+        lower.contains('lux') ||
+        lower.contains('high')) {
+      return options.last.amount;
+    }
+    return null;
+  }
 
   PlaceSuggestion? _manualPlaceFromInput(String typed) {
     if (_selectedPlace != null) return _selectedPlace;
@@ -2451,21 +2648,14 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       return;
     }
     if (place == null) {
-      setState(() {
-        _formError = _mode == 1
-            ? 'Choose a real destination from the search results first.'
-            : 'Enter a destination.';
-      });
+      setState(() => _formError = 'Enter a destination.');
       return;
     }
 
-    setState(() {
-      _isGenerating = true;
-      _formError = null;
-    });
-
-    final fallbackImages = await _searchedImagesForTripPreview(place: place);
-    if (!mounted) return;
+    final fallbackImages = _mergedPreviewImages(
+      destination: place.name,
+      searchedImages: const [],
+    );
     final generationContext = await _deviceContextService.load(
       requestLocation: true,
     );
@@ -2482,15 +2672,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       }
     });
     try {
-      final enteredFlightCode = _flightCode.text.trim();
-      final enteredConfirmation = _flightConfirmation.text.trim();
       final jobId = await _previewJobs.createJob(
         accountId: widget.accountId,
         place: place,
         startDate: _startDate,
         endDate: _endDate,
         budget: budget,
-        groupType: _travelerCountLabel(_numOfTravelers),
+        groupType: _group,
         preferences: _aiGenerationPreferences,
         currency: _currency,
         profileLanguage: widget.profileLanguage,
@@ -2498,9 +2686,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         startLocation: startLocation,
         fallbackImages: fallbackImages,
         airline: _airline.text.trim(),
-        flightCode: enteredFlightCode.isNotEmpty
-            ? enteredFlightCode
-            : enteredConfirmation,
+        flightCode: _flightCode.text.trim(),
         flightDepartureTime: _flightDepartTime.text.trim(),
         flightDeparturePlace: _flightDepartPlace.text.trim(),
         flightLandingTime: _flightLandingTime.text.trim(),
@@ -2532,6 +2718,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       if (!mounted) return;
       final message = _friendlyAiError(error);
       setState(() {
+        _isPreparingPreview = false;
         _isGenerating = false;
         _pendingAiTripPreview = null;
         _formError = message;
@@ -2734,7 +2921,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           endDate: _dateKey(_endDate),
           budget: budgetLimit,
           spent: _purchasedTransportCost,
-          numOfTravelers: _numOfTravelers,
+          groupType: _group,
           currency: _currency,
           status: TripStatus.upcoming,
           images: tripImages,
@@ -2786,7 +2973,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   List<Booking> _bookingsWithManualDetails(List<Booking> generated) {
     final airline = _airline.text.trim();
     final flightCode = _flightCode.text.trim();
-    final confirmation = _flightConfirmation.text.trim();
     final passengerName = _ticketPassengerName.text.trim();
     final departTime = _flightDepartTime.text.trim();
     final departPlace = _flightDepartPlace.text.trim();
@@ -2800,13 +2986,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         departPlace.isEmpty &&
         landingTime.isEmpty &&
         landingPlace.isEmpty &&
-        confirmation.isEmpty &&
         paidAmount <= 0) {
       return generated;
     }
     final referenceParts = [
-      if (flightCode.isNotEmpty) 'Flight: $flightCode',
-      if (confirmation.isNotEmpty) 'Confirmation: $confirmation',
       if (passengerName.isNotEmpty) 'Passenger: $passengerName',
       if (departTime.isNotEmpty || departPlace.isNotEmpty)
         'Depart: ${[if (departTime.isNotEmpty) departTime, if (departPlace.isNotEmpty) departPlace].join(' at ')}',
@@ -2814,7 +2997,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         'Land: ${[if (landingTime.isNotEmpty) landingTime, if (landingPlace.isNotEmpty) landingPlace].join(' at ')}',
     ];
     final manualFlight = Booking(
-      airline.isNotEmpty ? airline : 'Flight booking',
+      [
+        if (airline.isNotEmpty) airline else 'Flight booking',
+        if (flightCode.isNotEmpty) flightCode,
+      ].join(' / '),
       _dateKey(_startDate),
       departTime.isEmpty ? 'TBD' : departTime,
       referenceParts.isEmpty
@@ -2858,7 +3044,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final end = start.add(Duration(days: math.max(1, days) - 1));
     final preferences = trip.preferences.take(4).join(', ');
     return [
-      'Plan a $days day trip to ${trip.destination} for ${_travelerCountLabel(trip.numOfTravelers)},',
+      'Plan a $days day trip to ${trip.destination} for ${trip.groupType},',
       '${_dateKey(start)} to ${_dateKey(end)},',
       'budget ${trip.currency} ${trip.budget}.',
       if (preferences.isNotEmpty) 'Focus on $preferences.',
@@ -2893,9 +3079,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             bookings: template.bookings,
           )
         : template.budgetCategories
-              .map(
-                (category) => category.copyWith(actual: 0, spendings: const []),
-              )
+              .map((category) => category.copyWith(actual: 0))
               .toList();
     final budgetLimit = _budgetLimitForCategories(
       budget: template.budget,
@@ -2919,7 +3103,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       endDate: _dateKey(end),
       budget: budgetLimit,
       spent: 0,
-      numOfTravelers: template.numOfTravelers,
+      groupType: template.groupType,
       currency: template.currency,
       status: TripStatus.upcoming,
       images: template.images.isEmpty
@@ -2984,7 +3168,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     return switch (index) {
       0 => _destination.text.trim().isNotEmpty,
       1 => _parsedBudget() > 0,
-      2 => _numOfTravelers >= 1 && _preferences.isNotEmpty,
+      2 => _group.trim().isNotEmpty && _preferences.isNotEmpty,
       3 => true,
       _ => false,
     };
@@ -3056,11 +3240,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   void _applyAiStyleIdea({
-    required int numOfTravelers,
+    required String group,
     required List<String> preferences,
   }) {
     setState(() {
-      _numOfTravelers = numOfTravelers.clamp(1, 99).toInt();
+      _group = group;
       _preferences.addAll(preferences);
       _formError = null;
     });
@@ -3155,7 +3339,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             startDate: _startDate,
             endDate: _endDate,
             currency: _currency,
-            groupType: _travelerCountLabel(_numOfTravelers),
+            groupType: _group,
           )
           .timeout(const Duration(seconds: 40));
       if (!mounted) return;
@@ -3174,23 +3358,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     }
   }
 
-  void _applyAiBookingIdea({
-    required String airline,
-    required String confirmation,
-  }) {
-    setState(() {
-      _airline.text = airline;
-      _flightConfirmation.text = confirmation;
-      _formError = null;
-    });
-  }
-
   bool _isAiStepValid(int index) {
     return switch (index) {
       0 => true,
       1 => _destination.text.trim().isNotEmpty,
       2 => _parsedBudget() > 0,
-      3 => _numOfTravelers >= 1 && _preferences.isNotEmpty,
+      3 => _group.trim().isNotEmpty && _preferences.isNotEmpty,
       4 => true,
       _ => false,
     };
@@ -3404,7 +3577,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                   icon: Icons.auto_graph_rounded,
                   title: 'Timing and budget',
                   suggestion:
-                      'AI will balance the daily pace against your budget, dates, and number of travelers.',
+                      'AI will balance the daily pace against your budget, dates, and travel party.',
                   expanded: _aiExpandedStep == 2,
                   complete: aiStepComplete[2],
                   attention: aiFocusStep == 2,
@@ -3454,7 +3627,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                             icon: Icons.payments_outlined,
                             value: _currency,
                             options: _currencyOptions,
-                            onChanged: _setCreateChatCurrency,
+                            onChanged: (value) => setState(() {
+                              _currency = value;
+                              _formError = null;
+                            }),
                           ),
                         ],
                       ),
@@ -3479,19 +3655,19 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                         choices: [
                           _AiChoice(
                             icon: Icons.group_rounded,
-                            title: 'Two travelers',
+                            title: 'Friends energy',
                             text: 'Food, shopping, nightlife, flexible pace',
                             onTap: () => _applyAiStyleIdea(
-                              numOfTravelers: 2,
+                              group: 'Friends',
                               preferences: ['Food', 'Shopping', 'Nightlife'],
                             ),
                           ),
                           _AiChoice(
                             icon: Icons.family_restroom_rounded,
-                            title: 'Four travelers',
+                            title: 'Family comfort',
                             text: 'Easy pace, culture, rain-ready stops',
                             onTap: () => _applyAiStyleIdea(
-                              numOfTravelers: 4,
+                              group: 'Family',
                               preferences: ['Culture', 'Relax', 'Museums'],
                             ),
                           ),
@@ -3500,7 +3676,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                             title: 'Active explorer',
                             text: 'Nature, walking routes, adventure',
                             onTap: () => _applyAiStyleIdea(
-                              numOfTravelers: 6,
+                              group: 'Tour',
                               preferences: ['Nature', 'Adventure', 'Walking'],
                             ),
                           ),
@@ -3509,14 +3685,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                       const SizedBox(height: 12),
                       _AiInputGrid(
                         children: [
-                          _AiFieldCard(
-                            label: 'Number of travelers',
+                          _AiPickerCard(
+                            label: 'Who is coming',
                             icon: Icons.group_rounded,
-                            child: _TravelerCountPicker(
-                              value: _numOfTravelers,
-                              onChanged: (value) =>
-                                  setState(() => _numOfTravelers = value),
-                            ),
+                            value: _group,
+                            options: _groupOptions,
+                            onChanged: (value) =>
+                                setState(() => _group = value),
                           ),
                           _AiCustomTagCard(
                             controller: _customPreference,
@@ -3548,38 +3723,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _AiChoiceGrid(
-                        choices: [
-                          _AiChoice(
-                            icon: Icons.flight_land_rounded,
-                            title: 'No booking yet',
-                            text: 'Let AI keep arrival and return flexible',
-                            onTap: () => _applyAiBookingIdea(
-                              airline: '',
-                              confirmation: '',
-                            ),
-                          ),
-                          _AiChoice(
-                            icon: Icons.flight_takeoff_rounded,
-                            title: 'Flight booked',
-                            text: 'Save space for airline and confirmation',
-                            onTap: () => _applyAiBookingIdea(
-                              airline: 'Flight booked',
-                              confirmation: 'Add confirmation',
-                            ),
-                          ),
-                          _AiChoice(
-                            icon: Icons.schedule_rounded,
-                            title: 'Timing matters',
-                            text: 'AI should leave arrival-day buffer time',
-                            onTap: () => _applyAiBookingIdea(
-                              airline: 'Arrival timing important',
-                              confirmation: '',
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
                       _TransportRecommendationCard(
                         available: _hasTransportRecommendationRoute,
                         loading: _isLoadingTransport,
@@ -3602,18 +3745,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                         currency: _currency,
                         onChanged: () => setState(() => _formError = null),
                       ),
-                      const SizedBox(height: 12),
-                      _AiInputGrid(
-                        children: [
-                          _AiInputCard(
-                            label: 'Confirmation',
-                            icon: Icons.confirmation_number_rounded,
-                            controller: _flightConfirmation,
-                            hint: 'Confirmation number',
-                            onChanged: (_) => setState(() => _formError = null),
-                          ),
-                        ],
-                      ),
                     ],
                   ),
                 ),
@@ -3622,22 +3753,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                   FormNotice(message: _formError!),
                 ],
                 const SizedBox(height: 22),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: _showImagePicker,
-                    icon: const Icon(Icons.image_rounded),
-                    label: Text(
-                      appText(
-                        context,
-                        _selectedImage == null
-                            ? 'Choose cover image'
-                            : 'Change cover image',
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
                 if (_isGenerating)
                   const GeneratingTripPanel()
                 else
@@ -3663,6 +3778,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     final horizontalPadding = _responsiveHorizontalPadding(context);
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final manualStepComplete = List.generate(4, _isManualStepComplete);
+    final completedStepCount = manualStepComplete.where((step) => step).length;
     final nextManualStep = manualStepComplete.indexWhere(
       (complete) => !complete,
     );
@@ -3685,6 +3801,41 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                 34 + bottomInset,
               ),
               children: [
+                Text(
+                  appText(context, 'Trip Basics'),
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  appText(context, "Let's start with the basics"),
+                  style: const TextStyle(
+                    color: Color(0xFF42474C),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _ManualPreviewCard(
+                  completedSections: completedStepCount,
+                  totalSections: manualStepComplete.length,
+                  destination: _destination.text.trim(),
+                  startDate: _dateKey(_startDate),
+                  endDate: _dateKey(_endDate),
+                  tripLength: tripLength,
+                  budget: _hasBudgetText ? budgetLabel : '',
+                  group: _group,
+                  preferences: _preferences.toList(),
+                  expanded: _manualPreviewExpanded,
+                  onToggle: () => setState(
+                    () => _manualPreviewExpanded = !_manualPreviewExpanded,
+                  ),
+                ),
+                const SizedBox(height: 14),
                 const _ManualInfoBanner(),
                 const SizedBox(height: 20),
                 LayoutBuilder(
@@ -3709,8 +3860,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                             children: [
                               _ManualAccordionSection(
                                 icon: Icons.route_rounded,
-                                title: 'Destination',
-                                subtitle: 'Where would you like to travel to?',
+                                title: 'Route',
+                                subtitle:
+                                    'Set where the trip goes and where the first travel leg starts.',
                                 expanded: _manualExpandedStep == 0,
                                 complete: manualStepComplete[0],
                                 attention: manualFocusStep == 0,
@@ -3735,7 +3887,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                               ),
                                         child: _ManualTextField(
                                           controller: _destination,
-                                          hint: 'Where to?',
+                                          hint: 'Where do you want to go?',
                                           onChanged: _schedulePlaceSearch,
                                         ),
                                       ),
@@ -3849,7 +4001,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                 icon: Icons.tune_rounded,
                                 title: 'Travel style',
                                 subtitle:
-                                    'Choose the number of travelers and the tags that should shape the starter trip.',
+                                    'Choose the travel party and the tags that should shape the starter trip.',
                                 expanded: _manualExpandedStep == 2,
                                 complete: manualStepComplete[2],
                                 attention: manualFocusStep == 2,
@@ -3859,15 +4011,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                   _ManualGrid(
                                     minTileWidth: 220,
                                     children: [
-                                      _ManualFieldCard(
-                                        label: 'Number of travelers',
+                                      _ManualDropdownCard(
+                                        label: 'Who is coming',
+                                        value: _group,
                                         icon: Icons.group_rounded,
-                                        child: _TravelerCountPicker(
-                                          value: _numOfTravelers,
-                                          onChanged: (value) => setState(
-                                            () => _numOfTravelers = value,
-                                          ),
-                                        ),
+                                        options: _groupOptions,
+                                        onChanged: (value) =>
+                                            setState(() => _group = value),
                                       ),
                                       _ManualCustomTagCard(
                                         controller: _customPreference,
@@ -3914,14 +4064,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                         child: _ManualTextField(
                                           controller: _flightCode,
                                           hint: 'BR123 / CI751',
-                                        ),
-                                      ),
-                                      _ManualFieldCard(
-                                        label: 'Confirmation',
-                                        icon: Icons.confirmation_number_rounded,
-                                        child: _ManualTextField(
-                                          controller: _flightConfirmation,
-                                          hint: 'Confirmation number',
                                         ),
                                       ),
                                       _ManualFieldCard(
@@ -4016,12 +4158,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         child: ListView(
           padding: _responsivePagePadding(context, top: 18),
           children: [
-            Text(
-              appText(context, 'How do you want to start?'),
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-            ),
+            TopBar(title: 'How do you want to start?', onBack: widget.onBack),
             const SizedBox(height: 18),
             const AnimatedGlobe(),
             const SizedBox(height: 22),
@@ -4166,8 +4303,16 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                     CreateTripChatTurn(
                       message: message,
                       onSelect: _sendCreateTripChat,
+                      selectedCurrency: _currency,
+                      currencyOptions: _currencyOptions,
+                      onCurrencyChanged: _setCreateChatCurrency,
+                      budgetOptions: _budgetChoiceOptionsForCurrentDraft(),
                     ),
                   if (_isThinking) const CreateTripThinkingBubble(),
+                  if (_isPreparingPreview) ...[
+                    const SizedBox(height: 12),
+                    const GeneratingTripPanel(),
+                  ],
                   if (pendingDraft != null && canUsePlan) ...[
                     const SizedBox(height: 12),
                     CreateTripDraftCard(
@@ -4175,7 +4320,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                       confirmed: _pendingDraftConfirmed,
                       onConfirm: () => _sendCreateTripChat('confirm'),
                       onEdit: _editPendingDraft,
-                      onUse: _pendingDraftConfirmed ? _usePendingDraft : null,
+                      onUse: _isPreparingPreview ? null : _usePendingDraft,
                       onChange: _sendCreateTripChat,
                     ),
                   ],
@@ -4194,33 +4339,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                         trips: _recentChatTrips,
                         promptForTrip: _recentTripPrompt,
                         onTap: _sendCreateTripChat,
-                      )
-                    else if (isChatFresh)
-                      SizedBox(
-                        height: 38,
-                        child: ListView(
-                          scrollDirection: Axis.horizontal,
-                          children: [
-                            CreateTripPromptChip(
-                              label: 'Kyoto',
-                              prompt:
-                                  'Trip to Kyoto with friends, 15/06/2026 to 20/06/2026, budget \$3500',
-                              onTap: _sendCreateTripChat,
-                            ),
-                            CreateTripPromptChip(
-                              label: 'Beach',
-                              prompt:
-                                  'Trip to Bali for 4 travelers, 10/07/2026 to 16/07/2026, budget \$5000',
-                              onTap: _sendCreateTripChat,
-                            ),
-                            CreateTripPromptChip(
-                              label: '1 traveler',
-                              prompt:
-                                  '1 traveler trip to Tokyo, 01/06/2026 to 05/06/2026, budget \$2500',
-                              onTap: _sendCreateTripChat,
-                            ),
-                          ],
-                        ),
                       ),
                     if (isChatFresh) const SizedBox(height: 8),
                     Row(
@@ -4496,10 +4614,7 @@ class _AiTripPreviewSheetState extends State<_AiTripPreviewSheet> {
                     value:
                         '${preview.currency} ${_formatAmountText(preview.budget.toString())}',
                   ),
-                  DraftStat(
-                    label: 'Travelers',
-                    value: _travelerCountLabel(preview.numOfTravelers),
-                  ),
+                  DraftStat(label: 'Party', value: preview.groupType),
                 ],
               ),
               if (preview.preferences.isNotEmpty) ...[
@@ -4999,7 +5114,7 @@ class _AiTripPreviewSheetState extends State<_AiTripPreviewSheet> {
       endDate: _dateKey(preview.endDate),
       budget: preview.budget,
       spent: 0,
-      numOfTravelers: preview.numOfTravelers,
+      groupType: preview.groupType,
       currency: preview.currency,
       status: TripStatus.upcoming,
       images: preview.images,
@@ -5028,21 +5143,6 @@ bool _containsAnyText(String value, Iterable<String> keywords) {
     final trimmed = keyword.trim();
     return trimmed.isNotEmpty && value.contains(trimmed);
   });
-}
-
-int _budgetLimitForCategories({
-  required int budget,
-  required List<BudgetCategory> categories,
-}) {
-  final planned = categories.fold<int>(
-    0,
-    (total, category) => total + category.planned,
-  );
-  final actual = categories.fold<int>(
-    0,
-    (total, category) => total + category.actual,
-  );
-  return math.max(budget, math.max(planned, actual));
 }
 
 class _AiPreviewImageGrid extends StatelessWidget {
@@ -5328,8 +5428,8 @@ String _templateFormatNumber(int value) {
   return buffer.toString();
 }
 
-String _templateBudgetLabel(BuildContext context, Trip trip) =>
-    _displayMoney(context, trip.budget, trip.currency);
+String _templateBudgetLabel(Trip trip) =>
+    '${trip.currency} ${_templateFormatNumber(trip.budget)}';
 
 String _templateImageFor(Trip trip) => trip.images.isNotEmpty
     ? trip.images.first
@@ -5573,7 +5673,7 @@ class _TemplateCard extends StatelessWidget {
                         ),
                         _TemplateMetaPill(
                           icon: Icons.payments_rounded,
-                          label: _templateBudgetLabel(context, trip),
+                          label: _templateBudgetLabel(trip),
                         ),
                         _TemplateMetaPill(
                           icon: Icons.route_rounded,
@@ -5716,12 +5816,8 @@ class _TemplatePreviewSheet extends StatelessWidget {
                             runSpacing: 8,
                             children: [
                               SmallPill(label: '$lengthDays days'),
-                              SmallPill(
-                                label: _templateBudgetLabel(context, trip),
-                              ),
-                              SmallPill(
-                                label: _travelerCountLabel(trip.numOfTravelers),
-                              ),
+                              SmallPill(label: _templateBudgetLabel(trip)),
+                              SmallPill(label: trip.groupType),
                               for (final tag in trip.preferences.take(3))
                                 SmallPill(label: tag),
                             ],
@@ -6041,7 +6137,7 @@ class _RecentChatTripCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          _templateBudgetLabel(context, trip),
+                          appText(context, _templateBudgetLabel(trip)),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -6353,109 +6449,6 @@ class _AiPickerCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _AiFieldCard extends StatelessWidget {
-  const _AiFieldCard({
-    required this.label,
-    required this.icon,
-    required this.child,
-  });
-
-  final String label;
-  final IconData icon;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 92),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF7F8F0),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: const Color(0xFFC2C7CC).withValues(alpha: .24),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: const Color(0xFF355872), size: 19),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  appText(context, label),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF42474C),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                child,
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TravelerCountPicker extends StatelessWidget {
-  const _TravelerCountPicker({required this.value, required this.onChanged});
-
-  final int value;
-  final ValueChanged<int> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final safeValue = value.clamp(1, 99).toInt();
-    return Row(
-      children: [
-        IconButton.filledTonal(
-          tooltip: appText(context, 'Decrease travelers'),
-          onPressed: safeValue <= 1 ? null : () => onChanged(safeValue - 1),
-          icon: const Icon(Icons.remove_rounded),
-        ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Text(
-              _travelerCountLabel(safeValue),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFF355872),
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ),
-        IconButton.filled(
-          tooltip: appText(context, 'Increase travelers'),
-          onPressed: safeValue >= 99 ? null : () => onChanged(safeValue + 1),
-          icon: const Icon(Icons.add_rounded),
-        ),
-      ],
     );
   }
 }
@@ -7837,14 +7830,17 @@ class _ManualTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: .94),
-        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
+        color: const Color(0xFFF7F8F0).withValues(alpha: .9),
+        border: Border(
+          bottom: BorderSide(
+            color: const Color(0xFFC2C7CC).withValues(alpha: .32),
+          ),
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: .08),
+            color: const Color(0xFF355872).withValues(alpha: .06),
             blurRadius: 18,
             offset: const Offset(0, 6),
           ),
@@ -7862,7 +7858,7 @@ class _ManualTopBar extends StatelessWidget {
             IconButton(
               style: IconButton.styleFrom(
                 backgroundColor: Colors.transparent,
-                foregroundColor: colorScheme.onSurface,
+                foregroundColor: const Color(0xFF42474C),
               ),
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back_rounded),
@@ -7873,8 +7869,8 @@ class _ManualTopBar extends StatelessWidget {
                 appText(context, title),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: colorScheme.onSurface,
+                style: const TextStyle(
+                  color: Color(0xFF355872),
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
                 ),
@@ -8743,6 +8739,481 @@ class _ManualNoticeCard extends StatelessWidget {
   }
 }
 
+class _ManualPreviewCard extends StatelessWidget {
+  const _ManualPreviewCard({
+    required this.completedSections,
+    required this.totalSections,
+    required this.destination,
+    required this.startDate,
+    required this.endDate,
+    required this.tripLength,
+    required this.budget,
+    required this.group,
+    required this.preferences,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final int completedSections;
+  final int totalSections;
+  final String destination;
+  final String startDate;
+  final String endDate;
+  final int tripLength;
+  final String budget;
+  final String group;
+  final List<String> preferences;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = totalSections == 0
+        ? 0.0
+        : (completedSections / totalSections).clamp(0.0, 1.0);
+    final destinationText = destination.isEmpty
+        ? appText(context, 'Choose a destination')
+        : destination;
+    final budgetText = budget.isEmpty ? appText(context, 'Add budget') : budget;
+    final visiblePreferences = preferences.take(3).toList();
+    final preferenceText = visiblePreferences.isEmpty
+        ? appText(context, 'Pick travel style')
+        : [
+            group,
+            visiblePreferences.join(', '),
+            if (preferences.length > visiblePreferences.length)
+              '+${preferences.length - visiblePreferences.length} more',
+          ].where((value) => value.trim().isNotEmpty).join(' | ');
+    final dayLabel = tripLength == 1
+        ? appText(context, 'day')
+        : appText(context, 'days');
+    final imageUrl = _imagesForDestination(destinationText).first;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 660;
+        final image = _ManualPreviewImage(
+          imageUrl: imageUrl,
+          destination: destinationText,
+        );
+        final details = _ManualPreviewDetails(
+          destination: destinationText,
+          dateRange: '$startDate to $endDate',
+          duration: '$tripLength $dayLabel',
+          budget: budgetText,
+          preferenceText: preferenceText,
+          completedSections: completedSections,
+          totalSections: totalSections,
+          progress: progress.toDouble(),
+          expanded: expanded,
+          onToggle: onToggle,
+        );
+
+        return Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: onToggle,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: const Color(0xFFC2C7CC).withValues(alpha: .22),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF355872).withValues(alpha: .06),
+                    blurRadius: 28,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: isWide
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 250,
+                          height: expanded ? 248 : 172,
+                          child: image,
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(child: details),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(height: 178, child: image),
+                        const SizedBox(height: 14),
+                        details,
+                      ],
+                    ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ManualPreviewImage extends StatelessWidget {
+  const _ManualPreviewImage({
+    required this.imageUrl,
+    required this.destination,
+  });
+
+  final String imageUrl;
+  final String destination;
+
+  @override
+  Widget build(BuildContext context) {
+    final filterQuality = PerformanceScope.maybeSettingsOf(
+      context,
+    ).filterQuality;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.network(
+            imageUrl,
+            fit: BoxFit.cover,
+            filterQuality: filterQuality,
+            errorBuilder: (context, error, stackTrace) => Container(
+              color: const Color(0xFFF4F8FA),
+              child: const Icon(
+                Icons.landscape_rounded,
+                color: Color(0xFFACCBE0),
+                size: 54,
+              ),
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withValues(alpha: .02),
+                  Colors.black.withValues(alpha: .46),
+                ],
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.bottomLeft,
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .9),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.visibility_rounded,
+                          color: Color(0xFF355872),
+                          size: 14,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          appText(context, 'Preview'),
+                          style: const TextStyle(
+                            color: Color(0xFF355872),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    destination,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      height: 1.05,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualPreviewDetails extends StatelessWidget {
+  const _ManualPreviewDetails({
+    required this.destination,
+    required this.dateRange,
+    required this.duration,
+    required this.budget,
+    required this.preferenceText,
+    required this.completedSections,
+    required this.totalSections,
+    required this.progress,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final String destination;
+  final String dateRange;
+  final String duration;
+  final String budget;
+  final String preferenceText;
+  final int completedSections;
+  final int totalSections;
+  final double progress;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final isComplete = completedSections == totalSections;
+    final performance = PerformanceScope.maybeSettingsOf(context);
+    final duration = performance.animationsEnabled
+        ? performance.transitionDuration
+        : Duration.zero;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: isComplete
+                      ? const Color(0xFF16A34A)
+                      : const Color(0xFFC8E7FC).withValues(alpha: .72),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  isComplete ? Icons.check_rounded : Icons.map_rounded,
+                  color: isComplete ? Colors.white : const Color(0xFF355872),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      appText(context, 'Trip preview'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF355872),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      appText(
+                        context,
+                        '$completedSections of $totalSections sections filled',
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF42474C),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              IconButton(
+                tooltip: appText(
+                  context,
+                  expanded ? 'Hide details' : 'Show details',
+                ),
+                onPressed: onToggle,
+                icon: AnimatedRotation(
+                  turns: expanded ? .5 : 0,
+                  duration: duration,
+                  child: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: Color(0xFF72787C),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: Stack(
+              children: [
+                Container(height: 8, color: const Color(0xFFE3E3DD)),
+                FractionallySizedBox(
+                  widthFactor: progress,
+                  child: Container(
+                    height: 8,
+                    color: isComplete
+                        ? const Color(0xFF16A34A)
+                        : const Color(0xFF355872),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            appText(context, expanded ? 'Hide details' : 'View all details'),
+            style: const TextStyle(
+              color: Color(0xFF355872),
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          AnimatedSize(
+            duration: duration,
+            curve: Curves.easeInOutCubic,
+            child: expanded
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 14),
+                    child: Column(
+                      children: [
+                        _ManualPreviewInfoRow(
+                          icon: Icons.place_rounded,
+                          label: 'Destination',
+                          value: destination,
+                        ),
+                        _ManualPreviewInfoRow(
+                          icon: Icons.event_rounded,
+                          label: 'Dates',
+                          value: dateRange,
+                          helper: this.duration,
+                        ),
+                        _ManualPreviewInfoRow(
+                          icon: Icons.payments_rounded,
+                          label: 'Budget',
+                          value: budget,
+                        ),
+                        _ManualPreviewInfoRow(
+                          icon: Icons.tune_rounded,
+                          label: 'Style',
+                          value: preferenceText,
+                        ),
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualPreviewInfoRow extends StatelessWidget {
+  const _ManualPreviewInfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.helper,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final String? helper;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF4F8FA),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, color: const Color(0xFF355872), size: 17),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, label),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF72787C),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF355872),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    height: 1.25,
+                  ),
+                ),
+                if (helper != null) ...[
+                  Text(
+                    helper!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF42474C),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ManualInfoBanner extends StatelessWidget {
   const _ManualInfoBanner();
 
@@ -8825,23 +9296,40 @@ class _ManualFooterActions extends StatelessWidget {
           top: BorderSide(color: const Color(0xFFC2C7CC).withValues(alpha: .3)),
         ),
       ),
-      child: FilledButton.icon(
-        style: FilledButton.styleFrom(
-          backgroundColor: const Color(0xFF355872),
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(999),
+      child: Row(
+        children: [
+          TextButton(
+            onPressed: onCancel,
+            child: Text(
+              appText(context, 'Cancel'),
+              style: const TextStyle(
+                color: Color(0xFF42474C),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
-        ),
-        onPressed: isCreating ? null : onCreate,
-        icon: isCreating
-            ? const SizedBox.square(
-                dimension: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.arrow_forward_rounded, size: 18),
-        label: Text(appText(context, isCreating ? 'CREATING' : 'CREATE TRIP')),
+          const Spacer(),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF355872),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            onPressed: isCreating ? null : onCreate,
+            icon: isCreating
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.arrow_forward_rounded, size: 18),
+            label: Text(
+              appText(context, isCreating ? 'Creating' : 'Create manually'),
+            ),
+          ),
+        ],
       ),
     );
   }

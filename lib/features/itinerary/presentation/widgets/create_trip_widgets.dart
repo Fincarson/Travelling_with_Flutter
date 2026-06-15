@@ -110,11 +110,19 @@ class CreateTripChatTurn extends StatelessWidget {
   const CreateTripChatTurn({
     required this.message,
     required this.onSelect,
+    required this.selectedCurrency,
+    required this.currencyOptions,
+    required this.onCurrencyChanged,
+    required this.budgetOptions,
     super.key,
   });
 
   final CreateTripChatMessage message;
   final ValueChanged<String> onSelect;
+  final String selectedCurrency;
+  final List<String> currencyOptions;
+  final ValueChanged<String> onCurrencyChanged;
+  final List<CreateTripChoiceOption> budgetOptions;
 
   @override
   Widget build(BuildContext context) {
@@ -130,6 +138,10 @@ class CreateTripChatTurn extends StatelessWidget {
             child: CreateTripChoicePanel(
               widget: message.widget!,
               onSelect: onSelect,
+              selectedCurrency: selectedCurrency,
+              currencyOptions: currencyOptions,
+              onCurrencyChanged: onCurrencyChanged,
+              budgetOptions: budgetOptions,
             ),
           ),
       ],
@@ -212,33 +224,58 @@ class CreateTripChoicePanel extends StatelessWidget {
   const CreateTripChoicePanel({
     required this.widget,
     required this.onSelect,
+    required this.selectedCurrency,
+    required this.currencyOptions,
+    required this.onCurrencyChanged,
+    required this.budgetOptions,
     super.key,
   });
 
   final CreateTripChoiceWidget widget;
   final ValueChanged<String> onSelect;
+  final String selectedCurrency;
+  final List<String> currencyOptions;
+  final ValueChanged<String> onCurrencyChanged;
+  final List<CreateTripChoiceOption> budgetOptions;
 
   @override
   Widget build(BuildContext context) {
+    final isBudgetPanel = _isBudgetChoicePanel(widget);
+    final options = isBudgetPanel ? budgetOptions : widget.options;
+
     return GlassPanel(
       padding: const EdgeInsets.all(12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            appText(context, widget.title),
-            style: const TextStyle(
-              color: _primary,
-              fontWeight: FontWeight.w900,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  appText(context, widget.title),
+                  style: const TextStyle(
+                    color: _primary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (isBudgetPanel)
+                _BudgetCurrencyMenu(
+                  currency: selectedCurrency,
+                  options: currencyOptions,
+                  onChanged: onCurrencyChanged,
+                ),
+            ],
           ),
           const SizedBox(height: 10),
-          for (final option in widget.options)
+          for (final option in options)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: InkWell(
                 borderRadius: BorderRadius.circular(16),
-                onTap: () => onSelect(option.value),
+                onTap: () => option.value == _customBudgetValue
+                    ? _showCustomBudgetDialog(context)
+                    : onSelect(option.value),
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(12),
@@ -288,6 +325,112 @@ class CreateTripChoicePanel extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Future<void> _showCustomBudgetDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    try {
+      final amount = await showDialog<int>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(appText(context, 'Custom budget')),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: appText(context, 'Total budget'),
+              prefixText: '$selectedCurrency ',
+            ),
+            onSubmitted: (_) {
+              final parsed = int.tryParse(
+                controller.text.replaceAll(RegExp(r'\D'), ''),
+              );
+              Navigator.of(context).pop(parsed);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(appText(context, 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () {
+                final parsed = int.tryParse(
+                  controller.text.replaceAll(RegExp(r'\D'), ''),
+                );
+                Navigator.of(context).pop(parsed);
+              },
+              child: Text(appText(context, 'Use budget')),
+            ),
+          ],
+        ),
+      );
+      if (amount == null || amount <= 0) return;
+      onSelect('budget $amount $selectedCurrency');
+    } finally {
+      controller.dispose();
+    }
+  }
+}
+
+const _customBudgetValue = '__custom_budget__';
+
+bool _isBudgetChoicePanel(CreateTripChoiceWidget widget) {
+  final title = widget.title.toLowerCase();
+  if (title.contains('budget')) return true;
+  return widget.options.any((option) {
+    final label = option.label.toLowerCase();
+    return label.contains('budget') ||
+        label.contains('mid-range') ||
+        label.contains('premium');
+  });
+}
+
+class _BudgetCurrencyMenu extends StatelessWidget {
+  const _BudgetCurrencyMenu({
+    required this.currency,
+    required this.options,
+    required this.onChanged,
+  });
+
+  final String currency;
+  final List<String> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: appText(context, 'Currency'),
+      onSelected: onChanged,
+      itemBuilder: (context) => [
+        for (final option in options)
+          PopupMenuItem<String>(value: option, child: Text(option)),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEAF6FF),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFEFF3F6)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              currency,
+              style: const TextStyle(
+                color: _primary,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.expand_more_rounded, color: _primary, size: 18),
+          ],
+        ),
       ),
     );
   }
@@ -356,12 +499,7 @@ class CreateTripDraftCard extends StatelessWidget {
                     ? 'TBD'
                     : '${draft.currency ?? 'USD'} ${_formatAmountText(draft.budget!)}',
               ),
-              DraftStat(
-                label: 'Travelers',
-                value: draft.numOfTravelers == null
-                    ? 'TBD'
-                    : _travelerCountLabel(draft.numOfTravelers!),
-              ),
+              DraftStat(label: 'Party', value: draft.groupType ?? 'TBD'),
             ],
           ),
           if (draft.preferences.isNotEmpty) ...[
@@ -451,7 +589,7 @@ class CreateTripDraftCard extends StatelessWidget {
             ),
             icon: const Icon(Icons.auto_awesome_rounded),
             label: Text(
-              appText(context, 'USE CUSTOMIZED PLAN'),
+              appText(context, 'PREVIEW ITINERARY'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),

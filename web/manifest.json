@@ -1,11 +1,11 @@
 {
-    "name": "Travel Agent",
-    "short_name": "Travel Agent",
+    "name": "lab05_example",
+    "short_name": "lab05_example",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "Travel planning, collaboration, and trip organization.",
+    "description": "A new Flutter project.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

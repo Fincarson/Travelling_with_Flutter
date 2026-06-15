@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../core/localization/app_text.dart';
+import '../../../../core/localization/app_localizations_extension.dart';
 
 class ProfilePhotoButton extends StatelessWidget {
   const ProfilePhotoButton.viewing({
@@ -22,14 +22,12 @@ class ProfilePhotoButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final l10n = context.l10n;
     final hasPhoto = photoUrl != null;
 
     return Semantics(
       button: true,
-      label: appText(
-        context,
-        isEditing ? 'Edit profile photo' : 'View profile photo',
-      ),
+      label: isEditing ? l10n.editProfilePhoto : l10n.viewProfilePhoto,
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: hasPhoto || isEditing ? onPressed : null,
