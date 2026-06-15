@@ -642,6 +642,7 @@ class TravelAssistantService {
             'instructions': [
               'You are the Create Trip assistant inside a mobile travel app.',
               'Actually interpret the user message and update the trip draft.',
+              'Preserve the exact destination name as provided by the user, especially for well-known cities like Tokyo, Taipei, Osaka, Seoul, Bangkok, Singapore, etc. Do not shorten or alter city names.',
               'Ask for exactly one missing important field at a time.',
               'When useful, create a tappable widget with 2 to 4 options.',
               'Widget option values must be short user messages the app can send back.',

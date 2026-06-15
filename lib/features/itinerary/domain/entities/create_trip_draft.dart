@@ -9,7 +9,7 @@ class CreateTripDraft {
     this.endDate,
     this.budget,
     this.currency,
-    this.numOfTravelers,
+    this.groupType,
     this.preferences = const [],
   });
 
@@ -18,7 +18,7 @@ class CreateTripDraft {
   final DateTime? endDate;
   final String? budget;
   final String? currency;
-  final int? numOfTravelers;
+  final String? groupType;
   final List<String> preferences;
 
   CreateTripDraft copyWith({
@@ -27,7 +27,7 @@ class CreateTripDraft {
     DateTime? endDate,
     String? budget,
     String? currency,
-    int? numOfTravelers,
+    String? groupType,
     List<String>? preferences,
   }) {
     return CreateTripDraft(
@@ -36,7 +36,7 @@ class CreateTripDraft {
       endDate: endDate ?? this.endDate,
       budget: budget ?? this.budget,
       currency: currency ?? this.currency,
-      numOfTravelers: numOfTravelers ?? this.numOfTravelers,
+      groupType: groupType ?? this.groupType,
       preferences: preferences ?? this.preferences,
     );
   }
@@ -47,11 +47,9 @@ class CreateTripDraft {
     'endDate': endDate == null ? null : _dateKey(endDate!),
     'budget': budget,
     'currency': currency,
-    'numOfTravelers': numOfTravelers,
+    'groupType': groupType,
     'preferences': preferences,
   };
-
-  Map<String, dynamic> toMap() => toAiMap();
 
   static CreateTripDraft fromAiMap(
     Map<String, dynamic> map, {
@@ -63,10 +61,7 @@ class CreateTripDraft {
       endDate: _parseIsoDate(map['endDate']) ?? fallback.endDate,
       budget: _nonEmptyString(map['budget']) ?? fallback.budget,
       currency: _normalCurrencyCode(map['currency']) ?? fallback.currency,
-      numOfTravelers:
-          _normalTravelerCount(map['numOfTravelers']) ??
-          _legacyTravelerCountFromGroupType(map['groupType']) ??
-          fallback.numOfTravelers,
+      groupType: _normalGroupType(map['groupType']) ?? fallback.groupType,
       preferences: ((map['preferences'] as List<dynamic>?) ?? const [])
           .whereType<String>()
           .where((item) => item.trim().isNotEmpty)
@@ -74,8 +69,21 @@ class CreateTripDraft {
     );
   }
 
-  static CreateTripDraft fromMap(Map<String, dynamic> map) {
-    return CreateTripDraft.fromAiMap(map, fallback: const CreateTripDraft());
+  Map<String, dynamic> toJson() => toAiMap();
+
+  static CreateTripDraft? fromJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    return CreateTripDraft(
+      destination: json['destination'] as String?,
+      startDate: _parseIsoDate(json['startDate']),
+      endDate: _parseIsoDate(json['endDate']),
+      budget: json['budget'] as String?,
+      currency: json['currency'] as String?,
+      groupType: json['groupType'] as String?,
+      preferences: ((json['preferences'] as List<dynamic>?) ?? const [])
+          .whereType<String>()
+          .toList(),
+    );
   }
 }
 
@@ -90,18 +98,33 @@ class CreateTripChatMessage {
   final String text;
   final CreateTripChoiceWidget? widget;
 
-  Map<String, dynamic> toMap() => {
-    'fromUser': fromUser,
-    'text': text,
-    'widget': widget?.toMap(),
-  };
+  Map<String, dynamic> toJson() => {
+        'fromUser': fromUser,
+        'text': text,
+        'widget': widget?.toJson(),
+      };
 
-  static CreateTripChatMessage fromMap(Map<String, dynamic> map) {
+  static CreateTripChatMessage fromJson(Map<String, dynamic> json) {
     return CreateTripChatMessage(
-      fromUser: map['fromUser'] == true,
-      text: (map['text'] as String?) ?? '',
-      widget: CreateTripChoiceWidget.fromMap(map['widget']),
+      fromUser: json['fromUser'] as bool? ?? false,
+      text: json['text'] as String? ?? '',
+      widget: json['widget'] is Map
+          ? CreateTripChoiceWidget.fromMap(json['widget'])
+          : null,
     );
+  }
+
+  static List<CreateTripChatMessage> fromJsonList(List<dynamic> json) {
+    return json
+        .whereType<Map<String, dynamic>>()
+        .map(CreateTripChatMessage.fromJson)
+        .toList();
+  }
+
+  static List<Map<String, dynamic>> toJsonList(
+    List<CreateTripChatMessage> messages,
+  ) {
+    return messages.map((m) => m.toJson()).toList();
   }
 }
 
@@ -139,10 +162,10 @@ class CreateTripChoiceWidget {
   final String title;
   final List<CreateTripChoiceOption> options;
 
-  Map<String, dynamic> toMap() => {
-    'title': title,
-    'options': options.map((option) => option.toMap()).toList(),
-  };
+  Map<String, dynamic> toJson() => {
+        'title': title,
+        'options': options.map((o) => o.toJson()).toList(),
+      };
 
   static CreateTripChoiceWidget? fromMap(Object? value) {
     if (value is! Map) return null;
@@ -174,11 +197,11 @@ class CreateTripChoiceOption {
   final String value;
   final String description;
 
-  Map<String, dynamic> toMap() => {
-    'label': label,
-    'value': value,
-    'description': description,
-  };
+  Map<String, dynamic> toJson() => {
+        'label': label,
+        'value': value,
+        'description': description,
+      };
 
   static CreateTripChoiceOption? fromMap(Map<dynamic, dynamic> map) {
     final label = _nonEmptyString(map['label']);
@@ -208,7 +231,6 @@ String? _normalCurrencyCode(Object? value) {
   if (text == 'usd' || text == 'dollar' || text == 'dollars') return 'USD';
   if (text == 'jpy' || text == 'yen') return 'JPY';
   if (text == 'eur' || text == 'euro' || text == 'euros') return 'EUR';
-  if (RegExp(r'^[a-z]{3}$').hasMatch(text)) return text.toUpperCase();
   return null;
 }
 
@@ -229,22 +251,12 @@ DateTime? _parseIsoDate(Object? value) {
   return DateTime.tryParse(value.trim());
 }
 
-int? _normalTravelerCount(Object? value) {
-  if (value is num) return value.toInt().clamp(1, 99).toInt();
-  final text = _nonEmptyString(value);
-  if (text == null) return null;
-  final match = RegExp(r'\d+').firstMatch(text);
-  final count = int.tryParse(match?.group(0) ?? '');
-  if (count == null) return null;
-  return count.clamp(1, 99).toInt();
-}
-
-int? _legacyTravelerCountFromGroupType(Object? value) {
+String? _normalGroupType(Object? value) {
   final text = _nonEmptyString(value)?.toLowerCase();
   if (text == null) return null;
-  if (text.contains('solo')) return 1;
-  if (text.contains('family')) return 4;
-  if (text.contains('tour')) return 12;
-  if (text.contains('friend')) return 2;
+  if (text.contains('solo')) return 'Solo';
+  if (text.contains('family')) return 'Family';
+  if (text.contains('tour')) return 'Tour';
+  if (text.contains('friend')) return 'Friends';
   return null;
 }
