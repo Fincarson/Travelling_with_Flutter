@@ -1,10 +1,16 @@
 part of travel_agent_app;
 
 class ScheduleTab extends StatefulWidget {
-  const ScheduleTab({required this.trip, required this.onSave, super.key});
+  const ScheduleTab({
+    required this.trip,
+    required this.onSave,
+    this.readOnly = false,
+    super.key,
+  });
 
   final Trip trip;
   final ValueChanged<Trip> onSave;
+  final bool readOnly;
 
   @override
   State<ScheduleTab> createState() => _ScheduleTabState();
@@ -22,9 +28,11 @@ class _ScheduleTabState extends State<ScheduleTab> {
   void initState() {
     super.initState();
     _selectedDay = _tripRuntimePlan(widget.trip).currentDay;
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _maybeAutofillSelectedDay(),
-    );
+    if (!widget.readOnly) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _maybeAutofillSelectedDay(),
+      );
+    }
   }
 
   @override
@@ -34,9 +42,11 @@ class _ScheduleTabState extends State<ScheduleTab> {
     if (!days.contains(_selectedDay)) {
       _selectedDay = days.first;
     }
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _maybeAutofillSelectedDay(),
-    );
+    if (!widget.readOnly) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _maybeAutofillSelectedDay(),
+      );
+    }
   }
 
   List<int> _scheduleDays(List<ScheduleItem> items) {
@@ -102,7 +112,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
   }
 
   Future<void> _maybeAutofillSelectedDay() async {
-    if (!mounted || _isAutofillingDay) return;
+    if (!mounted || widget.readOnly || _isAutofillingDay) return;
     final runtime = _tripRuntimePlan(trip);
     final day = _selectedDay.clamp(1, runtime.totalDays);
     if (_autofillAttemptedDays.contains(day)) return;
@@ -423,17 +433,21 @@ class _ScheduleTabState extends State<ScheduleTab> {
           selectedDay: _selectedDay,
           onSelect: (day) {
             setState(() => _selectedDay = day);
-            WidgetsBinding.instance.addPostFrameCallback(
-              (_) => _maybeAutofillSelectedDay(),
-            );
+            if (!widget.readOnly) {
+              WidgetsBinding.instance.addPostFrameCallback(
+                (_) => _maybeAutofillSelectedDay(),
+              );
+            }
           },
         ),
-        const SizedBox(height: 16),
-        PrimaryButton(
-          label: 'Add destination',
-          icon: Icons.add_rounded,
-          onPressed: () => _addScheduleStop(context),
-        ),
+        if (!widget.readOnly) ...[
+          const SizedBox(height: 16),
+          PrimaryButton(
+            label: 'Add destination',
+            icon: Icons.add_rounded,
+            onPressed: () => _addScheduleStop(context),
+          ),
+        ],
         const SizedBox(height: 16),
         // if (trip.status == TripStatus.ongoing) ...[
         // GlassPanel(
@@ -498,12 +512,22 @@ class _ScheduleTabState extends State<ScheduleTab> {
         ],
         // LabelText('${appText(context, 'Day')} $_selectedDay'),
         const SizedBox(height: 10),
-        if (selectedEntries.isEmpty)
+        if (selectedEntries.isEmpty && widget.readOnly)
+          GlassPanel(
+            child: Text(
+              appText(context, 'No activities planned for this day.'),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          )
+        else if (selectedEntries.isEmpty)
           _ScheduleAutofillPanel(
             day: _selectedDay,
             isLoading: _isAutofillingDay,
             onFill: _isAutofillingDay ? null : _maybeAutofillSelectedDay,
           )
+        else if (widget.readOnly)
+          for (final entry in selectedEntries)
+            ScheduleTile(item: entry.item, currency: widget.trip.currency)
         else
           for (final entry in selectedEntries)
             Dismissible(

@@ -1,9 +1,15 @@
 part of travel_agent_app;
 
 class TripOverviewTab extends StatelessWidget {
-  const TripOverviewTab({required this.trip, required this.onSave, super.key});
+  const TripOverviewTab({
+    required this.trip,
+    required this.onSave,
+    this.readOnly = false,
+    super.key,
+  });
   final Trip trip;
   final ValueChanged<Trip> onSave;
+  final bool readOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -35,9 +41,11 @@ class TripOverviewTab extends StatelessWidget {
         ],
         _RepairAgentPanel(
           suggestions: repairs,
-          onApply: (suggestion) {
-            onSave(_applyItineraryRepair(trip, suggestion.kind));
-          },
+          onApply: readOnly
+              ? null
+              : (suggestion) {
+                  onSave(_applyItineraryRepair(trip, suggestion.kind));
+                },
         ),
         const SizedBox(height: 12),
         _BudgetGuardianPanel(trip: trip, insight: budgetInsight),
@@ -819,10 +827,10 @@ _DailyAgentAdvice _dailyAgentAdvice(
 }
 
 class _RepairAgentPanel extends StatelessWidget {
-  const _RepairAgentPanel({required this.suggestions, required this.onApply});
+  const _RepairAgentPanel({required this.suggestions, this.onApply});
 
   final List<_ItineraryRepairSuggestion> suggestions;
-  final ValueChanged<_ItineraryRepairSuggestion> onApply;
+  final ValueChanged<_ItineraryRepairSuggestion>? onApply;
 
   @override
   Widget build(BuildContext context) {
@@ -883,8 +891,8 @@ class _RepairAgentPanel extends StatelessWidget {
           for (var index = 0; index < suggestions.length; index++) ...[
             _RepairSuggestionTile(
               suggestion: suggestions[index],
-              onApply: suggestions[index].canApply
-                  ? () => onApply(suggestions[index])
+              onApply: suggestions[index].canApply && onApply != null
+                  ? () => onApply!(suggestions[index])
                   : null,
             ),
             if (index != suggestions.length - 1) const SizedBox(height: 10),

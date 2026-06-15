@@ -316,7 +316,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       _selectedTrip = trip;
       _screen = _Screen.tripDetail;
       _tab = _NavTab.trips;
-      _tripDetailInitialTab = 6;
+      _tripDetailInitialTab = 7;
       _pendingTripAiPrompt = prompt;
     });
   }
@@ -596,7 +596,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Future<void> _startTrip(Trip trip) async {
-    if (trip.status == TripStatus.ongoing) return;
+    if (!trip.canEdit || trip.status == TripStatus.ongoing) return;
 
     final previousActive = _activeTrip ?? _firstOngoingTrip(_trips);
     if (previousActive != null && previousActive.id != trip.id) {
@@ -630,7 +630,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   void _deleteTrip(Trip trip) {
-    if (_pendingTripDeleteIds.contains(trip.id)) return;
+    if (!trip.isOwner || _pendingTripDeleteIds.contains(trip.id)) return;
     setState(() {
       _pendingTripDeleteIds.add(trip.id);
       if (_selectedTrip?.id == trip.id) {
@@ -706,6 +706,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Future<void> _updateTrip(Trip trip) async {
+    if (!trip.canEdit) return;
     final saved = await _saveTripOnline(trip);
     if (!saved || !mounted) return;
     await _refreshTripsFromBackend();
@@ -977,6 +978,9 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       onOpenBudget: () => context.go('/trips/${trip.id}/budget'),
       onOpenPacking: () => context.go('/trips/${trip.id}/packing'),
       onUpdateTrip: _updateTrip,
+      accountId: _accountId ?? widget.account.uid,
+      repository: _repository,
+      onLeftTrip: () => context.go('/trips'),
       initialTabIndex: _tripDetailInitialTab,
       initialAiPrompt: _pendingTripAiPrompt,
     );
@@ -1044,6 +1048,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       account: widget.account,
       user: _user,
       onBack: () => context.go('/chat'),
+      onOpenTrip: (tripId) => context.go(_tripLocation(tripId)),
       onVisibilityChanged: _setActiveChatId,
     );
   }
@@ -1300,6 +1305,12 @@ class _TravelAgentAppState extends State<TravelAgentApp>
           onOpenBudget: () => setState(() => _screen = _Screen.budget),
           onOpenPacking: () => setState(() => _screen = _Screen.packing),
           onUpdateTrip: _updateTrip,
+          accountId: _accountId ?? widget.account.uid,
+          repository: _repository,
+          onLeftTrip: () => setState(() {
+            _selectedTrip = null;
+            _screen = _Screen.trips;
+          }),
           initialTabIndex: _tripDetailInitialTab,
           initialAiPrompt: _pendingTripAiPrompt,
         );
@@ -1537,6 +1548,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
 
   void _queueTripAutomation(List<Trip> trips) {
     for (final trip in trips) {
+      if (!trip.canEdit) continue;
       final key = _tripAutomationKey(trip);
       if (_automationCheckedKeys.contains(key)) continue;
       if (!_automationInFlight.add(key)) continue;

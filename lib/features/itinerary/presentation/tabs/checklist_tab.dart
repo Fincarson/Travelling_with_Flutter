@@ -1,10 +1,16 @@
 part of travel_agent_app;
 
 class ChecklistTab extends StatefulWidget {
-  const ChecklistTab({required this.trip, required this.onSave, super.key});
+  const ChecklistTab({
+    required this.trip,
+    required this.onSave,
+    this.readOnly = false,
+    super.key,
+  });
 
   final Trip trip;
   final ValueChanged<Trip> onSave;
+  final bool readOnly;
 
   @override
   State<ChecklistTab> createState() => _ChecklistTabState();
@@ -122,7 +128,9 @@ class _ChecklistTabState extends State<ChecklistTab> {
             child: _ChecklistCategoryPanel(
               category: trip.checklist[categoryIndex],
               categoryIndex: categoryIndex,
-              editing: _editingCategoryIndex == categoryIndex,
+              editing:
+                  !widget.readOnly && _editingCategoryIndex == categoryIndex,
+              readOnly: widget.readOnly,
               addController: _addItemControllers.putIfAbsent(
                 categoryIndex,
                 TextEditingController.new,
@@ -143,11 +151,12 @@ class _ChecklistTabState extends State<ChecklistTab> {
               onAddItem: () => _addItem(categoryIndex),
             ),
           ),
-        PrimaryButton(
-          label: 'Add category',
-          icon: Icons.add_rounded,
-          onPressed: _addCategory,
-        ),
+        if (!widget.readOnly)
+          PrimaryButton(
+            label: 'Add category',
+            icon: Icons.add_rounded,
+            onPressed: _addCategory,
+          ),
       ],
     );
   }
@@ -158,6 +167,7 @@ class _ChecklistCategoryPanel extends StatelessWidget {
     required this.category,
     required this.categoryIndex,
     required this.editing,
+    required this.readOnly,
     required this.addController,
     required this.onToggleEdit,
     required this.onRenameCategory,
@@ -170,6 +180,7 @@ class _ChecklistCategoryPanel extends StatelessWidget {
   final ChecklistCategory category;
   final int categoryIndex;
   final bool editing;
+  final bool readOnly;
   final TextEditingController addController;
   final VoidCallback onToggleEdit;
   final ValueChanged<String> onRenameCategory;
@@ -218,11 +229,14 @@ class _ChecklistCategoryPanel extends StatelessWidget {
                         ),
                       ),
               ),
-              IconButton.filledTonal(
-                tooltip: appText(context, editing ? 'Done' : 'Edit'),
-                onPressed: onToggleEdit,
-                icon: Icon(editing ? Icons.check_rounded : Icons.edit_rounded),
-              ),
+              if (!readOnly)
+                IconButton.filledTonal(
+                  tooltip: appText(context, editing ? 'Done' : 'Edit'),
+                  onPressed: onToggleEdit,
+                  icon: Icon(
+                    editing ? Icons.check_rounded : Icons.edit_rounded,
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 12),
@@ -236,40 +250,43 @@ class _ChecklistCategoryPanel extends StatelessWidget {
               item: category.items[itemIndex],
               itemIndex: itemIndex,
               editing: editing,
+              readOnly: readOnly,
               onToggle: (value) => onToggleItem(itemIndex, value),
               onRename: (value) => onRenameItem(itemIndex, value),
               onDelete: () => onDeleteItem(itemIndex),
             ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const SizedBox(width: _ChecklistItemRow.controlExtent),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SizedBox(
-                  height: _ChecklistItemRow.rowHeight,
-                  child: TextField(
-                    controller: addController,
-                    decoration: _checklistUnderlineDecoration(
-                      context,
-                      'New item',
-                      suffix: SizedBox.square(
-                        dimension: _ChecklistItemRow.controlExtent,
-                        child: addButton,
+          if (!readOnly) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const SizedBox(width: _ChecklistItemRow.controlExtent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: SizedBox(
+                    height: _ChecklistItemRow.rowHeight,
+                    child: TextField(
+                      controller: addController,
+                      decoration: _checklistUnderlineDecoration(
+                        context,
+                        'New item',
+                        suffix: SizedBox.square(
+                          dimension: _ChecklistItemRow.controlExtent,
+                          child: addButton,
+                        ),
                       ),
+                      style: const TextStyle(
+                        color: _primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      textAlignVertical: TextAlignVertical.center,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => onAddItem(),
                     ),
-                    style: const TextStyle(
-                      color: _primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    textAlignVertical: TextAlignVertical.center,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (_) => onAddItem(),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -281,6 +298,7 @@ class _ChecklistItemRow extends StatelessWidget {
     required this.item,
     required this.itemIndex,
     required this.editing,
+    required this.readOnly,
     required this.onToggle,
     required this.onRename,
     required this.onDelete,
@@ -290,6 +308,7 @@ class _ChecklistItemRow extends StatelessWidget {
   final String item;
   final int itemIndex;
   final bool editing;
+  final bool readOnly;
   final ValueChanged<bool?> onToggle;
   final ValueChanged<String> onRename;
   final VoidCallback onDelete;
@@ -319,7 +338,7 @@ class _ChecklistItemRow extends StatelessWidget {
                   )
                 : Checkbox(
                     value: checked,
-                    onChanged: onToggle,
+                    onChanged: readOnly ? null : onToggle,
                     activeColor: _primary,
                   ),
           ),
