@@ -1075,7 +1075,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         text.contains('SERVICE_DISABLED') ||
         text.contains('generateTripPlan') ||
         text.contains('createTripReply')) {
-      return 'AI is not connected yet. Set the Firebase Function secrets and deploy Functions, or run Flutter with an OPENAI_API_KEY dart define.';
+      return 'AI is not connected yet. Set the Firebase Function secrets and deploy Functions.';
     }
     if (text.contains('unauthenticated') ||
         text.contains('permission-denied')) {
@@ -3197,6 +3197,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
     return ScreenScaffold(
       child: Column(
+        key: const ValueKey('create-trip-manual-page'),
         children: [
           _ManualTopBar(
             title: 'Create Manually',
@@ -4592,7 +4593,6 @@ class _AiPreviewImageGrid extends StatelessWidget {
                     selected: true,
                     large: true,
                     filterQuality: filterQuality,
-                    onTap: () {},
                   ),
                 ),
                 for (final image in thumbnailImages)
@@ -4622,86 +4622,87 @@ class _AiPreviewImageTile extends StatelessWidget {
     required this.selected,
     required this.large,
     required this.filterQuality,
-    required this.onTap,
+    this.onTap,
   });
 
   final String image;
   final bool selected;
   final bool large;
   final FilterQuality filterQuality;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final image = ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.network(
+            this.image,
+            fit: BoxFit.cover,
+            filterQuality: filterQuality,
+            errorBuilder: (context, error, stackTrace) => Container(
+              color: const Color(0xFFF4F8FA),
+              child: Icon(
+                Icons.image_not_supported_rounded,
+                color: const Color(0xFFACCBE0),
+                size: large ? 48 : 28,
+              ),
+            ),
+          ),
+          if (selected)
+            DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border.all(color: _accent, width: 3),
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+          Positioned(
+            left: 10,
+            bottom: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: .92),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    selected
+                        ? Icons.check_circle_rounded
+                        : Icons.touch_app_rounded,
+                    color: _primary,
+                    size: 15,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    appText(context, selected ? 'Cover' : 'Select'),
+                    style: const TextStyle(
+                      color: _primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    final callback = onTap;
+    if (callback == null) return image;
+
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.network(
-                image,
-                fit: BoxFit.cover,
-                filterQuality: filterQuality,
-                errorBuilder: (context, error, stackTrace) => Container(
-                  color: const Color(0xFFF4F8FA),
-                  child: Icon(
-                    Icons.image_not_supported_rounded,
-                    color: const Color(0xFFACCBE0),
-                    size: large ? 48 : 28,
-                  ),
-                ),
-              ),
-              if (selected)
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: _accent, width: 3),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-              Positioned(
-                left: 10,
-                bottom: 10,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: .92),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        selected
-                            ? Icons.check_circle_rounded
-                            : Icons.touch_app_rounded,
-                        color: _primary,
-                        size: 15,
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        appText(context, selected ? 'Cover' : 'Select'),
-                        style: const TextStyle(
-                          color: _primary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        onTap: callback,
+        child: image,
       ),
     );
   }

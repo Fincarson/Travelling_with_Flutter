@@ -102,9 +102,18 @@ void main() {
 
     await tester.pumpWidget(page());
     await tester.pump();
-    await tester.tap(find.text('Create Manually'));
+    final manualOption = find.widgetWithText(
+      CreateOptionCard,
+      'Create Manually',
+    );
+    await tester.ensureVisible(manualOption);
+    await tester.pump();
+    tester.widget<CreateOptionCard>(manualOption).onTap();
     await tester.pumpAndSettle();
-    expect(find.text('Trip Basics'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('create-trip-manual-page')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());

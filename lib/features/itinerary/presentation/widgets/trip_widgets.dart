@@ -674,7 +674,10 @@ class TripListCard extends StatelessWidget {
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
-                          appText(context, trip.groupType).toUpperCase(),
+                          appText(
+                            context,
+                            _travelerGroupLabel(trip.numOfTravelers),
+                          ).toUpperCase(),
                           style: const TextStyle(
                             color: Color(0xFF355872),
                             fontSize: 9,

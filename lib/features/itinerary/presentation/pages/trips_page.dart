@@ -85,7 +85,7 @@ class _TripsScreenState extends State<TripsScreen> {
 
   List<String> get _groupTypes {
     final values = widget.trips
-        .map((trip) => trip.groupType.trim())
+        .map((trip) => _travelerGroupLabel(trip.numOfTravelers))
         .where((value) => value.isNotEmpty)
         .toSet()
         .toList();
@@ -121,7 +121,8 @@ class _TripsScreenState extends State<TripsScreen> {
         !trip.title.toLowerCase().contains(query)) {
       return false;
     }
-    return _groupFilter == null || trip.groupType == _groupFilter;
+    return _groupFilter == null ||
+        _travelerGroupLabel(trip.numOfTravelers) == _groupFilter;
   }
 
   int _compareTrips(Trip a, Trip b) {

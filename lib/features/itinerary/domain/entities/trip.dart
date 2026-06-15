@@ -247,6 +247,11 @@ String _travelerCountLabel(int count) {
   return safeCount == 1 ? '1 traveler' : '$safeCount travelers';
 }
 
+String _travelerGroupLabel(int count) {
+  final safeCount = count.clamp(1, 99).toInt();
+  return safeCount == 1 ? 'Solo' : _travelerCountLabel(safeCount);
+}
+
 class TripMemory {
   const TripMemory({
     required this.id,

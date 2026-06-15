@@ -1,14 +1,9 @@
 part of travel_agent_app;
 
 class TravelAgentApp extends StatefulWidget {
-  const TravelAgentApp({
-    required this.account,
-    this.startupOnboarding,
-    super.key,
-  });
+  const TravelAgentApp({required this.account, super.key});
 
   final AuthenticatedAccount account;
-  final PreAccountOnboardingData? startupOnboarding;
 
   @override
   State<TravelAgentApp> createState() => _TravelAgentAppState();
@@ -138,8 +133,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       }
     }
 
-    user = widget.startupOnboarding?.applyToProfile(user) ?? user;
-
     if (!mounted) return;
     setState(() {
       _accountId = accountId;
@@ -217,11 +210,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
                     currencySettingsVersion: 1,
                   )
                 : profile;
-            final normalized =
-                widget.startupOnboarding?.applyToProfile(normalizedRemote) ??
-                normalizedRemote;
             setState(() {
-              _user = normalized;
+              _user = normalizedRemote;
               _loadError = null;
             });
             unawaited(_syncTripReminders());
@@ -229,9 +219,9 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             unawaited(
               PerformanceScope.of(
                 context,
-              ).update(normalized.performanceSettings),
+              ).update(normalizedRemote.performanceSettings),
             );
-            unawaited(_saveLocalProfile(accountId, normalized));
+            unawaited(_saveLocalProfile(accountId, normalizedRemote));
             if (profile.currencySettingsVersion < 1) {
               unawaited(_repository.saveUser(accountId, normalizedRemote));
             }
@@ -891,16 +881,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     return RepaintBoundary(child: child);
   }
 
-  Widget _buildOnboardingScreen() {
-    return OnboardingScreen(
-      account: widget.account,
-      onComplete: (profile) {
-        unawaited(_saveProfile(profile));
-        if (mounted && context.mounted) context.go('/');
-      },
-    );
-  }
-
   Widget _buildDashboardScreen(BuildContext context) {
     return DashboardScreen(
       user: _user,
@@ -1121,7 +1101,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       onSave: _saveProfile,
       onSignOut: _authService.signOut,
       onDeleteAccount: _deleteAccount,
-      onBack: () => context.pop(),
+      onBack: () => context.go('/profile'),
       onOpenLinkedAccounts: () =>
           context.go('/profile/settings/linked-accounts'),
       onOpenPerformance: () => context.go('/profile/performance'),
@@ -1494,6 +1474,25 @@ class _TravelAgentAppState extends State<TravelAgentApp>
 
   Future<void> _syncPushTokenRegistration() async {
     await _syncPushTokenRegistrationResult();
+  }
+
+  Future<void> _enableNotificationsFromDashboard() async {
+    final result = await _syncPushTokenRegistrationResult(enabled: true);
+    if (!mounted || !context.mounted) return;
+
+    if (result.registered) {
+      await _saveProfile(_user.copyWith(notificationsEnabled: true));
+      if (!mounted || !context.mounted) return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(appText(context, result.message)),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   Future<PushTokenSyncResult> _syncPushTokenRegistrationResult({

@@ -14,10 +14,7 @@ class AppRouter {
         return null;
       },
       routes: [
-        GoRoute(
-          path: '/onboarding',
-          builder: (context, state) => appState._buildOnboardingScreen(),
-        ),
+        GoRoute(path: '/onboarding', redirect: (context, state) => '/'),
         StatefulShellRoute.indexedStack(
           builder: (context, state, navigationShell) {
             return _TravelRouteFrame(

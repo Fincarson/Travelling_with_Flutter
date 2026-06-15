@@ -17,15 +17,6 @@ class PreAccountOnboardingData {
   final List<String> interests;
   final String travelPace;
   final String termsVersion;
-
-  UserProfile applyToProfile(UserProfile profile) {
-    return profile.copyWith(
-      name: name.trim().isEmpty ? profile.name : name.trim(),
-      interests: interests,
-      ageRange: ageRange,
-      travelPace: travelPace,
-    );
-  }
 }
 
 class PreAccountOnboardingFlow extends StatefulWidget {
@@ -733,49 +724,6 @@ class _DraftTermsContent extends StatelessWidget {
           const SizedBox(height: 14),
         ],
       ],
-    );
-  }
-}
-
-class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({
-    required this.account,
-    required this.onComplete,
-    super.key,
-  });
-
-  final AuthenticatedAccount account;
-  final ValueChanged<UserProfile> onComplete;
-
-  @override
-  State<OnboardingScreen> createState() => _OnboardingScreenState();
-}
-
-class _OnboardingScreenState extends State<OnboardingScreen> {
-  @override
-  Widget build(BuildContext context) {
-    return PreAccountOnboardingFlow(
-      initialData: PreAccountOnboardingData(
-        name: widget.account.name,
-        interests: const [],
-        travelPace: 'Balanced',
-        termsVersion: '',
-      ),
-      onBack: () {},
-      onComplete: (data) {
-        widget.onComplete(
-          UserProfile(
-            name: data.name,
-            email: widget.account.email ?? '',
-            photoUrl: widget.account.photoUrl,
-            interests: data.interests,
-            ageRange: data.ageRange,
-            travelPace: data.travelPace,
-            termsAcceptedVersion: data.termsVersion,
-            termsAcceptedAt: DateTime.now().toUtc(),
-          ),
-        );
-      },
     );
   }
 }
