@@ -1,5 +1,10 @@
 part of travel_agent_app;
 
+const _tripDetailOverviewSectionIndex = 0;
+const _tripDetailBudgetSectionIndex = 2;
+const _tripDetailChecklistSectionIndex = 4;
+const _tripDetailBookingSectionIndex = 5;
+
 class TripDetailScreen extends StatelessWidget {
   const TripDetailScreen({
     required this.trip,

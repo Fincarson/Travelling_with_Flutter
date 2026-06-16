@@ -123,9 +123,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
   final List<CreateTripChatMessage> _chatMessages = [];
   CreateTripDraft? _pendingDraft;
-  var _group = 'Friends';
-  // Explicit traveler count; defaults to the group preset but the user can
-  // override it with the "Number of people" box.
+  var _group = '4 travelers';
+  // Explicit traveler count. Manual creation uses this as the source of truth;
+  // AI style presets can still map party labels into a count.
   var _numOfTravelers = 4;
   var _currency = AppCurrency.fallbackCurrencyCode;
   var _mode = 0;
@@ -913,12 +913,21 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     });
   }
 
-  // Selecting a travel party also presets the traveler count, which the user
-  // can then fine-tune with the "Number of people" box.
+  // AI style presets still use party labels; manual trip creation stores the
+  // traveler count directly and derives this display label from the count.
   void _setGroupType(String value) {
     setState(() {
       _group = value;
       _numOfTravelers = _travelerCountForGroupType(value);
+    });
+  }
+
+  void _setTravelerCount(int value) {
+    final safeCount = value.clamp(1, 30).toInt();
+    setState(() {
+      _numOfTravelers = safeCount;
+      _group = _travelerGroupLabel(safeCount);
+      _formError = null;
     });
   }
 
@@ -2138,12 +2147,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _setBudgetText(_normalizedBudgetInput(budget, _currency));
     }
     final groupType = draft.groupType;
-    if (groupType != null && _groupOptions.contains(groupType)) {
-      _group = groupType;
-      _numOfTravelers =
-          draft.numOfTravelers ?? _travelerCountForGroupType(groupType);
-    } else if (draft.numOfTravelers != null) {
-      _numOfTravelers = draft.numOfTravelers!;
+    if (draft.numOfTravelers != null) {
+      _numOfTravelers = draft.numOfTravelers!.clamp(1, 30).toInt();
+      _group = _travelerGroupLabel(_numOfTravelers);
+    } else if (groupType != null && groupType.trim().isNotEmpty) {
+      _numOfTravelers = _travelerCountForGroupType(groupType);
+      _group = _travelerGroupLabel(_numOfTravelers);
     }
     _preferences
       ..clear()
@@ -2242,6 +2251,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     var startDate = draft.startDate ?? _startDate;
     var endDate = draft.endDate ?? _endDate;
     var groupType = draft.groupType ?? _group;
+    var travelerCount =
+        (draft.numOfTravelers ?? _travelerCountForGroupType(groupType))
+            .clamp(1, 30)
+            .toInt();
     final preferences = <String>{...draft.preferences};
 
     try {
@@ -2378,23 +2391,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              DropdownButtonFormField<String>(
-                                initialValue: groupType,
-                                decoration: InputDecoration(
-                                  labelText: appText(context, 'Who is coming'),
-                                ),
-                                items:
-                                    const ['Solo', 'Family', 'Friends', 'Tour']
-                                        .map(
-                                          (item) => DropdownMenuItem(
-                                            value: item,
-                                            child: Text(appText(context, item)),
-                                          ),
-                                        )
-                                        .toList(),
-                                onChanged: (value) => setSheetState(
-                                  () => groupType = value ?? groupType,
-                                ),
+                              _ManualTravelerCountCard(
+                                value: travelerCount,
+                                onChanged: (value) => setSheetState(() {
+                                  travelerCount = value;
+                                  groupType = _travelerGroupLabel(value);
+                                }),
                               ),
                               const SizedBox(height: 14),
                               const LabelText('Trip tags'),
@@ -2464,7 +2466,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                         .replaceAll(RegExp(r'\D'), '')
                                         .trim(),
                                     currency: draft.currency ?? _currency,
-                                    groupType: groupType,
+                                    groupType: _travelerGroupLabel(
+                                      travelerCount,
+                                    ),
+                                    numOfTravelers: travelerCount,
                                     preferences: preferences.toList(),
                                   ),
                                 ),
@@ -3188,7 +3193,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     return switch (index) {
       0 => _destination.text.trim().isNotEmpty,
       1 => _parsedBudget() > 0,
-      2 => _group.trim().isNotEmpty && _preferences.isNotEmpty,
+      2 => _numOfTravelers > 0 && _preferences.isNotEmpty,
       3 => true,
       _ => false,
     };
@@ -4026,22 +4031,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                                   _ManualGrid(
                                     minTileWidth: 220,
                                     children: [
-                                      _ManualDropdownCard(
-                                        label: 'Who is coming',
-                                        value: _group,
-                                        icon: Icons.group_rounded,
-                                        options: _groupOptions,
-                                        onChanged: _setGroupType,
-                                      ),
-                                      _ManualFieldCard(
-                                        label: 'Number of people',
-                                        icon: Icons.people_alt_rounded,
-                                        child: _PeopleCountStepper(
-                                          value: _numOfTravelers,
-                                          onChanged: (value) => setState(
-                                            () => _numOfTravelers = value,
-                                          ),
-                                        ),
+                                      _ManualTravelerCountCard(
+                                        value: _numOfTravelers,
+                                        onChanged: _setTravelerCount,
                                       ),
                                       _ManualCustomTagCard(
                                         controller: _customPreference,
@@ -8554,6 +8546,62 @@ class _ManualFieldCard extends StatelessWidget {
             const SizedBox(width: 8),
             Icon(icon, color: const Color(0xFF72787C), size: 22),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualTravelerCountCard extends StatelessWidget {
+  const _ManualTravelerCountCard({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 82),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFFC2C7CC).withValues(alpha: .22),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF355872).withValues(alpha: .05),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.people_alt_rounded,
+            color: Color(0xFF72787C),
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              appText(context, 'No. of travelers'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF42474C),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          _PeopleCountStepper(value: value, onChanged: onChanged),
         ],
       ),
     );

@@ -173,36 +173,34 @@ class TravelAssistantService {
       'generateTripPlan',
       options: HttpsCallableOptions(timeout: const Duration(seconds: 3600)),
     );
-    final response = await callable
-        .call<Map<String, dynamic>>({
-          'place': {
-            'name': place.name,
-            'formatted': place.formatted,
-            'latitude': place.latitude,
-            'longitude': place.longitude,
-            'placeId': place.placeId,
-            'country': place.country,
-          },
-          'startDate': _dateKey(startDate),
-          'endDate': _dateKey(endDate),
-          'budget': budget,
-          'numOfTravelers':
-              numOfTravelers ?? _travelerCountForGroupType(groupType),
-          'groupType': groupType,
-          'preferences': preferences,
-          'currency': currency,
-          'profileLanguage': profileLanguage,
-          'outputLanguage': outputLanguage,
-          'airline': airline,
-          'flightCode': flightCode,
-          'flightDepartureTime': flightDepartureTime,
-          'flightDeparturePlace': flightDeparturePlace,
-          'flightLandingTime': flightLandingTime,
-          'flightLandingPlace': flightLandingPlace,
-          'flightConfirmation': flightConfirmation,
-          'startLocation': tripStartLocation?.toAiMap(),
-          'appContext': resolvedAppContext.toAiMap(),
-        });
+    final response = await callable.call<Map<String, dynamic>>({
+      'place': {
+        'name': place.name,
+        'formatted': place.formatted,
+        'latitude': place.latitude,
+        'longitude': place.longitude,
+        'placeId': place.placeId,
+        'country': place.country,
+      },
+      'startDate': _dateKey(startDate),
+      'endDate': _dateKey(endDate),
+      'budget': budget,
+      'numOfTravelers': numOfTravelers ?? _travelerCountForGroupType(groupType),
+      'groupType': groupType,
+      'preferences': preferences,
+      'currency': currency,
+      'profileLanguage': profileLanguage,
+      'outputLanguage': outputLanguage,
+      'airline': airline,
+      'flightCode': flightCode,
+      'flightDepartureTime': flightDepartureTime,
+      'flightDeparturePlace': flightDeparturePlace,
+      'flightLandingTime': flightLandingTime,
+      'flightLandingPlace': flightLandingPlace,
+      'flightConfirmation': flightConfirmation,
+      'startLocation': tripStartLocation?.toAiMap(),
+      'appContext': resolvedAppContext.toAiMap(),
+    });
     final data = response.data['plan'] is Map
         ? Map<String, dynamic>.from(response.data['plan'] as Map)
         : response.data;
@@ -389,7 +387,12 @@ int _transportInt(Object? value) {
 }
 
 int _travelerCountForGroupType(String groupType) {
-  return switch (groupType.trim().toLowerCase()) {
+  final text = groupType.trim().toLowerCase();
+  final explicitCount = int.tryParse(
+    RegExp(r'\d+').firstMatch(text)?.group(0) ?? '',
+  );
+  if (explicitCount != null) return explicitCount.clamp(1, 99).toInt();
+  return switch (text) {
     'couple' => 2,
     'family' => 4,
     'friends' => 4,

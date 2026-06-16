@@ -90,6 +90,7 @@ class _FavoriteHomeHostState extends State<_FavoriteHomeHost> {
         activeTrip: null,
         onCreate: _doNothing,
         onOpenTrip: (_) {},
+        onOpenTripSection: (_, _) {},
         onStartTrip: (_) {},
         onAskAi: (_) {},
         onOpenMap: _doNothing,

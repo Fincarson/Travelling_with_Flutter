@@ -52,11 +52,17 @@ class CurrentTripCard extends StatelessWidget {
   const CurrentTripCard({
     required this.trip,
     required this.onTap,
+    required this.onOpenBooking,
+    required this.onOpenChecklist,
+    required this.onOpenBudget,
     this.onStart,
     super.key,
   });
   final Trip trip;
   final VoidCallback onTap;
+  final VoidCallback onOpenBooking;
+  final VoidCallback onOpenChecklist;
+  final VoidCallback onOpenBudget;
   final VoidCallback? onStart;
 
   @override
@@ -74,54 +80,56 @@ class CurrentTripCard extends StatelessWidget {
     final checklistTotal = _tripChecklistTotalCount(trip);
     final checklistDone = _tripChecklistDoneCount(trip);
 
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        color: _primary,
-        border: Border.all(color: Colors.white.withValues(alpha: .5)),
-        boxShadow: [
-          BoxShadow(
-            color: _primary.withValues(alpha: .16),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: Image.network(
-              image,
-              fit: BoxFit.cover,
-              filterQuality: PerformanceScope.maybeSettingsOf(
-                context,
-              ).filterQuality,
-              errorBuilder: (_, __, ___) => const ColoredBox(color: _primary),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(24),
+          color: _primary,
+          border: Border.all(color: Colors.white.withValues(alpha: .5)),
+          boxShadow: [
+            BoxShadow(
+              color: _primary.withValues(alpha: .16),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
             ),
-          ),
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    _primary.withValues(alpha: .28),
-                    _primary.withValues(alpha: .76),
-                    _primary.withValues(alpha: .95),
-                  ],
+          ],
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Image.network(
+                image,
+                fit: BoxFit.cover,
+                filterQuality: PerformanceScope.maybeSettingsOf(
+                  context,
+                ).filterQuality,
+                errorBuilder: (_, __, ___) => const ColoredBox(
+                  color: _primary,
                 ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                GestureDetector(
-                  onTap: onTap,
-                  child: SizedBox(
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      _primary.withValues(alpha: .28),
+                      _primary.withValues(alpha: .76),
+                      _primary.withValues(alpha: .95),
+                    ],
+                  ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  SizedBox(
                     width: double.infinity,
                     child: LayoutBuilder(
                       builder: (context, constraints) {
@@ -166,67 +174,70 @@ class CurrentTripCard extends StatelessWidget {
                       },
                     ),
                   ),
-                ),
-                const SizedBox(height: 36),
-                if (isOngoingNow) ...[
-                  _RuntimeDayStrip(runtime: runtime),
-                  const SizedBox(height: 14),
-                ],
-                ResponsiveSplit(
-                  children: [
-                    _CurrentTripOverlayStat(
-                      title: 'Booking',
-                      value: booking?.title ?? 'TBD',
-                      detail: booking == null
-                          ? 'No bookings yet'
-                          : '${booking.date} / confirmed',
-                    ),
+                  const SizedBox(height: 36),
+                  if (isOngoingNow) ...[
+                    _RuntimeDayStrip(runtime: runtime),
+                    const SizedBox(height: 14),
                   ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: _CurrentTripOverlayStat(
-                        title: 'Checklist',
-                        value: checklistTotal == 0
-                            ? '0 items'
-                            : '$checklistDone/$checklistTotal',
-                        detail: checklistTotal == 0
-                            ? 'Nothing added'
-                            : 'packed',
-                        trailing: Icons.checklist_rounded,
+                  ResponsiveSplit(
+                    children: [
+                      _CurrentTripOverlayStat(
+                        title: 'Booking',
+                        value: booking?.title ?? 'TBD',
+                        detail: booking == null
+                            ? 'No bookings yet'
+                            : '${booking.date} / confirmed',
+                        onTap: onOpenBooking,
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _CurrentTripOverlayStat(
-                        title: 'Budget',
-                        value: _displayMoney(
-                          context,
-                          trip.spent,
-                          trip.currency,
-                        ),
-                        detail:
-                            'of ${_displayMoney(context, trip.budget, trip.currency)}',
-                        trailing: Icons.add_rounded,
-                      ),
-                    ),
-                  ],
-                ),
-                if (onStart != null) ...[
-                  const SizedBox(height: 14),
-                  PrimaryButton(
-                    label: 'Start your trip',
-                    icon: Icons.play_arrow_rounded,
-                    onPressed: onStart!,
+                    ],
                   ),
+                  const SizedBox(height: 10),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _CurrentTripOverlayStat(
+                          title: 'Checklist',
+                          value: checklistTotal == 0
+                              ? '0 items'
+                              : '$checklistDone/$checklistTotal',
+                          detail: checklistTotal == 0
+                              ? 'Nothing added'
+                              : 'packed',
+                          trailing: Icons.checklist_rounded,
+                          onTap: onOpenChecklist,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _CurrentTripOverlayStat(
+                          title: 'Budget',
+                          value: _displayMoney(
+                            context,
+                            trip.spent,
+                            trip.currency,
+                          ),
+                          detail:
+                              'of ${_displayMoney(context, trip.budget, trip.currency)}',
+                          trailing: Icons.add_rounded,
+                          onTap: onOpenBudget,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (onStart != null) ...[
+                    const SizedBox(height: 14),
+                    PrimaryButton(
+                      label: 'Start your trip',
+                      icon: Icons.play_arrow_rounded,
+                      onPressed: onStart!,
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -354,16 +365,18 @@ class _CurrentTripOverlayStat extends StatelessWidget {
     required this.value,
     required this.detail,
     this.trailing,
+    this.onTap,
   });
 
   final String title;
   final String value;
   final String detail;
   final IconData? trailing;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final child = Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: .9),
@@ -408,6 +421,12 @@ class _CurrentTripOverlayStat extends StatelessWidget {
           ],
         ],
       ),
+    );
+    if (onTap == null) return child;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: child,
     );
   }
 }

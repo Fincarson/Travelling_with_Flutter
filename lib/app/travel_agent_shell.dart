@@ -409,15 +409,35 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     }
   }
 
-  void _openTrip(Trip trip) {
+  void _openTripAtSection(
+    Trip trip, {
+    int sectionIndex = _tripDetailOverviewSectionIndex,
+  }) {
     if (_pendingTripDeleteIds.contains(trip.id)) return;
     setState(() {
       _selectedTrip = trip;
       _screen = _Screen.tripDetail;
       _tab = _NavTab.trips;
-      _tripDetailInitialTab = 0;
+      _tripDetailInitialTab = sectionIndex;
       _pendingTripAiPrompt = null;
     });
+  }
+
+  void _openTrip(Trip trip) => _openTripAtSection(trip);
+
+  void _openTripRouteAtSection(
+    Trip trip, {
+    int sectionIndex = _tripDetailOverviewSectionIndex,
+  }) {
+    if (_pendingTripDeleteIds.contains(trip.id)) return;
+    setState(() {
+      _selectedTrip = trip;
+      _screen = _Screen.tripDetail;
+      _tab = _NavTab.trips;
+      _tripDetailInitialTab = sectionIndex;
+      _pendingTripAiPrompt = null;
+    });
+    _go(_tripLocation(trip.id));
   }
 
   void _openTripAssistant(String prompt) {
@@ -1116,7 +1136,9 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       activeTrip: _visibleActiveTrip,
       memories: _tripMemories,
       onCreate: () => _go('/trips/new'),
-      onOpenTrip: (trip) => _go(_tripLocation(trip.id)),
+      onOpenTrip: _openTripRouteAtSection,
+      onOpenTripSection: (trip, sectionIndex) =>
+          _openTripRouteAtSection(trip, sectionIndex: sectionIndex),
       onStartTrip: _startTrip,
       onAskAi: (prompt) {
         _openTripAssistant(prompt);
@@ -1450,6 +1472,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
                 _tab = _NavTab.add;
               }),
               onOpenTrip: _openTrip,
+              onOpenTripSection: (trip, sectionIndex) =>
+                  _openTripAtSection(trip, sectionIndex: sectionIndex),
               onStartTrip: _startTrip,
               onAskAi: _openTripAssistant,
               onOpenInfo: () => setState(() => _screen = _Screen.info),
@@ -1514,6 +1538,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             _tab = _NavTab.add;
           }),
           onOpenTrip: _openTrip,
+          onOpenTripSection: (trip, sectionIndex) =>
+              _openTripAtSection(trip, sectionIndex: sectionIndex),
           onStartTrip: _startTrip,
           onAskAi: _openTripAssistant,
           onOpenInfo: () => setState(() => _screen = _Screen.info),

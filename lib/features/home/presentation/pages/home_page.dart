@@ -9,6 +9,7 @@ class DashboardScreen extends StatefulWidget {
     required this.activeTrip,
     required this.onCreate,
     required this.onOpenTrip,
+    required this.onOpenTripSection,
     required this.onStartTrip,
     required this.onAskAi,
     required this.onOpenMap,
@@ -25,6 +26,7 @@ class DashboardScreen extends StatefulWidget {
   final Trip? activeTrip;
   final VoidCallback onCreate;
   final ValueChanged<Trip> onOpenTrip;
+  final void Function(Trip trip, int sectionIndex) onOpenTripSection;
   final ValueChanged<Trip> onStartTrip;
   final ValueChanged<String> onAskAi;
   final VoidCallback onOpenMap;
@@ -203,6 +205,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
             CurrentTripCard(
               trip: trip,
               onTap: () => widget.onOpenTrip(trip),
+              onOpenBooking: () => widget.onOpenTripSection(
+                trip,
+                _tripDetailBookingSectionIndex,
+              ),
+              onOpenChecklist: () => widget.onOpenTripSection(
+                trip,
+                _tripDetailChecklistSectionIndex,
+              ),
+              onOpenBudget: () =>
+                  widget.onOpenTripSection(trip, _tripDetailBudgetSectionIndex),
               onStart: trip.status == TripStatus.ongoing || !trip.canEdit
                   ? null
                   : () => widget.onStartTrip(trip),
