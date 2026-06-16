@@ -237,6 +237,64 @@ class GroupChatRepository {
     return GroupChat.fromDoc(snapshot);
   }
 
+  Future<List<GroupChat>> loadOwnedAttachableChats({
+    required String accountId,
+    required String tripId,
+  }) async {
+    final memberships = await _membershipsRef(accountId).get();
+    final ownedMemberships = memberships.docs.where((doc) {
+      final data = doc.data();
+      return data['role'] == GroupChatRole.owner.name &&
+          data['status'] == GroupChatMemberStatus.active.name;
+    });
+    final chats = await Future.wait(
+      ownedMemberships.map((membership) => loadChat(membership.id)),
+    );
+    final attachable = chats.whereType<GroupChat>().where((chat) {
+      final linkedTripId = chat.linkedTripId?.trim();
+      return linkedTripId == null ||
+          linkedTripId.isEmpty ||
+          linkedTripId == tripId;
+    }).toList();
+    attachable.sort(
+      (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+    );
+    return attachable;
+  }
+
+  Future<GroupChat?> loadLinkedChatForTrip({
+    required String accountId,
+    required String tripId,
+  }) async {
+    final memberships = await _membershipsRef(accountId).get();
+    final activeMemberships = memberships.docs.where((doc) {
+      final data = doc.data();
+      return data['status'] == GroupChatMemberStatus.active.name;
+    });
+    final chats = await Future.wait(
+      activeMemberships.map((membership) => loadChat(membership.id)),
+    );
+    final linkedChats = chats.whereType<GroupChat>().where(
+      (chat) => chat.linkedTripId?.trim() == tripId,
+    );
+    if (linkedChats.isEmpty) return null;
+    return linkedChats.reduce(
+      (a, b) =>
+          a.title.toLowerCase().compareTo(b.title.toLowerCase()) <= 0 ? a : b,
+    );
+  }
+
+  Future<void> setTripLinkedChatSnapshot({
+    required String tripId,
+    required GroupChat chat,
+  }) {
+    return _tripDoc(tripId).set({
+      'linkedChatId': chat.id,
+      'linkedChatTitle': chat.title,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   Future<GroupChat> createChat({
     required String accountId,
     required UserProfile profile,

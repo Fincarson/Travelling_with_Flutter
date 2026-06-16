@@ -5,6 +5,7 @@ const {onSchedule} = require("firebase-functions/v2/scheduler");
 const {defineSecret} = require("firebase-functions/params");
 const {
   onDocumentCreated,
+  onDocumentDeleted,
   onDocumentWritten,
 } = require("firebase-functions/v2/firestore");
 const {TranslationServiceClient} = require("@google-cloud/translate").v3;
@@ -185,6 +186,76 @@ function tripCoverImage(data) {
   return image || null;
 }
 
+function chatTitle(data) {
+  return String(data?.title || "Group chat").trim() || "Group chat";
+}
+
+function touchTripMemberships(transaction, db, tripId, trip, now) {
+  const roles = roleMap(trip);
+  const destination =
+    String(trip?.destination || "Untitled trip").trim() || "Untitled trip";
+  const coverImageUrl = tripCoverImage(trip);
+  for (const memberId of activeMemberIds(trip)) {
+    transaction.set(
+        db.collection("travel_users")
+            .doc(memberId)
+            .collection("tripMemberships")
+            .doc(tripId),
+        {
+          tripId,
+          role: String(roles[memberId] || "viewer"),
+          status: "active",
+          titleSnapshot: tripTitle(trip),
+          destinationSnapshot: destination,
+          coverImageUrl,
+          unreadCount: admin.firestore.FieldValue.increment(0),
+          updatedAt: now,
+        },
+        {merge: true},
+    );
+  }
+}
+
+async function clearTripLinkedChatForDeletedChat({db, chatId, chat}) {
+  const tripId = String(chat?.linkedTripId || "").trim();
+  if (!validDocumentId(tripId)) return;
+
+  const tripRef = db.collection("trips").doc(tripId);
+  const tripSnapshot = await tripRef.get();
+  if (!tripSnapshot.exists) return;
+
+  const trip = tripSnapshot.data() || {};
+  if (String(trip.linkedChatId || "").trim() !== chatId) return;
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const memberIds = activeMemberIds(trip);
+  const references = [
+    {
+      ref: tripRef,
+      data: {
+        linkedChatId: null,
+        linkedChatTitle: null,
+        updatedAt: now,
+      },
+    },
+    ...memberIds.map((memberId) => ({
+      ref: db.collection("travel_users")
+          .doc(memberId)
+          .collection("tripMemberships")
+          .doc(tripId),
+      data: {updatedAt: now},
+    })),
+  ];
+
+  for (let start = 0; start < references.length; start += 450) {
+    const batch = db.batch();
+    for (const entry of references.slice(start, start + 450)) {
+      batch.set(entry.ref, entry.data, {merge: true});
+    }
+    await batch.commit();
+  }
+}
+
 async function deleteReferencesInBatches(db, references) {
   const unique = new Map();
   for (const reference of references) {
@@ -255,6 +326,7 @@ async function deleteGroupChatTree({
   externalReferences.push(...joinCodes.docs.map((doc) => doc.ref));
   externalReferences.push(...globalInvites.docs.map((doc) => doc.ref));
 
+  await clearTripLinkedChatForDeletedChat({db, chatId, chat});
   await deleteReferencesInBatches(db, externalReferences);
   await db.recursiveDelete(chatRef);
   await admin.storage().bucket().deleteFiles({
@@ -2330,32 +2402,89 @@ exports.setGroupChatTrip = onCall(
         );
       }
 
+      const currentTripId = String(chat.linkedTripId || "").trim();
+      const oldTripRef =
+        validDocumentId(currentTripId) && currentTripId !== tripId ?
+          db.collection("trips").doc(currentTripId) :
+          null;
+      const oldTripSnapshot = oldTripRef ?
+        await transaction.get(oldTripRef) :
+        null;
       let linkedTripTitle = null;
       let linkedTripDestination = null;
       let linkedTripCoverImageUrl = null;
+      let targetTripRef = null;
+      let targetTripSnapshot = null;
+      let targetTrip = null;
+      let previousChatRef = null;
+      let previousChatSnapshot = null;
       if (tripId) {
-        const tripRef = db.collection("trips").doc(tripId);
-        const tripSnapshot = await transaction.get(tripRef);
-        if (!tripSnapshot.exists) {
+        targetTripRef = db.collection("trips").doc(tripId);
+        targetTripSnapshot = await transaction.get(targetTripRef);
+        if (!targetTripSnapshot.exists) {
           throw new HttpsError("not-found", "Trip not found.");
         }
-        const trip = tripSnapshot.data() || {};
+        targetTrip = targetTripSnapshot.data() || {};
         if (
-          String(trip.ownerId || "") !== accountId ||
-          String(trip.roles?.[accountId] || "") !== "owner"
+          String(targetTrip.ownerId || "") !== accountId ||
+          String(targetTrip.roles?.[accountId] || "") !== "owner"
         ) {
           throw new HttpsError(
               "permission-denied",
               "You can only attach a trip that you own.",
           );
         }
-        linkedTripTitle = tripTitle(trip);
+        const previousChatId =
+          String(targetTrip.linkedChatId || "").trim();
+        if (validDocumentId(previousChatId) && previousChatId !== chatId) {
+          previousChatRef = db.collection("chat_groups").doc(previousChatId);
+          previousChatSnapshot = await transaction.get(previousChatRef);
+        }
+        linkedTripTitle = tripTitle(targetTrip);
         linkedTripDestination =
-          String(trip.destination || "Untitled trip").trim() ||
+          String(targetTrip.destination || "Untitled trip").trim() ||
           "Untitled trip";
-        linkedTripCoverImageUrl = tripCoverImage(trip);
+        linkedTripCoverImageUrl = tripCoverImage(targetTrip);
       }
 
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      if (oldTripRef && oldTripSnapshot?.exists) {
+        const oldTrip = oldTripSnapshot.data() || {};
+        if (String(oldTrip.linkedChatId || "").trim() === chatId) {
+          transaction.set(
+              oldTripRef,
+              {
+                linkedChatId: null,
+                linkedChatTitle: null,
+                updatedAt: now,
+              },
+              {merge: true},
+          );
+          touchTripMemberships(
+              transaction,
+              db,
+              oldTripRef.id,
+              oldTrip,
+              now,
+          );
+        }
+      }
+      if (previousChatRef && previousChatSnapshot?.exists) {
+        const previousChat = previousChatSnapshot.data() || {};
+        if (String(previousChat.linkedTripId || "").trim() === tripId) {
+          transaction.set(
+              previousChatRef,
+              {
+                linkedTripId: null,
+                linkedTripTitle: null,
+                linkedTripDestination: null,
+                linkedTripCoverImageUrl: null,
+                updatedAt: now,
+              },
+              {merge: true},
+          );
+        }
+      }
       transaction.set(
           chatRef,
           {
@@ -2363,13 +2492,52 @@ exports.setGroupChatTrip = onCall(
             linkedTripTitle,
             linkedTripDestination,
             linkedTripCoverImageUrl,
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      if (targetTripRef && targetTrip) {
+        transaction.set(
+            targetTripRef,
+            {
+              linkedChatId: chatId,
+              linkedChatTitle: chatTitle(chat),
+              updatedAt: now,
+            },
+            {merge: true},
+        );
+        touchTripMemberships(transaction, db, tripId, targetTrip, now);
+      }
+    });
+    return {chatId, tripId};
+  },
+);
+
+exports.clearGroupChatTripLinkOnTripDelete = onDocumentDeleted(
+    "trips/{tripId}",
+    async (event) => {
+      const trip = event.data?.data() || {};
+      const tripId = String(event.params.tripId || "").trim();
+      const chatId = String(trip.linkedChatId || "").trim();
+      if (!validDocumentId(tripId) || !validDocumentId(chatId)) return;
+
+      const chatRef = admin.firestore().collection("chat_groups").doc(chatId);
+      const chatSnapshot = await chatRef.get();
+      if (!chatSnapshot.exists) return;
+      const chat = chatSnapshot.data() || {};
+      if (String(chat.linkedTripId || "").trim() !== tripId) return;
+
+      await chatRef.set(
+          {
+            linkedTripId: null,
+            linkedTripTitle: null,
+            linkedTripDestination: null,
+            linkedTripCoverImageUrl: null,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           {merge: true},
       );
-    });
-    return {chatId, tripId};
-  },
+    },
 );
 
 exports.joinGroupChatTrip = onCall(

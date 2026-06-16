@@ -1391,7 +1391,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
         content: Text(
           appText(
             context,
-            'This permanently deletes the chat and its messages. The attached trip and its members will not be changed.',
+            'This permanently deletes the chat and its messages. The attached trip will keep its members and lose this chat link.',
           ),
         ),
         actions: [

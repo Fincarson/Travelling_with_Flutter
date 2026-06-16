@@ -26,6 +26,8 @@ class Trip {
     this.originLabel,
     this.originLatitude,
     this.originLongitude,
+    this.linkedChatId,
+    this.linkedChatTitle,
     this.title = '',
     this.currentUserRole = 'owner',
   });
@@ -53,6 +55,8 @@ class Trip {
   final String? originLabel;
   final double? originLatitude;
   final double? originLongitude;
+  final String? linkedChatId;
+  final String? linkedChatTitle;
   final String currentUserRole;
 
   String get groupType => _travelerGroupLabel(numOfTravelers);
@@ -82,8 +86,11 @@ class Trip {
     String? originLabel,
     double? originLatitude,
     double? originLongitude,
+    String? linkedChatId,
+    String? linkedChatTitle,
     String? currentUserRole,
     bool clearDestinationPlace = false,
+    bool clearLinkedChat = false,
   }) => Trip(
     id: id,
     title: title ?? this.title,
@@ -110,6 +117,10 @@ class Trip {
     originLabel: originLabel ?? this.originLabel,
     originLatitude: originLatitude ?? this.originLatitude,
     originLongitude: originLongitude ?? this.originLongitude,
+    linkedChatId: clearLinkedChat ? null : linkedChatId ?? this.linkedChatId,
+    linkedChatTitle: clearLinkedChat
+        ? null
+        : linkedChatTitle ?? this.linkedChatTitle,
     currentUserRole: currentUserRole ?? this.currentUserRole,
   );
 
@@ -155,6 +166,8 @@ class Trip {
       originLabel: map['originLabel'] as String?,
       originLatitude: (map['originLatitude'] as num?)?.toDouble(),
       originLongitude: (map['originLongitude'] as num?)?.toDouble(),
+      linkedChatId: map['linkedChatId'] as String?,
+      linkedChatTitle: map['linkedChatTitle'] as String?,
       startDate: (map['startDate'] as String?) ?? '',
       endDate: (map['endDate'] as String?) ?? '',
       budget: (map['budget'] as num?)?.toInt() ?? 0,
@@ -218,6 +231,8 @@ class Trip {
       originLabel: map['originLabel'] as String?,
       originLatitude: (map['originLatitude'] as num?)?.toDouble(),
       originLongitude: (map['originLongitude'] as num?)?.toDouble(),
+      linkedChatId: map['linkedChatId'] as String?,
+      linkedChatTitle: map['linkedChatTitle'] as String?,
       startDate: (map['startDate'] as String?) ?? '',
       endDate: (map['endDate'] as String?) ?? '',
       budget: (map['budget'] as num?)?.toInt() ?? 0,

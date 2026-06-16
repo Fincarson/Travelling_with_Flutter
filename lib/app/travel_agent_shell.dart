@@ -311,10 +311,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     _previewJobsSubscription?.cancel();
     _previewJobsSubscription = _previewJobs
         .watchRecentJobs(accountId)
-        .listen(
-          _handlePreviewJobs,
-          onError: (Object _) {},
-        );
+        .listen(_handlePreviewJobs, onError: (Object _) {});
   }
 
   // Background itinerary generation: watch the user's preview jobs, show a
@@ -1204,7 +1201,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       key: ValueKey('trip-detail-${trip.id}'),
       trip: trip,
       onBack: () => _go('/trips'),
-      onOpenChat: () => _go('/chat'),
+      onOpenChat: (chatId) => _go('/chat/$chatId'),
       onOpenBudget: () => _go('/trips/${trip.id}/budget'),
       onOpenPacking: () => _go('/trips/${trip.id}/packing'),
       onOpenSettings: () => _go('/trips/${trip.id}/settings'),
@@ -1212,6 +1209,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       accountId: _accountId ?? widget.account.uid,
       repository: _repository,
       onLeftTrip: () => context.go('/trips'),
+      user: _user,
       initialTabIndex: _tripDetailInitialTab,
       initialAiPrompt: _pendingTripAiPrompt,
     );
@@ -1567,7 +1565,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             _screen = _Screen.dashboard;
             _tab = _NavTab.home;
           }),
-          onOpenChat: () => setState(() {
+          onOpenChat: (_) => setState(() {
             _screen = _Screen.chatList;
             _tab = _NavTab.chat;
           }),
@@ -1581,6 +1579,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             _selectedTrip = null;
             _screen = _Screen.trips;
           }),
+          user: _user,
           initialTabIndex: _tripDetailInitialTab,
           initialAiPrompt: _pendingTripAiPrompt,
         );
@@ -2172,7 +2171,10 @@ class _GeneratingTripBanner extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                appText(context, 'Generating your $destination trip in the background...'),
+                appText(
+                  context,
+                  'Generating your $destination trip in the background...',
+                ),
                 style: TextStyle(
                   color: scheme.onPrimary,
                   fontWeight: FontWeight.w800,

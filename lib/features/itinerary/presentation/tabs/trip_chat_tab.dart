@@ -3,12 +3,19 @@ part of travel_agent_app;
 class TripChatTab extends StatefulWidget {
   const TripChatTab({
     required this.trip,
+    required this.accountId,
+    required this.user,
     required this.onOpenChat,
+    required this.onLinkedChatChanged,
     this.initialPrompt,
     super.key,
   });
+
   final Trip trip;
-  final VoidCallback onOpenChat;
+  final String accountId;
+  final UserProfile user;
+  final ValueChanged<String> onOpenChat;
+  final ValueChanged<GroupChat> onLinkedChatChanged;
   final String? initialPrompt;
 
   @override
@@ -16,299 +23,431 @@ class TripChatTab extends StatefulWidget {
 }
 
 class _TripChatTabState extends State<TripChatTab> {
-  final _assistant = TravelAssistantService();
-  final _input = TextEditingController();
-  final _messages = <_TripAiMessage>[];
-  var _isSending = false;
+  final _repository = GroupChatRepository(FirebaseFirestore.instance);
+  GroupChat? _linkedChat;
+  var _busy = false;
+  var _lookupInFlight = false;
   String? _error;
-  String? _sentInitialPrompt;
 
   @override
   void initState() {
     super.initState();
-    _messages.add(
-      const _TripAiMessage(
-        fromUser: false,
-        text:
-            'I can help run this trip day by day using your schedule, current time, and location when available.',
-      ),
-    );
-    _sendInitialPrompt();
+    _syncLinkedChatFromTrip();
   }
 
   @override
   void didUpdateWidget(covariant TripChatTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.initialPrompt != widget.initialPrompt) {
-      _sendInitialPrompt();
+    if (oldWidget.trip.id != widget.trip.id ||
+        oldWidget.trip.linkedChatId != widget.trip.linkedChatId ||
+        oldWidget.trip.linkedChatTitle != widget.trip.linkedChatTitle ||
+        oldWidget.accountId != widget.accountId) {
+      _syncLinkedChatFromTrip();
     }
   }
 
-  @override
-  void dispose() {
-    _input.dispose();
-    super.dispose();
-  }
-
-  void _sendInitialPrompt() {
-    final prompt = widget.initialPrompt?.trim();
-    if (prompt == null || prompt.isEmpty || prompt == _sentInitialPrompt) {
+  void _syncLinkedChatFromTrip() {
+    final linkedChatId = widget.trip.linkedChatId?.trim();
+    if (linkedChatId != null && linkedChatId.isNotEmpty) {
+      final linkedChatTitle = widget.trip.linkedChatTitle?.trim();
+      _linkedChat = GroupChat(
+        id: linkedChatId,
+        title: linkedChatTitle != null && linkedChatTitle.isNotEmpty
+            ? linkedChatTitle
+            : _linkedChat?.id == linkedChatId
+            ? _linkedChat!.title
+            : 'Trip group chat',
+        ownerId: '',
+        memberIds: const [],
+        roles: const {},
+        linkedTripId: widget.trip.id,
+      );
       return;
     }
-    _sentInitialPrompt = prompt;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_send(prompt));
-    });
+    if (_linkedChat?.linkedTripId != widget.trip.id) {
+      _linkedChat = null;
+    }
+    unawaited(_loadLinkedChatFromMemberships());
+  }
+
+  Future<void> _loadLinkedChatFromMemberships() async {
+    if (_lookupInFlight ||
+        widget.trip.linkedChatId?.trim().isNotEmpty == true) {
+      return;
+    }
+    final tripId = widget.trip.id;
+    _lookupInFlight = true;
+    try {
+      final chat = await _repository.loadLinkedChatForTrip(
+        accountId: widget.accountId,
+        tripId: tripId,
+      );
+      if (!mounted || widget.trip.id != tripId || chat == null) return;
+      await _rememberLinkedChat(chat, persistTripSnapshot: true);
+    } catch (_) {
+      // The primary trip document remains the source of truth. This lookup only
+      // recovers older chat-side-only links, so a failed lookup should stay quiet.
+    } finally {
+      if (mounted) setState(() => _lookupInFlight = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final runtime = _tripRuntimePlan(widget.trip);
+    final linkedChat = _linkedChat;
+    final linkedChatId = linkedChat?.id ?? widget.trip.linkedChatId?.trim();
+    final linkedChatTitle = linkedChat?.title ?? widget.trip.linkedChatTitle;
     return ListView(
       padding: _responsivePagePadding(context, top: 16),
       children: [
-        GlassPanel(child: _RuntimeAssistantHeader(runtime: runtime)),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            ActionChip(
-              avatar: const Icon(Icons.today_rounded, size: 18),
-              label: const Text('Run today'),
-              onPressed: _isSending
-                  ? null
-                  : () => unawaited(_send('Help me run today.')),
-            ),
-            ActionChip(
-              avatar: const Icon(Icons.route_rounded, size: 18),
-              label: const Text('Next step'),
-              onPressed: _isSending
-                  ? null
-                  : () => unawaited(_send('What should I do next?')),
-            ),
-            ActionChip(
-              avatar: const Icon(Icons.tune_rounded, size: 18),
-              label: const Text('Adjust plan'),
-              onPressed: _isSending
-                  ? null
-                  : () => unawaited(
-                      _send('Suggest a realistic adjustment for today.'),
-                    ),
-            ),
-            ActionChip(
-              avatar: const Icon(Icons.groups_rounded, size: 18),
-              label: const Text('Group chat'),
-              onPressed: widget.onOpenChat,
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
         if (_error != null) ...[
           FormNotice(message: _error!),
           const SizedBox(height: 12),
         ],
-        for (final message in _messages) ...[
-          _TripAiBubble(message: message),
-          const SizedBox(height: 10),
-        ],
-        if (_isSending) ...[
-          const _TripAiThinkingBubble(),
-          const SizedBox(height: 10),
-        ],
-        GlassPanel(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _input,
-                  minLines: 1,
-                  maxLines: 4,
-                  textInputAction: TextInputAction.send,
-                  decoration: InputDecoration(
-                    hintText: appText(context, 'Ask about this trip'),
-                    border: InputBorder.none,
-                  ),
-                  onSubmitted: (_) => unawaited(_send()),
-                ),
-              ),
-              IconButton.filled(
-                style: IconButton.styleFrom(
-                  backgroundColor: _primary,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _isSending ? null : () => unawaited(_send()),
-                icon: const Icon(Icons.send_rounded),
-              ),
-            ],
+        if (linkedChatId != null && linkedChatId.isNotEmpty)
+          _LinkedTripChatCard(
+            title: linkedChatTitle,
+            busy: _busy,
+            onOpen: () => widget.onOpenChat(linkedChatId),
+          )
+        else
+          _NoLinkedTripChatCard(
+            canManage: widget.trip.isOwner,
+            busy: _busy,
+            onCreate: () => unawaited(_createNewGroupChat()),
+            onAttach: () => unawaited(_attachExistingGroup()),
           ),
-        ),
         const SizedBox(height: 24),
       ],
     );
   }
 
-  Future<void> _send([String? quickPrompt]) async {
-    final text = (quickPrompt ?? _input.text).trim();
-    if (text.isEmpty || _isSending) return;
+  Future<void> _createNewGroupChat() async {
+    if (_busy || !widget.trip.isOwner) return;
     setState(() {
-      _isSending = true;
+      _busy = true;
       _error = null;
-      _messages.add(_TripAiMessage(fromUser: true, text: text));
     });
-    _input.clear();
     try {
-      final reply = await _assistant.sendMessage(_tripAwarePrompt(text));
-      if (!mounted) return;
-      setState(() {
-        _messages.add(
-          _TripAiMessage(
-            fromUser: false,
-            text: reply.isEmpty ? 'I could not generate a reply.' : reply,
-          ),
-        );
-      });
+      final title = widget.trip.title.trim().isEmpty
+          ? '${widget.trip.destination} group chat'
+          : '${widget.trip.title} group chat';
+      final chat = await _repository.createChat(
+        accountId: widget.accountId,
+        profile: widget.user,
+        title: title,
+      );
+      await _repository.setLinkedTrip(
+        chatId: chat.id,
+        accountId: widget.accountId,
+        tripId: widget.trip.id,
+      );
+      await _rememberLinkedChat(chat, persistTripSnapshot: true);
     } catch (error) {
-      if (!mounted) return;
-      setState(() => _error = _assistantErrorMessage(error));
+      if (mounted) setState(() => _error = _chatErrorMessage(error));
     } finally {
-      if (mounted) setState(() => _isSending = false);
+      if (mounted) setState(() => _busy = false);
     }
   }
 
-  String _tripAwarePrompt(String userRequest) {
-    final trip = widget.trip;
-    final runtime = _tripRuntimePlan(trip);
-    final todayItems = runtime.todaysItems
-        .map((item) => '${item.time} ${item.activity}')
-        .join('; ');
-    final next = runtime.nextItem;
-    return [
-      'You are the live during-trip assistant for this itinerary.',
-      'Use current local date, current local time, timezone, and location if available.',
-      'Do not re-plan the whole trip unless asked; focus on what to do today and next.',
-      'Destination: ${trip.destination}.',
-      'Trip dates: ${trip.startDate} to ${trip.endDate}.',
-      'Trip status: ${trip.status.name}.',
-      'Runtime day: ${runtime.currentDay} of ${runtime.totalDays}.',
-      'Today schedule: ${todayItems.isEmpty ? 'none' : todayItems}.',
-      'Next scheduled activity: ${next == null ? 'none' : '${next.time} ${next.activity}'}.',
-      'User request: $userRequest',
-    ].join('\n');
-  }
-}
-
-class _RuntimeAssistantHeader extends StatelessWidget {
-  const _RuntimeAssistantHeader({required this.runtime});
-
-  final _TripRuntimePlan runtime;
-
-  @override
-  Widget build(BuildContext context) {
-    final next = runtime.nextItem;
-    return Row(
-      children: [
-        const IconBadge(icon: Icons.auto_awesome_rounded, size: 52),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Day ${runtime.currentDay} assistant',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: _primary,
-                  fontWeight: FontWeight.w900,
-                ),
+  Future<void> _attachExistingGroup() async {
+    if (_busy || !widget.trip.isOwner) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final chats = await _repository.loadOwnedAttachableChats(
+        accountId: widget.accountId,
+        tripId: widget.trip.id,
+      );
+      if (!mounted) return;
+      if (chats.isEmpty) {
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(appText(context, 'No available groups')),
+            content: Text(
+              appText(
+                context,
+                'Create a group or detach one from another trip first.',
               ),
-              const SizedBox(height: 4),
-              Text(
-                next == null
-                    ? 'No scheduled next stop right now.'
-                    : 'Next: ${next.activity} at ${next.time}',
-                style: const TextStyle(
-                  color: _secondary,
-                  fontWeight: FontWeight.w800,
-                ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(appText(context, 'OK')),
               ),
             ],
           ),
-        ),
-      ],
-    );
-  }
-}
+        );
+        return;
+      }
 
-class _TripAiBubble extends StatelessWidget {
-  const _TripAiBubble({required this.message});
-
-  final _TripAiMessage message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: message.fromUser
-          ? Alignment.centerRight
-          : Alignment.centerLeft,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: math.min(MediaQuery.sizeOf(context).width * .78, 620),
-        ),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: message.fromUser ? _primary : Colors.white,
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Text(
-              message.text,
-              style: TextStyle(
-                color: message.fromUser ? Colors.white : _primary,
-                fontWeight: FontWeight.w800,
-                height: 1.35,
+      final selected = await showModalBottomSheet<GroupChat>(
+        context: context,
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: ListView(
+                shrinkWrap: true,
+                padding: _responsivePagePadding(context, top: 4, bottom: 24),
+                children: [
+                  Text(
+                    appText(context, 'Attach existing group'),
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  for (final chat in chats)
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                      leading: const IconBadge(
+                        icon: Icons.forum_rounded,
+                        size: 44,
+                      ),
+                      title: Text(
+                        chat.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      subtitle: Text(
+                        appText(context, 'Group chat'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => Navigator.of(context).pop(chat),
+                    ),
+                ],
               ),
             ),
           ),
         ),
-      ),
-    );
+      );
+      if (selected == null) return;
+
+      await _repository.setLinkedTrip(
+        chatId: selected.id,
+        accountId: widget.accountId,
+        tripId: widget.trip.id,
+      );
+      await _rememberLinkedChat(selected, persistTripSnapshot: true);
+    } catch (error) {
+      if (mounted) setState(() => _error = _chatErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _rememberLinkedChat(
+    GroupChat chat, {
+    required bool persistTripSnapshot,
+  }) async {
+    if (!mounted) return;
+    setState(() {
+      _linkedChat = chat;
+      _error = null;
+    });
+    widget.onLinkedChatChanged(chat);
+    if (!persistTripSnapshot) return;
+    try {
+      await _repository.setTripLinkedChatSnapshot(
+        tripId: widget.trip.id,
+        chat: chat,
+      );
+    } catch (_) {
+      // The callable should already keep Firestore linked. This direct owner
+      // snapshot write only helps when the app is talking to older functions.
+    }
   }
 }
 
-class _TripAiThinkingBubble extends StatelessWidget {
-  const _TripAiThinkingBubble();
+class _LinkedTripChatCard extends StatelessWidget {
+  const _LinkedTripChatCard({
+    required this.title,
+    required this.busy,
+    required this.onOpen,
+  });
+
+  final String? title;
+  final bool busy;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
-    return const Align(
-      alignment: Alignment.centerLeft,
-      child: GlassPanel(
-        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Text(
-          'Thinking...',
-          style: TextStyle(color: _primary, fontWeight: FontWeight.w900),
-        ),
+    final cleanTitle = title?.trim();
+    return GlassPanel(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 560;
+          final details = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                cleanTitle == null || cleanTitle.isEmpty
+                    ? 'Trip group chat'
+                    : cleanTitle,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                appText(context, 'Open the group chat attached to this trip.'),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          );
+          final button = FilledButton.icon(
+            onPressed: busy ? null : onOpen,
+            icon: const Icon(Icons.forum_rounded),
+            label: Text(appText(context, 'Open group chat')),
+          );
+
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const IconBadge(icon: Icons.chat_bubble_rounded, size: 52),
+                const SizedBox(height: 12),
+                details,
+                const SizedBox(height: 16),
+                button,
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              const IconBadge(icon: Icons.chat_bubble_rounded, size: 52),
+              const SizedBox(width: 14),
+              Expanded(child: details),
+              const SizedBox(width: 14),
+              Flexible(child: button),
+            ],
+          );
+        },
       ),
     );
   }
 }
 
-class _TripAiMessage {
-  const _TripAiMessage({required this.fromUser, required this.text});
+class _NoLinkedTripChatCard extends StatelessWidget {
+  const _NoLinkedTripChatCard({
+    required this.canManage,
+    required this.busy,
+    required this.onCreate,
+    required this.onAttach,
+  });
 
-  final bool fromUser;
-  final String text;
-}
+  final bool canManage;
+  final bool busy;
+  final VoidCallback onCreate;
+  final VoidCallback onAttach;
 
-String _assistantErrorMessage(Object error) {
-  final text = error.toString();
-  if (_isInvalidAiProviderKeyError(error)) {
-    return 'The server OpenAI key is invalid or revoked.';
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 620;
+          final details = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "This trip doesn't have a group chat attached yet.",
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              if (!canManage) ...[
+                const SizedBox(height: 6),
+                Text(
+                  appText(
+                    context,
+                    'Only the trip owner can attach a group chat.',
+                  ),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ],
+          );
+          final actions = Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: canManage && !busy ? onCreate : null,
+                  icon: Icon(
+                    busy ? Icons.hourglass_top_rounded : Icons.add_rounded,
+                  ),
+                  label: Text(
+                    appText(
+                      context,
+                      busy ? 'Creating...' : 'CREATE NEW GROUP CHAT',
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: canManage && !busy ? onAttach : null,
+                  icon: const Icon(Icons.link_rounded),
+                  label: Text(
+                    appText(context, 'ATTACH EXISTING GROUP CHAT'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ],
+          );
+          final header = compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const IconBadge(icon: Icons.forum_outlined, size: 52),
+                    const SizedBox(height: 12),
+                    details,
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    const IconBadge(icon: Icons.forum_outlined, size: 52),
+                    const SizedBox(width: 14),
+                    Expanded(child: details),
+                  ],
+                );
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [header, const SizedBox(height: 16), actions],
+          );
+        },
+      ),
+    );
   }
-  if (text.contains('timeout')) {
-    return 'AI took too long to answer. Try again with a shorter request.';
-  }
-  return 'AI is unavailable right now.';
 }

@@ -12,13 +12,14 @@ class TripDetailScreen extends StatelessWidget {
     required this.accountId,
     required this.repository,
     required this.onLeftTrip,
+    required this.user,
     this.initialTabIndex = 0,
     this.initialAiPrompt,
     super.key,
   });
   final Trip trip;
   final VoidCallback onBack;
-  final VoidCallback onOpenChat;
+  final ValueChanged<String> onOpenChat;
   final VoidCallback onOpenBudget;
   final VoidCallback onOpenPacking;
   final VoidCallback onOpenSettings;
@@ -26,6 +27,7 @@ class TripDetailScreen extends StatelessWidget {
   final String accountId;
   final TravelDataRepository repository;
   final VoidCallback onLeftTrip;
+  final UserProfile user;
   final int initialTabIndex;
   final String? initialAiPrompt;
 
@@ -40,6 +42,7 @@ class TripDetailScreen extends StatelessWidget {
       accountId: accountId,
       repository: repository,
       onLeftTrip: onLeftTrip,
+      user: user,
       initialTabIndex: initialTabIndex,
       initialAiPrompt: initialAiPrompt,
     );
@@ -57,18 +60,20 @@ class _EditableTripDetailScreen extends StatefulWidget {
     required this.repository,
     required this.onLeftTrip,
     required this.initialTabIndex,
+    required this.user,
     this.initialAiPrompt,
   });
 
   final Trip trip;
   final VoidCallback onBack;
-  final VoidCallback onOpenChat;
+  final ValueChanged<String> onOpenChat;
   final VoidCallback onOpenSettings;
   final ValueChanged<Trip> onUpdateTrip;
   final String accountId;
   final TravelDataRepository repository;
   final VoidCallback onLeftTrip;
   final int initialTabIndex;
+  final UserProfile user;
   final String? initialAiPrompt;
 
   @override
@@ -101,6 +106,15 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
   void _save(Trip trip) {
     setState(() => _trip = trip);
     widget.onUpdateTrip(trip);
+  }
+
+  void _setLinkedChat(GroupChat chat) {
+    setState(() {
+      _trip = _trip.copyWith(
+        linkedChatId: chat.id,
+        linkedChatTitle: chat.title,
+      );
+    });
   }
 
   int _clampedSectionIndex(int index) => index.clamp(0, 7);
@@ -192,7 +206,10 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
         icon: Icons.chat_bubble_rounded,
         child: TripChatTab(
           trip: _trip,
+          accountId: widget.accountId,
+          user: widget.user,
           onOpenChat: widget.onOpenChat,
+          onLinkedChatChanged: _setLinkedChat,
           initialPrompt: widget.initialAiPrompt,
         ),
       ),

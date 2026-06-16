@@ -392,7 +392,7 @@ const _additionalTranslatableUiText = {
   'Choose a new group owner',
   'Ownership must be transferred before you leave.',
   'You are the only member, so leaving will delete this group chat.',
-  'This permanently deletes the chat and its messages. The attached trip and its members will not be changed.',
+  'This permanently deletes the chat and its messages. The attached trip will keep its members and lose this chat link.',
   'will lose access to this trip but will remain in the group chat.',
   'Leave trip',
   'Leave trip?',
