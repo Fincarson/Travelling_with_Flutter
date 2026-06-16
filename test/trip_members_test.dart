@@ -68,6 +68,59 @@ void main() {
     expect(find.byTooltip('Remove activity'), findsNothing);
   });
 
+  testWidgets('trip detail stays visible after adding stops and bookings', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: _EditableTripDetailHost(
+            initialTrip: ownerTrip,
+            initialTabIndex: 1,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.ensureVisible(find.text('ADD DESTINATION'));
+    await tester.tap(find.text('ADD DESTINATION'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add manually'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Activity'),
+      'Museum stop',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Add').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Museum stop'), findsOneWidget);
+    expect(find.text('Schedule'), findsWidgets);
+    expect(find.text('Trip'), findsNothing);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: _BookingTabHost(initialTrip: ownerTrip)),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('ADD BOOKING'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Title'),
+      'Hotel confirmation',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Add').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Hotel confirmation'), findsOneWidget);
+    expect(find.text('ADD BOOKING'), findsOneWidget);
+    expect(find.text('Trip'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('trip owner can remove members but cannot leave', (tester) async {
     final repository = _FakeTravelDataRepository();
     await tester.pumpWidget(
@@ -109,6 +162,62 @@ void main() {
     expect(find.byTooltip('Remove member'), findsNothing);
     expect(find.text('Leave trip'), findsOneWidget);
   });
+}
+
+class _EditableTripDetailHost extends StatefulWidget {
+  const _EditableTripDetailHost({
+    required this.initialTrip,
+    required this.initialTabIndex,
+  });
+
+  final Trip initialTrip;
+  final int initialTabIndex;
+
+  @override
+  State<_EditableTripDetailHost> createState() =>
+      _EditableTripDetailHostState();
+}
+
+class _EditableTripDetailHostState extends State<_EditableTripDetailHost> {
+  late Trip _trip = widget.initialTrip;
+
+  @override
+  Widget build(BuildContext context) {
+    return TripDetailScreen(
+      trip: _trip,
+      accountId: 'owner-1',
+      repository: _FakeTravelDataRepository(),
+      onLeftTrip: () {},
+      onBack: () {},
+      onOpenChat: () {},
+      onOpenBudget: () {},
+      onOpenPacking: () {},
+      onOpenSettings: () {},
+      onUpdateTrip: (trip) => setState(() => _trip = trip),
+      initialTabIndex: widget.initialTabIndex,
+    );
+  }
+}
+
+class _BookingTabHost extends StatefulWidget {
+  const _BookingTabHost({required this.initialTrip});
+
+  final Trip initialTrip;
+
+  @override
+  State<_BookingTabHost> createState() => _BookingTabHostState();
+}
+
+class _BookingTabHostState extends State<_BookingTabHost> {
+  late Trip _trip = widget.initialTrip;
+
+  @override
+  Widget build(BuildContext context) {
+    return BookingTab(
+      trip: _trip,
+      onSave: (trip) => setState(() => _trip = trip),
+    );
+  }
 }
 
 class _FakeTravelDataRepository extends Fake implements TravelDataRepository {

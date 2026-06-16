@@ -65,6 +65,17 @@ class _BudgetTabState extends State<BudgetTab> {
         ),
 
         const SizedBox(height: 14),
+        if (!widget.readOnly) ...[
+          PrimaryButton(
+            label: 'Add spending',
+            icon: Icons.add_rounded,
+            onPressed: () => _editSpending(
+              categories.first,
+              displayCurrency: displayCurrency,
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
         for (final category in categories)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
@@ -105,29 +116,26 @@ class _BudgetTabState extends State<BudgetTab> {
     required String displayCurrency,
     BudgetSpending? existing,
   }) async {
-    final spending = await _showSpendingDialog(
+    final result = await _showSpendingDialog(
       context,
       category: category,
+      categories: _budgetCategoriesForTrip(trip),
       sourceCurrency: trip.currency,
       displayCurrency: displayCurrency,
+      tripStartDate: trip.startDate,
+      tripEndDate: trip.endDate,
       existing: existing,
     );
-    if (spending == null) return;
+    if (result == null) return;
     if (!mounted) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final currentCategory = _budgetCategoriesForTrip(
-        trip,
-      ).firstWhere((item) => item.id == category.id, orElse: () => category);
-      final spendings = [...currentCategory.spendings];
-      final index = spendings.indexWhere((item) => item.id == spending.id);
-      if (index == -1) {
-        spendings.add(spending);
-      } else {
-        spendings[index] = spending;
-      }
-      _saveCategory(currentCategory, spendings);
+      setState(() => _expandedCategoryIds.add(result.category.id));
+      _saveSpendingResult(
+        targetCategory: result.category,
+        spending: result.spending,
+      );
     });
   }
 
@@ -169,6 +177,37 @@ class _BudgetTabState extends State<BudgetTab> {
     final next = categories
         .map((item) => item.id == updated.id ? updated : item)
         .toList();
+    widget.onSave(
+      trip.copyWith(budgetCategories: next, spent: _budgetActual(next)),
+    );
+  }
+
+  void _saveSpendingResult({
+    required BudgetCategory targetCategory,
+    required BudgetSpending spending,
+  }) {
+    final categories = _budgetCategoriesForTrip(trip);
+    final next = categories.map((category) {
+      final spendings = [...category.spendings]
+        ..removeWhere((item) => item.id == spending.id);
+      if (category.id == targetCategory.id) {
+        spendings.add(spending);
+      }
+      final actual = spendings.fold<int>(
+        0,
+        (total, spending) => total + spending.amount,
+      );
+      return category.copyWith(spendings: spendings, actual: actual);
+    }).toList();
+
+    final hasTarget = next.any((category) => category.id == targetCategory.id);
+    if (!hasTarget) {
+      final spendings = [spending];
+      next.add(
+        targetCategory.copyWith(spendings: spendings, actual: spending.amount),
+      );
+    }
+
     widget.onSave(
       trip.copyWith(budgetCategories: next, spent: _budgetActual(next)),
     );
@@ -842,11 +881,21 @@ class _BudgetDonutPainter extends CustomPainter {
   }
 }
 
-Future<BudgetSpending?> _showSpendingDialog(
+class _SpendingDialogResult {
+  const _SpendingDialogResult({required this.category, required this.spending});
+
+  final BudgetCategory category;
+  final BudgetSpending spending;
+}
+
+Future<_SpendingDialogResult?> _showSpendingDialog(
   BuildContext context, {
   required BudgetCategory category,
+  required List<BudgetCategory> categories,
   required String sourceCurrency,
   required String displayCurrency,
+  required String tripStartDate,
+  required String tripEndDate,
   BudgetSpending? existing,
 }) async {
   final exchangeData = CurrencyScope.maybeOf(context)?.exchangeData;
@@ -860,111 +909,169 @@ Future<BudgetSpending?> _showSpendingDialog(
         ).round().toString();
   final title = TextEditingController(text: existing?.title ?? '');
   final amount = TextEditingController(text: existingAmount);
-  final date = TextEditingController(text: existing?.date ?? '');
   final note = TextEditingController(text: existing?.note ?? '');
+  final firstDate = _parseTripDate(tripStartDate) ?? DateTime(2000);
+  final lastDate = _parseTripDate(tripEndDate) ?? DateTime(2100);
+  var selectedDate = existing?.date.trim().isNotEmpty == true
+      ? existing!.date
+      : _dateKey(firstDate);
+  var selectedCategory = categories.any((item) => item.id == category.id)
+      ? category
+      : categories.first;
   try {
-    return await _showTravelFormSheet<BudgetSpending>(
+    return await _showTravelFormSheet<_SpendingDialogResult>(
       context: context,
-      builder: (dialogContext) => SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              appText(
-                dialogContext,
-                existing == null ? 'Create new spending' : 'Edit spending',
-              ),
-              style: Theme.of(
-                dialogContext,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: title,
-              decoration: InputDecoration(
-                labelText: appText(dialogContext, 'Title'),
-              ),
-              textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: amount,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText:
-                    '${appText(dialogContext, 'Amount')} $displayCurrency',
-              ),
-              textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: date,
-              decoration: InputDecoration(
-                labelText: appText(dialogContext, 'Date'),
-              ),
-              textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: note,
-              decoration: InputDecoration(
-                labelText: appText(dialogContext, 'Note'),
-              ),
-              textInputAction: TextInputAction.done,
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: TextButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                    child: Text(appText(dialogContext, 'Cancel')),
-                  ),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                appText(
+                  dialogContext,
+                  existing == null ? 'Create new spending' : 'Edit spending',
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () {
-                      final parsedAmount =
-                          int.tryParse(
-                            amount.text.replaceAll(RegExp(r'\D'), ''),
-                          ) ??
-                          0;
-                      if (parsedAmount <= 0) return;
-                      final sourceAmount = _budgetSourceAmountFromDisplay(
-                        parsedAmount,
-                        sourceCurrency: sourceCurrency,
-                        displayCurrency: displayCurrency,
-                        exchangeData: exchangeData,
-                      );
-                      Navigator.of(dialogContext).pop(
-                        BudgetSpending(
-                          id:
-                              existing?.id ??
-                              'spending-${DateTime.now().microsecondsSinceEpoch}',
-                          title: title.text.trim().isEmpty
-                              ? category.category
-                              : title.text.trim(),
-                          amount: sourceAmount,
-                          date: date.text.trim(),
-                          note: note.text.trim(),
+                style: Theme.of(
+                  dialogContext,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue: selectedCategory.id,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: appText(dialogContext, 'Category'),
+                ),
+                items: [
+                  for (final category in categories)
+                    DropdownMenuItem<String>(
+                      value: category.id,
+                      child: Text(
+                        appText(dialogContext, category.category),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (value) {
+                  BudgetCategory? selected;
+                  for (final category in categories) {
+                    if (category.id == value) {
+                      selected = category;
+                      break;
+                    }
+                  }
+                  if (selected == null) return;
+                  setDialogState(() => selectedCategory = selected!);
+                },
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: title,
+                decoration: InputDecoration(
+                  labelText: appText(dialogContext, 'Title'),
+                ),
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: amount,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText:
+                      '${appText(dialogContext, 'Amount')} $displayCurrency',
+                ),
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 10),
+              _SheetPickerField(
+                label: 'Date',
+                value: selectedDate,
+                icon: Icons.calendar_month_rounded,
+                onTap: () async {
+                  final picked = await _pickSheetDate(
+                    context,
+                    initialDate: selectedDate,
+                    firstDate: firstDate,
+                    lastDate: lastDate.isBefore(firstDate)
+                        ? firstDate
+                        : lastDate,
+                  );
+                  if (picked == null || !context.mounted) return;
+                  setDialogState(() => selectedDate = picked);
+                },
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: note,
+                decoration: InputDecoration(
+                  labelText: appText(dialogContext, 'Note'),
+                ),
+                textInputAction: TextInputAction.done,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => unawaited(
+                        _closeTravelFormSheet<_SpendingDialogResult>(
+                          dialogContext,
                         ),
-                      );
-                    },
-                    child: Text(appText(dialogContext, 'Save')),
+                      ),
+                      child: Text(appText(dialogContext, 'Cancel')),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () {
+                        final parsedAmount =
+                            int.tryParse(
+                              amount.text.replaceAll(RegExp(r'\D'), ''),
+                            ) ??
+                            0;
+                        if (parsedAmount <= 0) return;
+                        final sourceAmount = _budgetSourceAmountFromDisplay(
+                          parsedAmount,
+                          sourceCurrency: sourceCurrency,
+                          displayCurrency: displayCurrency,
+                          exchangeData: exchangeData,
+                        );
+                        unawaited(
+                          _closeTravelFormSheet<_SpendingDialogResult>(
+                            dialogContext,
+                            _SpendingDialogResult(
+                              category: selectedCategory,
+                              spending: BudgetSpending(
+                                id:
+                                    existing?.id ??
+                                    'spending-${DateTime.now().microsecondsSinceEpoch}',
+                                title: title.text.trim().isEmpty
+                                    ? selectedCategory.category
+                                    : title.text.trim(),
+                                amount: sourceAmount,
+                                date: selectedDate,
+                                note: note.text.trim(),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                      child: Text(appText(dialogContext, 'Save')),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   } finally {
     title.dispose();
     amount.dispose();
-    date.dispose();
     note.dispose();
   }
 }
