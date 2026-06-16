@@ -202,6 +202,7 @@ class _TripSettingsScreenState extends State<TripSettingsScreen> {
   Future<void> _showBannerSourceSheet() async {
     final action = await _showTravelFormSheet<_BannerImageSourceAction>(
       context: context,
+      requireSafeDismissal: false,
       builder: (sheetContext) => Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1038,10 +1039,13 @@ List<String> _mergedTripSettingsImages({
 Future<T?> _showTravelFormSheet<T>({
   required BuildContext context,
   required Widget Function(BuildContext sheetContext) builder,
-}) {
-  return showModalBottomSheet<T>(
+  bool requireSafeDismissal = true,
+}) async {
+  final result = await showModalBottomSheet<T>(
     context: context,
     isScrollControlled: true,
+    isDismissible: !requireSafeDismissal,
+    enableDrag: !requireSafeDismissal,
     useSafeArea: true,
     backgroundColor: Colors.transparent,
     builder: (sheetContext) {
@@ -1081,6 +1085,169 @@ Future<T?> _showTravelFormSheet<T>({
       );
     },
   );
+  await WidgetsBinding.instance.endOfFrame;
+  return result;
+}
+
+Future<void> _closeTravelFormSheet<T>(BuildContext context, [T? result]) async {
+  final navigator = Navigator.of(context);
+  FocusManager.instance.primaryFocus?.unfocus();
+  await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+  await Future<void>.delayed(const Duration(milliseconds: 140));
+  if (!navigator.mounted) return;
+  navigator.pop<T>(result);
+}
+
+Future<String?> _pickSheetDate(
+  BuildContext context, {
+  required String initialDate,
+  required DateTime firstDate,
+  required DateTime lastDate,
+}) async {
+  final parsed = _parseTripDate(initialDate) ?? firstDate;
+  final initial = _clampDate(parsed, firstDate, lastDate);
+  final picked = await showDatePicker(
+    context: context,
+    initialDate: initial,
+    firstDate: firstDate,
+    lastDate: lastDate,
+  );
+  if (picked == null) return null;
+  await WidgetsBinding.instance.endOfFrame;
+  return _dateKey(picked);
+}
+
+Future<int?> _showWheelTimePicker(
+  BuildContext context, {
+  required int initialMinutes,
+}) async {
+  var selectedMinutes = initialMinutes.clamp(0, 23 * 60 + 59).toInt();
+  final initialDateTime = DateTime(
+    2000,
+    1,
+    1,
+  ).add(Duration(minutes: selectedMinutes));
+  final result = await showModalBottomSheet<int>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Colors.transparent,
+    builder: (sheetContext) => SafeArea(
+      top: false,
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Container(
+            margin: EdgeInsets.fromLTRB(
+              _responsiveHorizontalPadding(sheetContext),
+              8,
+              _responsiveHorizontalPadding(sheetContext),
+              18,
+            ),
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+            decoration: BoxDecoration(
+              color: Theme.of(sheetContext).colorScheme.surface,
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: .12),
+                  blurRadius: 30,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      child: Text(appText(sheetContext, 'Cancel')),
+                    ),
+                    const Spacer(),
+                    FilledButton(
+                      onPressed: () =>
+                          Navigator.of(sheetContext).pop(selectedMinutes),
+                      child: Text(appText(sheetContext, 'Done')),
+                    ),
+                  ],
+                ),
+                SizedBox(
+                  height: 216,
+                  child: CupertinoDatePicker(
+                    mode: CupertinoDatePickerMode.time,
+                    initialDateTime: initialDateTime,
+                    minuteInterval: 1,
+                    use24hFormat: false,
+                    onDateTimeChanged: (value) {
+                      selectedMinutes = value.hour * 60 + value.minute;
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await WidgetsBinding.instance.endOfFrame;
+  return result;
+}
+
+class _SheetPickerField extends StatelessWidget {
+  const _SheetPickerField({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: onTap,
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: appText(context, label),
+          suffixIcon: Icon(icon),
+        ),
+        child: Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
+  }
+}
+
+DateTime _clampDate(DateTime value, DateTime firstDate, DateTime lastDate) {
+  if (value.isBefore(firstDate)) return firstDate;
+  if (value.isAfter(lastDate)) return lastDate;
+  return value;
+}
+
+String _minutesToPickerTimeLabel(int minutes) {
+  final normalized = minutes.clamp(0, 23 * 60 + 59).toInt();
+  var hour = (normalized ~/ 60) % 24;
+  final minute = normalized % 60;
+  final suffix = hour >= 12 ? 'PM' : 'AM';
+  final displayHour = hour == 0
+      ? 12
+      : hour > 12
+      ? hour - 12
+      : hour;
+  return '$displayHour:${minute.toString().padLeft(2, '0')} $suffix';
 }
 
 void _showUndoSnackBar(

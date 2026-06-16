@@ -216,6 +216,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     final performance = PerformanceScope.settingsOf(context);
     final headerAction = _headerAction(context, widget.location);
     _publishBottomNav();
+    _restoreStuckSlideIfNeeded();
     _slideController.duration = performance.transitionDuration;
 
     return Stack(
@@ -261,6 +262,21 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       widget.appState._setBottomNav(controller);
+    });
+  }
+
+  void _restoreStuckSlideIfNeeded() {
+    if (_slideController.isAnimating || _slideController.value >= 1) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _slideController.isAnimating ||
+          _slideController.value >= 1) {
+        return;
+      }
+      setState(() {
+        _slideBegin = Offset.zero;
+        _slideController.value = 1;
+      });
     });
   }
 
