@@ -18,6 +18,191 @@ typedef StartBackgroundTripGeneration =
       String flightCode,
     });
 
+typedef StartInAppTripPreviewGeneration =
+    Future<void> Function(CreateTripPreviewRequest request);
+
+class CreateTripPreviewRequest {
+  const CreateTripPreviewRequest({
+    required this.place,
+    required this.startDate,
+    required this.endDate,
+    required this.budget,
+    required this.groupType,
+    required this.numOfTravelers,
+    required this.generationPreferences,
+    required this.savedTripPreferences,
+    required this.imageSearchTerms,
+    required this.currency,
+    required this.appContext,
+    required this.startLocation,
+    required this.fallbackImages,
+    this.selectedImage,
+    this.airline = '',
+    this.flightCode = '',
+    this.flightConfirmation = '',
+  });
+
+  final PlaceSuggestion place;
+  final DateTime startDate;
+  final DateTime endDate;
+  final int budget;
+  final String groupType;
+  final int numOfTravelers;
+  final List<String> generationPreferences;
+  final List<String> savedTripPreferences;
+  final List<String> imageSearchTerms;
+  final String currency;
+  final AppDeviceContext appContext;
+  final TripStartLocation? startLocation;
+  final List<String> fallbackImages;
+  final String? selectedImage;
+  final String airline;
+  final String flightCode;
+  final String flightConfirmation;
+}
+
+class CreateTripPreviewSession extends ChangeNotifier {
+  bool isGenerating = false;
+  String? destination;
+  String? errorMessage;
+  PendingAiTripPreview? preview;
+  AiTripGenerationProgress progress = AiTripGenerationProgress.initial;
+
+  bool get isReady => preview != null && !isGenerating;
+
+  void markGenerating(String nextDestination) {
+    isGenerating = true;
+    destination = nextDestination;
+    errorMessage = null;
+    preview = null;
+    progress = AiTripGenerationProgress.initial;
+    notifyListeners();
+  }
+
+  void markProgress(AiTripGenerationProgress nextProgress) {
+    if (!isGenerating && preview == null) return;
+    progress = nextProgress;
+    notifyListeners();
+  }
+
+  void markReady(PendingAiTripPreview nextPreview) {
+    isGenerating = false;
+    destination = nextPreview.place.name;
+    errorMessage = null;
+    preview = nextPreview;
+    progress = AiTripGenerationProgress.complete;
+    notifyListeners();
+  }
+
+  void markFailed({required String nextDestination, required String message}) {
+    isGenerating = false;
+    destination = nextDestination;
+    errorMessage = message;
+    preview = null;
+    progress = AiTripGenerationProgress.failed;
+    notifyListeners();
+  }
+
+  void clear() {
+    isGenerating = false;
+    destination = null;
+    errorMessage = null;
+    preview = null;
+    progress = AiTripGenerationProgress.initial;
+    notifyListeners();
+  }
+}
+
+class AiTripGenerationProgress {
+  const AiTripGenerationProgress({
+    required this.stepIndex,
+    required this.value,
+    required this.status,
+  });
+
+  final int stepIndex;
+  final double value;
+  final String status;
+
+  static const initial = AiTripGenerationProgress(
+    stepIndex: 0,
+    value: .08,
+    status: 'Connecting to AI travel agent...',
+  );
+
+  static const complete = AiTripGenerationProgress(
+    stepIndex: 8,
+    value: 1,
+    status: 'Itinerary preview is ready.',
+  );
+
+  static const failed = AiTripGenerationProgress(
+    stepIndex: 0,
+    value: 0,
+    status: 'Generation stopped.',
+  );
+}
+
+const _aiTripProgressSteps = [
+  AiTripGenerationProgress(
+    stepIndex: 0,
+    value: .08,
+    status: 'Connecting to AI travel agent...',
+  ),
+  AiTripGenerationProgress(
+    stepIndex: 1,
+    value: .18,
+    status: 'Preparing destination context...',
+  ),
+  AiTripGenerationProgress(
+    stepIndex: 2,
+    value: .3,
+    status: 'Researching destination and local highlights...',
+  ),
+  AiTripGenerationProgress(
+    stepIndex: 3,
+    value: .42,
+    status: 'Planning daily activities...',
+  ),
+  AiTripGenerationProgress(
+    stepIndex: 4,
+    value: .54,
+    status: 'Finding best prices and budgeting...',
+  ),
+  AiTripGenerationProgress(
+    stepIndex: 5,
+    value: .66,
+    status: 'Mapping transport and bookings...',
+  ),
+  AiTripGenerationProgress(
+    stepIndex: 6,
+    value: .78,
+    status: 'Creating packing checklist and travel notes...',
+  ),
+  AiTripGenerationProgress(
+    stepIndex: 7,
+    value: .9,
+    status: 'Finding photos and finalizing preview...',
+  ),
+  AiTripGenerationProgress(
+    stepIndex: 8,
+    value: 1,
+    status: 'Itinerary preview is ready.',
+  ),
+];
+
+const _aiTripProgressStepDelays = [
+  Duration.zero,
+  Duration(seconds: 1),
+  Duration(seconds: 4),
+  Duration(seconds: 10),
+  Duration(seconds: 18),
+  Duration(seconds: 28),
+  Duration(seconds: 42),
+  Duration(seconds: 58),
+  Duration.zero,
+];
+
 class CreateTripScreen extends StatefulWidget {
   const CreateTripScreen({
     required this.onBack,
@@ -26,6 +211,8 @@ class CreateTripScreen extends StatefulWidget {
     required this.profileLanguage,
     required this.savedTrips,
     this.initialDestination,
+    this.previewSession,
+    this.onStartPreviewGeneration,
     super.key,
   });
   final VoidCallback onBack;
@@ -34,6 +221,8 @@ class CreateTripScreen extends StatefulWidget {
   final String profileLanguage;
   final List<Trip> savedTrips;
   final String? initialDestination;
+  final CreateTripPreviewSession? previewSession;
+  final StartInAppTripPreviewGeneration? onStartPreviewGeneration;
 
   @override
   State<CreateTripScreen> createState() => _CreateTripScreenState();
@@ -53,8 +242,8 @@ class _TripTemplate {
   final String badge;
 }
 
-class _PendingAiTripPreview {
-  const _PendingAiTripPreview({
+class PendingAiTripPreview {
+  const PendingAiTripPreview({
     required this.place,
     required this.startDate,
     required this.endDate,
@@ -90,6 +279,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
   GeoapifyPlacesService? _placesService;
   TravelAssistantService? _assistantService;
+  final _localPreviewSession = CreateTripPreviewSession();
   final _deviceContextService = AppDeviceContextService();
   final _destination = TextEditingController();
   final _budget = TextEditingController();
@@ -143,7 +333,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   String? _lastAiError;
   String? _transportRecommendationSummary;
   String? _transportRecommendationError;
-  _PendingAiTripPreview? _pendingAiTripPreview;
+  PendingAiTripPreview? _pendingAiTripPreview;
   AppDeviceContext? _deviceContext;
   TripStartLocation? _tripStartLocation;
   int? _aiExpandedStep;
@@ -157,6 +347,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   String? _selectedImage;
   final Set<String> _preferences = {'Culture', 'Food'};
   final Set<String> _planningGoalIds = {};
+
+  CreateTripPreviewSession get _previewSession =>
+      widget.previewSession ?? _localPreviewSession;
 
   GeoapifyPlacesService get _places =>
       _placesService ??= GeoapifyPlacesService();
@@ -460,17 +653,25 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         setState(() => _pendingDraft = draft);
       }
     });
-    _loadPreviewGenerating().then((isGenerating) {
-      if (mounted && isGenerating) {
-        setState(() => _isGenerating = true);
-      }
-    });
+    unawaited(_clearPreviewState());
+    _previewSession.addListener(_syncPreviewSession);
+    _syncPreviewSession();
     final initialDestination = widget.initialDestination?.trim();
     if (initialDestination != null && initialDestination.isNotEmpty) {
       _destination.text = initialDestination;
       _mode = 1;
       _aiExpandedStep = 1;
     }
+  }
+
+  @override
+  void didUpdateWidget(covariant CreateTripScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldSession = oldWidget.previewSession ?? _localPreviewSession;
+    if (oldSession == _previewSession) return;
+    oldSession.removeListener(_syncPreviewSession);
+    _previewSession.addListener(_syncPreviewSession);
+    _syncPreviewSession();
   }
 
   @override
@@ -489,6 +690,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
   @override
   void dispose() {
+    _previewSession.removeListener(_syncPreviewSession);
+    _localPreviewSession.dispose();
     _searchTimer?.cancel();
     _originSearchTimer?.cancel();
     _budget.removeListener(_syncBudgetTextState);
@@ -503,6 +706,34 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     _ticketPaidAmount.dispose();
     _flightConfirmation.dispose();
     super.dispose();
+  }
+
+  void _syncPreviewSession() {
+    final session = _previewSession;
+    if (!mounted) return;
+    final preview = session.preview;
+    if (preview != null) _applyPreviewToFields(preview);
+    setState(() {
+      _isPreparingPreview = session.isGenerating;
+      _isGenerating = session.isGenerating;
+      _pendingAiTripPreview = preview;
+      _formError = session.errorMessage;
+    });
+  }
+
+  void _applyPreviewToFields(PendingAiTripPreview preview) {
+    _selectedPlace = preview.place;
+    _destination.text = preview.place.name;
+    _startDate = preview.startDate;
+    _endDate = preview.endDate;
+    _budget.text = preview.budget.toString();
+    _currency = preview.currency;
+    _group = preview.groupType;
+    _numOfTravelers = preview.numOfTravelers;
+    _preferences
+      ..clear()
+      ..addAll(preview.preferences);
+    _hasBudgetText = _budget.text.trim().isNotEmpty;
   }
 
   void _syncBudgetTextState() {
@@ -601,18 +832,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _previewTimestampKey,
       DateTime.now().millisecondsSinceEpoch,
     );
-  }
-
-  Future<bool> _loadPreviewGenerating() async {
-    final prefs = await SharedPreferences.getInstance();
-    final isGenerating = prefs.getBool(_previewGeneratingKey) ?? false;
-    final timestamp = prefs.getInt(_previewTimestampKey) ?? 0;
-    // Reset if preview is older than 30 minutes
-    if (DateTime.now().millisecondsSinceEpoch - timestamp > 30 * 60 * 1000) {
-      await _clearPreviewState();
-      return false;
-    }
-    return isGenerating;
   }
 
   Future<void> _clearPreviewState() async {
@@ -957,6 +1176,20 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     ..._selectedPlanningGoals.map((goal) => goal.tag),
   ];
 
+  List<String> _imageSearchTermsForPreview() {
+    final seen = <String>{};
+    return _savedTripPreferences
+        .map((preference) => preference.trim())
+        .where((preference) {
+          if (preference.length < 2) return false;
+          final lower = preference.toLowerCase();
+          if (lower.startsWith('ai focus:')) return false;
+          return seen.add(lower);
+        })
+        .take(5)
+        .toList(growable: false);
+  }
+
   List<String> get _visiblePreferenceOptions {
     final options = [..._preferenceOptions];
     for (final preference in _preferences) {
@@ -1061,6 +1294,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _pendingDraftConfirmed = false;
       _pendingAiTripPreview = null;
     });
+    if (!_previewSession.isGenerating) _previewSession.clear();
     _addChatMessage(CreateTripChatMessage(fromUser: true, text: text));
 
     CreateTripAiResponse aiResponse;
@@ -1186,6 +1420,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _pendingDraft = newDraft;
       _pendingAiTripPreview = null;
     });
+    if (!_previewSession.isGenerating) _previewSession.clear();
     unawaited(_saveDraft(newDraft));
   }
 
@@ -1319,26 +1554,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   String _friendlyAiError(Object error) {
-    final text = error.toString();
-    if (_isInvalidAiProviderKeyError(error)) {
-      return 'The server OpenAI key is invalid or revoked. Replace the OPENAI_API_KEY Firebase secret, then redeploy the AI Functions.';
-    }
-    if (error is TimeoutException || text.contains('TimeoutException')) {
-      return 'AI took longer than expected to answer. Please try generating again.';
-    }
-    if (text.contains('not-found') ||
-        text.contains('NOT_FOUND') ||
-        text.contains('failed-precondition') ||
-        text.contains('SERVICE_DISABLED') ||
-        text.contains('generateTripPlan') ||
-        text.contains('createTripReply')) {
-      return 'AI is not connected yet. Set the Firebase Function secrets and deploy Functions.';
-    }
-    if (text.contains('unauthenticated') ||
-        text.contains('permission-denied')) {
-      return 'AI could not be reached because the backend rejected the request.';
-    }
-    return 'AI is unavailable right now. Please try again.';
+    return _friendlyTripAiError(error);
   }
 
   // ignore: unused_element
@@ -2600,11 +2816,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 
   Future<void> _prepareAiTripPreviewFromDraft() async {
-    final preview = _pendingAiTripPreview;
+    final preview = _previewSession.preview ?? _pendingAiTripPreview;
     if (preview != null) {
+      _applyPreviewToFields(preview);
       await _showAiTripPreview(preview);
       return;
     }
+    if (_previewSession.isGenerating) return;
 
     final budget = _parsedBudget();
     if (budget <= 0) {
@@ -2633,9 +2851,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       _isGenerating = true;
       _formError = null;
     });
-    unawaited(_savePreviewState(true));
 
-    final imagesFuture = _searchedImagesForTripPreview(place: place);
     final generationContext = await _deviceContextService.load(
       requestLocation: true,
     );
@@ -2652,141 +2868,38 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       }
     });
 
-    GeneratedTripPlan plan;
-    try {
-      plan = await _assistant.generateTripPlan(
-        place: place,
-        startDate: _startDate,
-        endDate: _endDate,
-        budget: budget,
-        groupType: _group,
-        preferences: _aiGenerationPreferences,
-        currency: _currency,
-        airline: _airline.text.trim(),
-        flightConfirmation: _flightConfirmation.text.trim(),
-        profileLanguage: widget.profileLanguage,
-        appContext: generationContext,
-        startLocation: startLocation,
-      );
-      if (plan.items.isEmpty) {
-        throw Exception('AI returned no schedule items.');
-      }
-    } catch (error) {
-      if (!mounted) return;
-      final message = _friendlyAiError(error);
-      setState(() {
-        _isPreparingPreview = false;
-        _isGenerating = false;
-        _pendingAiTripPreview = null;
-        _formError = message;
-      });
-      unawaited(_clearPreviewState());
-      _addChatMessage(
-        CreateTripChatMessage(
-          fromUser: false,
-          text: 'I could not generate the live itinerary. $message',
-        ),
-      );
-      return;
-    }
-
-    final images = await imagesFuture;
-    if (!mounted) return;
-
-    // Show the preview so the user can review (and go back to the chat to edit)
-    // before the trip is created.
-    final nextPreview = _PendingAiTripPreview(
+    final request = CreateTripPreviewRequest(
       place: place,
       startDate: _startDate,
       endDate: _endDate,
       budget: budget,
-      currency: _currency,
       groupType: _group,
       numOfTravelers: _numOfTravelers,
-      preferences: _savedTripPreferences,
-      plan: plan,
+      generationPreferences: _aiGenerationPreferences,
+      savedTripPreferences: _savedTripPreferences,
+      imageSearchTerms: _imageSearchTermsForPreview(),
+      currency: _currency,
+      appContext: generationContext,
       startLocation: startLocation,
-      images: images,
-    );
-    setState(() {
-      _isPreparingPreview = false;
-      _isGenerating = false;
-      _pendingAiTripPreview = nextPreview;
-    });
-    await _savePreviewState(false);
-    await _showAiTripPreview(nextPreview);
-  }
-
-  Future<List<String>> _searchedImagesForTripPreview({
-    required PlaceSuggestion place,
-  }) async {
-    final fallbackImages = _mergedPreviewImages(
-      destination: place.name,
-      searchedImages: const [],
-    );
-    try {
-      final query = '${place.name} travel landmark';
-      final url = Uri.https('commons.wikimedia.org', '/w/api.php', {
-        'action': 'query',
-        'generator': 'search',
-        'gsrsearch': query,
-        'gsrnamespace': '6',
-        'gsrlimit': '8',
-        'prop': 'imageinfo',
-        'iiprop': 'url',
-        'iiurlwidth': '900',
-        'format': 'json',
-        'origin': '*',
-      });
-      final response = await http
-          .get(
-            url,
-            headers: const {
-              'Accept': 'application/json',
-              'User-Agent': 'TravellingWithFlutter/1.0 trip-preview-images',
-            },
-          )
-          .timeout(const Duration(seconds: 3));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        return fallbackImages;
-      }
-
-      final body = jsonDecode(response.body) as Map<String, dynamic>;
-      final pages = body['query'] is Map
-          ? (body['query'] as Map)['pages']
-          : null;
-      final searchedImages = <String>[];
-      if (pages is Map) {
-        for (final page in pages.values.whereType<Map>()) {
-          final imageInfoList = (page['imageinfo'] as List<dynamic>?)
-              ?.whereType<Map>()
-              .toList();
-          final imageInfo = imageInfoList == null || imageInfoList.isEmpty
-              ? null
-              : imageInfoList.first;
-          final imageUrl =
-              (imageInfo?['thumburl'] as String?) ??
-              (imageInfo?['url'] as String?);
-          if (_isPreviewImageUrl(imageUrl)) searchedImages.add(imageUrl!);
-        }
-      }
-      return _mergedPreviewImages(
+      fallbackImages: _mergedPreviewImages(
         destination: place.name,
-        searchedImages: searchedImages,
-      );
-    } catch (_) {
-      return fallbackImages;
+        searchedImages: const [],
+      ),
+      selectedImage: _selectedImage,
+      airline: _airline.text.trim(),
+      flightCode: _flightCode.text.trim(),
+      flightConfirmation: _flightConfirmation.text.trim(),
+    );
+    final startPreviewGeneration = widget.onStartPreviewGeneration;
+    if (startPreviewGeneration == null) {
+      setState(() {
+        _isPreparingPreview = false;
+        _isGenerating = false;
+        _formError = 'Preview generation is unavailable.';
+      });
+      return;
     }
-  }
-
-  bool _isPreviewImageUrl(String? value) {
-    if (value == null || value.trim().isEmpty) return false;
-    final lower = value.toLowerCase();
-    return lower.startsWith('https://') &&
-        (lower.contains('.jpg') ||
-            lower.contains('.jpeg') ||
-            lower.contains('.png') ||
-            lower.contains('.webp'));
+    await startPreviewGeneration(request);
   }
 
   List<String> _mergedPreviewImages({
@@ -2797,12 +2910,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     return [
       if (_selectedImage != null) _selectedImage!,
       ...searchedImages,
-      ..._imagesForDestination(destination),
-      ..._galleryOptions,
     ].where((image) => seen.add(image)).take(8).toList();
   }
 
-  Future<void> _showAiTripPreview(_PendingAiTripPreview preview) async {
+  Future<void> _showAiTripPreview(PendingAiTripPreview preview) async {
+    _applyPreviewToFields(preview);
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -2822,11 +2934,12 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
 
   Future<void> _confirmAiTripPreview({
     required BuildContext sheetContext,
-    required _PendingAiTripPreview preview,
+    required PendingAiTripPreview preview,
     required String? selectedImage,
     required GeneratedTripPlan plan,
   }) async {
     Navigator.of(sheetContext).pop();
+    _applyPreviewToFields(preview);
     if (selectedImage != null) _selectedImage = selectedImage;
     final images = selectedImage == null
         ? preview.images
@@ -2841,6 +2954,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       startLocation: preview.startLocation,
       images: images,
     );
+    _previewSession.clear();
   }
 
   Future<void> _generateTrip() async {
@@ -2895,10 +3009,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     // Queue the AI itinerary as a background job and return to the trips list.
     // The shell watches the job and auto-creates the trip when it is ready, so
     // generation keeps running even if the user navigates away.
-    final fallbackImages = [
-      if (_selectedImage != null) _selectedImage!,
-      ..._imagesForDestination(place.name),
-    ];
+    final fallbackImages = [if (_selectedImage != null) _selectedImage!];
     await widget.onGenerateInBackground(
       place: place,
       startDate: _startDate,
@@ -2944,12 +3055,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       budget: budget,
       categories: budgetCategories,
     );
-    final tripImages =
-        images ??
-        [
-          if (_selectedImage != null) _selectedImage!,
-          ..._imagesForDestination(place.name),
-        ];
+    final tripImages = images ?? [if (_selectedImage != null) _selectedImage!];
     try {
       await widget.onGenerate(
         Trip(
@@ -3773,7 +3879,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                 ],
                 const SizedBox(height: 22),
                 if (_isGenerating)
-                  const GeneratingTripPanel()
+                  GeneratingTripPanel(progress: _previewSession.progress)
                 else
                   _AiGenerateFooter(onGenerate: _generateTrip),
               ],
@@ -4318,7 +4424,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                   if (_isThinking) const CreateTripThinkingBubble(),
                   if (_isPreparingPreview) ...[
                     const SizedBox(height: 12),
-                    const GeneratingTripPanel(),
+                    GeneratingTripPanel(progress: _previewSession.progress),
                   ],
                   if (pendingDraft != null && canUsePlan) ...[
                     const SizedBox(height: 12),
@@ -4415,6 +4521,28 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   }
 }
 
+String _friendlyTripAiError(Object error) {
+  final text = error.toString();
+  if (_isInvalidAiProviderKeyError(error)) {
+    return 'The server OpenAI key is invalid or revoked. Replace the OPENAI_API_KEY Firebase secret, then redeploy the AI Functions.';
+  }
+  if (error is TimeoutException || text.contains('TimeoutException')) {
+    return 'AI took longer than expected to answer. Please try generating again.';
+  }
+  if (text.contains('not-found') ||
+      text.contains('NOT_FOUND') ||
+      text.contains('failed-precondition') ||
+      text.contains('SERVICE_DISABLED') ||
+      text.contains('generateTripPlan') ||
+      text.contains('createTripReply')) {
+    return 'AI is not connected yet. Set the Firebase Function secrets and deploy Functions.';
+  }
+  if (text.contains('unauthenticated') || text.contains('permission-denied')) {
+    return 'AI could not be reached because the backend rejected the request.';
+  }
+  return 'AI is unavailable right now. Please try again.';
+}
+
 class _TripCreationLoadingScreen extends StatelessWidget {
   const _TripCreationLoadingScreen();
 
@@ -4504,7 +4632,7 @@ class _AiTripPreviewSheet extends StatefulWidget {
     required this.onConfirm,
   });
 
-  final _PendingAiTripPreview preview;
+  final PendingAiTripPreview preview;
   final String? selectedImage;
   final Future<void> Function(String? selectedImage, GeneratedTripPlan plan)
   onConfirm;
@@ -4541,6 +4669,7 @@ class _AiTripPreviewSheetState extends State<_AiTripPreviewSheet> {
     final filterQuality = PerformanceScope.maybeSettingsOf(
       context,
     ).filterQuality;
+    final scheme = Theme.of(context).colorScheme;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.9,
@@ -4548,9 +4677,9 @@ class _AiTripPreviewSheetState extends State<_AiTripPreviewSheet> {
       maxChildSize: 0.96,
       builder: (context, controller) {
         return DecoratedBox(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           ),
           child: ListView(
             controller: controller,
@@ -4586,8 +4715,8 @@ class _AiTripPreviewSheetState extends State<_AiTripPreviewSheet> {
                           appText(context, preview.place.name),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: _primary,
+                          style: TextStyle(
+                            color: scheme.onSurface,
                             fontSize: 24,
                             fontWeight: FontWeight.w900,
                             height: 1.05,
@@ -4599,8 +4728,8 @@ class _AiTripPreviewSheetState extends State<_AiTripPreviewSheet> {
                             context,
                             'Review searched images and daily stops before creating the trip.',
                           ),
-                          style: const TextStyle(
-                            color: _secondary,
+                          style: TextStyle(
+                            color: scheme.onSurfaceVariant,
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                             height: 1.35,
@@ -5224,14 +5353,15 @@ class _AiPreviewImageGrid extends StatelessWidget {
     if (images.isEmpty) {
       return const SizedBox.shrink();
     }
+    final scheme = Theme.of(context).colorScheme;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           appText(context, 'Searched images'),
-          style: const TextStyle(
-            color: _primary,
+          style: TextStyle(
+            color: scheme.onSurface,
             fontSize: 16,
             fontWeight: FontWeight.w900,
           ),

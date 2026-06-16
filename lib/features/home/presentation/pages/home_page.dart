@@ -713,11 +713,6 @@ class _NotificationCenterSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final updates = [
-      ..._generalAgentFallbackUpdates(),
-      if (trip != null) ..._dailyAgentUpdates(trip!),
-    ];
-
     return SafeArea(
       top: false,
       child: Padding(
@@ -791,10 +786,30 @@ class _NotificationCenterSheet extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 16),
-                for (final update in updates.take(4)) ...[
-                  _NotificationUpdateTile(update: update),
-                  const SizedBox(height: 8),
-                ],
+                FutureBuilder<List<_DailyAgentUpdate>>(
+                  future: _loadGeneralAgentUpdates(),
+                  builder: (context, snapshot) {
+                    final updates = [
+                      ...(snapshot.data ?? _generalAgentFallbackUpdates()),
+                      if (trip != null) ..._dailyAgentUpdates(trip!),
+                    ].take(5).toList(growable: false);
+                    return ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: math.min(
+                          MediaQuery.sizeOf(context).height * .42,
+                          370,
+                        ),
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: updates.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) =>
+                            _NotificationUpdateTile(update: updates[index]),
+                      ),
+                    );
+                  },
+                ),
                 const SizedBox(height: 8),
                 Row(
                   children: [

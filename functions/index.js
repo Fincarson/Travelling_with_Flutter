@@ -1480,6 +1480,7 @@ async function enrichTripPlanPlaces(plan, destinationContext) {
   const enrichedItems = [];
   for (const item of plan.items) {
     const enriched = {...item};
+    enriched.imageUrl = null;
     if (shouldEnrichScheduleItem(item)) {
       try {
         const query = scheduleItemPlaceQuery(item);
@@ -1619,28 +1620,31 @@ async function previewImagesForJob(requestData, plan) {
   const fallbackImages = Array.isArray(requestData.fallbackImages) ?
     requestData.fallbackImages :
     [];
-  const itemImages = Array.isArray(plan?.items) ?
-    plan.items
-      .map((item) => item.imageUrl)
-      .filter((image) => typeof image === "string" && image.startsWith("https://")) :
-    [];
   const itemQueries = Array.isArray(plan?.items) ?
     plan.items
       .filter(shouldEnrichScheduleItem)
       .map((item) => `${scheduleItemPlaceQuery(item)} ${requestData.place?.name}`)
       .slice(0, 6) :
     [];
+  const preferenceQueries = previewPreferenceImageQueries({
+    destination: requestData.place?.name,
+    preferences: requestData.preferences,
+  });
   const searchedImages = [];
-  for (const query of itemQueries) {
-    searchedImages.push(...await fetchWikimediaPreviewImages(query));
+  for (const query of [
+    ...preferenceQueries,
+    ...itemQueries,
+    requestData.place?.name,
+  ]) {
+    searchedImages.push(...await fetchDestinationPreviewImages(query));
   }
   if (!searchedImages.length) {
     searchedImages.push(
-      ...await fetchWikimediaPreviewImages(requestData.place?.name),
+        ...await fetchDestinationPreviewImages(requestData.place?.name),
     );
   }
   const seen = new Set();
-  return [...itemImages, ...searchedImages, ...fallbackImages]
+  return [...searchedImages, ...fallbackImages]
     .filter((image) => typeof image === "string" && image.startsWith("https://"))
     .filter((image) => {
       if (seen.has(image)) return false;
@@ -1650,15 +1654,74 @@ async function previewImagesForJob(requestData, plan) {
     .slice(0, 8);
 }
 
+function previewPreferenceImageQueries({destination, preferences}) {
+  const base = String(destination ?? "").trim();
+  if (!base || !Array.isArray(preferences)) return [];
+  const seen = new Set();
+  return preferences
+    .map((preference) => String(preference ?? "").trim())
+    .filter((preference) => {
+      if (preference.length < 2) return false;
+      const lower = preference.toLowerCase();
+      if (lower.startsWith("ai focus:")) return false;
+      if (seen.has(lower)) return false;
+      seen.add(lower);
+      return true;
+    })
+    .slice(0, 5)
+    .map((preference) => `${base} ${preference} travel`);
+}
+
 async function firstPreviewImageForQueries(queries) {
   for (const query of queries) {
-    const images = await fetchWikimediaPreviewImages(query);
+    const images = await fetchDestinationPreviewImages(query);
     if (images.length) return images[0];
   }
   return null;
 }
 
-async function fetchWikimediaPreviewImages(destination) {
+async function fetchDestinationPreviewImages(destination, limit = 8) {
+  const googleImages = await fetchGooglePreviewImages(destination, limit);
+  if (googleImages.length) return googleImages;
+  return fetchWikimediaPreviewImages(destination, limit);
+}
+
+async function fetchGooglePreviewImages(destination, limit = 8) {
+  const query = `${String(destination ?? "").trim()} travel landmark`.trim();
+  const apiKey = String(process.env.GOOGLE_CUSTOM_SEARCH_API_KEY ?? "").trim();
+  const cx = String(process.env.GOOGLE_CUSTOM_SEARCH_CX ?? "").trim();
+  if (!query || !apiKey || !cx) return [];
+
+  const url = new URL("https://www.googleapis.com/customsearch/v1");
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("cx", cx);
+  url.searchParams.set("searchType", "image");
+  url.searchParams.set("q", query);
+  url.searchParams.set("num", String(Math.min(Math.max(limit, 1), 10)));
+  url.searchParams.set("safe", "active");
+  url.searchParams.set("imgType", "photo");
+
+  try {
+    const response = await fetch(url, {
+      headers: {"Accept": "application/json"},
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return [];
+    const body = await response.json();
+    return (Array.isArray(body.items) ? body.items : [])
+      .map((item) => item.link)
+      .filter(isPreviewImageUrl)
+      .slice(0, limit);
+  } catch (error) {
+    logger.warn("Google preview image search failed", {
+      destination,
+      message: error?.message,
+    });
+    return [];
+  }
+}
+
+async function fetchWikimediaPreviewImages(destination, limit = 8) {
   const query = `${String(destination ?? "").trim()} travel landmark`.trim();
   if (!query) return [];
 
@@ -1689,7 +1752,7 @@ async function fetchWikimediaPreviewImages(destination) {
       .flatMap((page) => Array.isArray(page.imageinfo) ? page.imageinfo : [])
       .map((info) => info.thumburl ?? info.url)
       .filter(isPreviewImageUrl)
-      .slice(0, 8);
+      .slice(0, limit);
   } catch (error) {
     logger.warn("Preview image search failed", {
       destination,
@@ -1712,6 +1775,42 @@ function publicTripPreviewError(error) {
   if (error instanceof HttpsError) return error.message;
   return "AI could not finish the itinerary preview. Please try again.";
 }
+
+exports.searchDestinationImages = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    requireAuthenticatedUid(request, "Sign in to search trip images.");
+    const destination = String(request.data?.destination ?? "").trim();
+    const limit = Math.min(
+        Math.max(Number(request.data?.limit ?? 8) || 8, 1),
+        10,
+    );
+    if (destination.length < 2) {
+      throw new HttpsError("invalid-argument", "Destination is required.");
+    }
+    const preferences = Array.isArray(request.data?.preferences) ?
+      request.data.preferences :
+      [];
+    const queries = [
+      ...previewPreferenceImageQueries({destination, preferences}),
+      destination,
+    ];
+    const images = [];
+    const seen = new Set();
+    for (const query of queries) {
+      const results = await fetchDestinationPreviewImages(query, limit);
+      for (const image of results) {
+        if (seen.has(image)) continue;
+        seen.add(image);
+        images.push(image);
+        if (images.length >= limit) return {images};
+      }
+    }
+    return {images};
+  },
+);
 
 exports.chatWithAssistant = onCall(
   {
