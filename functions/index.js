@@ -14,8 +14,11 @@ const {randomInt} = require("crypto");
 
 admin.initializeApp();
 
-const openAiChatModel = "gpt-5.4-mini";
-const openAiItineraryModel = "gpt-5.5";
+// Real OpenAI model IDs. The previous "gpt-5.4-mini"/"gpt-5.5" do not exist,
+// so every Responses API call returned 400 and the AI failed instantly.
+// These support the reasoning.effort / text.verbosity params used below.
+const openAiChatModel = "gpt-5-mini";
+const openAiItineraryModel = "gpt-5";
 const openAiTimeoutMs = 30000;
 const geoapifyApiKeySecret = defineSecret("GEOAPIFY_API_KEY");
 const openAiApiKeySecret = defineSecret("OPENAI_API_KEY");
@@ -72,6 +75,57 @@ function safeShortStrings(value, {limit = 20, maxLength = 120} = {}) {
       .slice(0, limit)
       .map((item) => String(item ?? "").trim())
       .filter((item) => item.length > 0 && item.length <= maxLength);
+}
+
+function favoritePlaceId(value) {
+  return String(value ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, "-")
+      .replace(/^-+|-+$/g, "");
+}
+
+function cleanFavoritePlaces(value) {
+  if (!Array.isArray(value) || value.length > 50) {
+    throw new HttpsError(
+        "invalid-argument",
+        "Favorite places must be a list of 50 places or fewer.",
+    );
+  }
+  return value.map((place) => {
+    const raw = place && typeof place === "object" ? place : {};
+    const name = String(raw.name ?? "").trim();
+    const id = String(raw.id ?? favoritePlaceId(name)).trim();
+    if (!id || id.length > 128 || !name || name.length > 160) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Favorite places must include a valid id and name.",
+      );
+    }
+    return {
+      id,
+      name,
+      description: String(raw.description ?? "").trim().slice(0, 500),
+      imageUrl: String(raw.imageUrl ?? "").trim().slice(0, 1000),
+      tags: safeShortStrings(raw.tags, {limit: 12, maxLength: 40}),
+    };
+  });
+}
+
+function cleanFavoriteTripIds(value) {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new HttpsError(
+        "invalid-argument",
+        "Favorite trips must be a list of 100 trips or fewer.",
+    );
+  }
+  return [...new Set(
+      value
+          .map((item) => String(item ?? "").trim())
+          .filter((item) =>
+            item.length > 0 && item.length <= 128 && !item.includes("/"),
+          ),
+  )].sort();
 }
 
 async function requireTripEditor(request, tripId) {
@@ -244,6 +298,7 @@ const travelAssistantInstructions = [
 
 const tripPlanInstructions = [
   "Generate a practical travel schedule as strict JSON only.",
+  "Use 24-hour time format like '19:30' (zero-padded HH:mm) for every schedule time. Never use AM/PM.",
   "Use current attraction names for the destination.",
   "Keep costs realistic but approximate.",
   "Treat selected tags and custom preference tags as concrete itinerary requirements, not decorative labels.",
@@ -269,6 +324,7 @@ const tripPlanInstructions = [
   "Never suggest a plane for short regional travel such as Hsinchu to Taipei.",
   "Use current-known attraction names, transportation options, ticket prices, and local food costs.",
   "Use specific real place names or clearly named local areas. Do not use generic stop titles like \"signature landmark visit\", \"historic district walk\", \"scenic viewpoint stop\", or \"local scene stop\" unless the title also includes the actual venue or district name.",
+  "Every schedule item title must name a specific real place, venue, neighborhood, station, market, or street at the destination. Even transfer/movement steps must name where they go (for example, \"Walk to Nishiki Market\", not \"Move to the next area\").",
   "When the destination name has multiple comma-separated parts, keep enough administrative context to avoid choosing a different city with the same name.",
   "For mappable sightseeing, food, shopping, museum, cafe, beach, hiking, and temple stops, include address, latitude, longitude, and imageUrl when you can; use null only for non-place reminders, uncertain transport, or unknown coordinates.",
   "When live data may vary, mark times, prices, and operator details as approximate and tell the user to confirm before departure.",
@@ -1761,17 +1817,46 @@ exports.recommendDestinations = onCall(
   },
 );
 
+exports.saveUserFavorites = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const uid = requireAuthenticatedUid(
+        request,
+        "Sign in to update favorites.",
+    );
+    const favoritePlaces = cleanFavoritePlaces(request.data?.favoritePlaces);
+    const favoriteTripIds = cleanFavoriteTripIds(
+        request.data?.favoriteTripIds,
+    );
+
+    await admin.firestore().collection("travel_users").doc(uid).set({
+      favoritePlaces,
+      favoriteTripIds,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, {merge: true});
+
+    return {
+      favoritePlaceCount: favoritePlaces.length,
+      favoriteTripCount: favoriteTripIds.length,
+    };
+  },
+);
+
 exports.generateTripPlan = onCall(
   {
     region: "us-central1",
-    timeoutSeconds: 120,
+    // Itinerary creation is pure AI with no client fallback. Use the gen-2
+    // maximum (3600s / 60 min) so the model is effectively never cut off.
+    timeoutSeconds: 3600,
     memory: "512MiB",
     secrets: [openAiApiKeySecret, geoapifyApiKeySecret],
   },
   async (request) => {
     requireAuthenticatedUid(request, "Sign in to generate a trip.");
     const plan = await generateTripPlanFromRequest(request.data ?? {}, {
-      timeoutMs: 90000,
+      timeoutMs: 3500000,
     });
     return {plan};
   },
@@ -1811,7 +1896,9 @@ exports.runTripPreviewJob = onDocumentCreated(
   {
     region: "us-central1",
     document: "travel_users/{userId}/tripPreviewJobs/{jobId}",
-    timeoutSeconds: 120,
+    // Background itinerary generation: use the event-function maximum (540s)
+    // so the model is not cut off.
+    timeoutSeconds: 540,
     memory: "512MiB",
     secrets: [openAiApiKeySecret, geoapifyApiKeySecret],
   },
@@ -1840,7 +1927,7 @@ exports.runTripPreviewJob = onDocumentCreated(
     try {
       const requestData = data.request ?? {};
       const plan = await generateTripPlanFromRequest(requestData, {
-        timeoutMs: 90000,
+        timeoutMs: 520000,
       });
       const images = await previewImagesForJob(requestData, plan);
       await jobRef.set({
@@ -1868,6 +1955,7 @@ exports.runTripPreviewJob = onDocumentCreated(
 exports.generateScheduleStop = onCall(
   {
     region: "us-central1",
+    timeoutSeconds: 3600,
     secrets: [openAiApiKeySecret],
   },
   async (request) => {
@@ -1892,9 +1980,12 @@ exports.generateScheduleStop = onCall(
     const item = await createStructuredResponse({
       instructions: [
         "Generate exactly one practical schedule stop as strict JSON only.",
-        "Fit it into the requested trip day without duplicating existing stops.",
+        "Honor the user's request precisely: if they name a type of place (e.g. a conveyor-belt/rolling sushi restaurant, a specific cuisine, a museum), the activity title MUST be a specific real named venue of that type at the destination — never echo the user's instruction back as the title and never use a generic placeholder.",
+        "Schedule it at a time that fits the activity: dinner in the evening (about 6-8 PM), lunch around midday, breakfast/cafe in the morning, nightlife at night. Do not place a dinner in the afternoon.",
+        "Use 24-hour time format like '19:30' (zero-padded HH:mm). Never use AM/PM.",
+        "Fit it into the requested trip day without duplicating existing stops, leaving realistic travel/time gaps.",
+        "Include address, latitude, longitude, and imageUrl when known; use null only when genuinely unknown.",
         "Use current local time and location only if the user asks for nearby or location-aware help.",
-        "Keep the activity title concise and specific.",
         "Return no markdown and no explanation.",
       ].join(" "),
       input: {
@@ -1924,7 +2015,7 @@ exports.generateScheduleStop = onCall(
 exports.generateDayPlanEdit = onCall(
   {
     region: "us-central1",
-    timeoutSeconds: 30,
+    timeoutSeconds: 3600,
     secrets: [openAiApiKeySecret],
   },
   async (request) => {
@@ -1973,10 +2064,13 @@ exports.generateDayPlanEdit = onCall(
     const result = await createStructuredResponse({
       instructions: [
         "Edit one day of a travel itinerary and return strict JSON only.",
+        "Honor the user's placeRequest precisely: resolve it to a specific real named venue of the requested type at the destination (e.g. an actual conveyor-belt/rolling sushi restaurant), and use that real name as the activity title. Never echo the user's instruction text as the title and never use a generic placeholder.",
+        "Schedule the new place at a time that suits it: dinner in the evening (about 6-8 PM), lunch midday, breakfast/cafe morning, nightlife at night. Do not place a dinner in the afternoon.",
+        "Use 24-hour time format like '19:30' (zero-padded HH:mm), consistent with the rest of the day. Never use AM/PM.",
         "Judge whether the requested place realistically fits the day.",
         "Consider route distance, schedule density, opening hours, and travel time.",
         "If it does not fit, set feasible=false and preserve the existing day.",
-        "If it fits, return the complete revised day in practical time order.",
+        "If it fits, return the complete revised day in practical time order, including address/latitude/longitude/imageUrl for the new place when known.",
         "Return no markdown or explanation outside the JSON fields.",
       ].join(" "),
       input: {
@@ -2017,7 +2111,7 @@ exports.generateDayPlanEdit = onCall(
 exports.generateTransportRecommendations = onCall(
   {
     region: "us-central1",
-    timeoutSeconds: 45,
+    timeoutSeconds: 3600,
     secrets: [openAiApiKeySecret],
   },
   async (request) => {

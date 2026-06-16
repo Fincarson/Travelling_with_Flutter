@@ -43,18 +43,20 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('place details use a sliding responsive panel', (tester) async {
+  testWidgets('place card opens details and keeps add action', (tester) async {
     await pumpHome(tester);
-    final details = find.widgetWithText(OutlinedButton, 'Details').first;
-    await tester.ensureVisible(details);
+    expect(find.widgetWithText(OutlinedButton, 'Details'), findsNothing);
+
+    final card = find.byKey(const ValueKey('recommended-place-kyoto-japan'));
+    await tester.ensureVisible(card);
     final scrollable = find
-        .ancestor(of: details, matching: find.byType(Scrollable))
+        .ancestor(of: card, matching: find.byType(Scrollable))
         .first;
     await tester.drag(scrollable, const Offset(0, -160));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(details);
+    await tester.ensureVisible(card);
     await tester.pumpAndSettle();
-    await tester.tap(details);
+    await tester.tap(card);
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.byType(SlideTransition), findsWidgets);

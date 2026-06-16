@@ -4,6 +4,21 @@ import 'package:flutter_app/core/performance/app_performance.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _favoriteTrip = Trip(
+  id: 'upcoming',
+  destination: 'Taipei',
+  startDate: '2026-07-10',
+  endDate: '2026-07-14',
+  budget: 1200,
+  spent: 450,
+  numOfTravelers: 1,
+  status: TripStatus.upcoming,
+  images: [],
+  items: [],
+  bookings: [],
+  checklist: [],
+);
+
 void main() {
   const upcoming = Trip(
     id: 'upcoming',
@@ -123,6 +138,111 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('sorts upcoming trips by latest date and spending', (
+    tester,
+  ) async {
+    await pumpTrips(tester);
+
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('trip-upcoming'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey('trip-friends'))).dy,
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('trip-filter-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('trip-sort-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Latest first').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('trip-friends'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey('trip-upcoming'))).dy,
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('trip-sort-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Highest spending').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('trip-friends'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey('trip-upcoming'))).dy,
+      ),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('favorite trip heart updates immediately and stays selected', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final performance = AppPerformanceController();
+    await tester.pumpWidget(
+      PerformanceScope(
+        controller: performance,
+        child: MaterialApp(
+          theme: TravelAgentTheme.light(),
+          home: const _FavoriteTripsHost(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final card = find.byKey(const ValueKey('trip-upcoming'));
+    final favoriteButton = find.descendant(
+      of: card,
+      matching: find.byTooltip('Favorite trip'),
+    );
+    await tester.tap(favoriteButton);
+    await tester.pump();
+
+    expect(
+      find.descendant(of: card, matching: find.byIcon(Icons.favorite_rounded)),
+      findsOneWidget,
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(of: card, matching: find.byIcon(Icons.favorite_rounded)),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('grid view can be selected on a phone and hides favorite heart', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final performance = AppPerformanceController();
+    await tester.pumpWidget(
+      PerformanceScope(
+        controller: performance,
+        child: MaterialApp(
+          theme: TravelAgentTheme.light(),
+          home: const _FavoriteTripsHost(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byTooltip('Favorite trip'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Grid view'));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Favorite trip'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('swiping either direction requires deletion confirmation', (
     tester,
   ) async {
@@ -171,6 +291,38 @@ void main() {
     expect(find.byKey(const ValueKey('trip-tab-past')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+class _FavoriteTripsHost extends StatefulWidget {
+  const _FavoriteTripsHost();
+
+  @override
+  State<_FavoriteTripsHost> createState() => _FavoriteTripsHostState();
+}
+
+class _FavoriteTripsHostState extends State<_FavoriteTripsHost> {
+  var favoriteTripIds = <String>[];
+
+  @override
+  Widget build(BuildContext context) {
+    return TripsScreen(
+      trips: const [_favoriteTrip],
+      memories: const [],
+      onCreate: _doNothing,
+      onOpenTrip: (_) {},
+      onStartTrip: (_) {},
+      onDeleteTrip: (_) {},
+      favoriteTripIds: favoriteTripIds,
+      onToggleFavoriteTrip: (trip) async {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        setState(() {
+          final ids = {...favoriteTripIds};
+          if (!ids.add(trip.id)) ids.remove(trip.id);
+          favoriteTripIds = ids.toList()..sort();
+        });
+      },
+    );
+  }
 }
 
 class _DeleteTripsHost extends StatefulWidget {

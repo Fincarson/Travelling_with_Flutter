@@ -214,7 +214,6 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
   @override
   Widget build(BuildContext context) {
     final performance = PerformanceScope.settingsOf(context);
-    final title = _mainPageTitle(widget.location);
     final headerAction = _headerAction(context, widget.location);
     _publishBottomNav();
     _restoreStuckSlideIfNeeded();
@@ -239,17 +238,8 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
                   ),
               child: Column(
                 children: [
-                  if (title != null)
-                    _MainPageHeader(
-                      title: title,
-                      action: widget.location == '/profile'
-                          ? IconButton(
-                              tooltip: appText(context, 'Settings'),
-                              onPressed: () => context.go('/profile/settings'),
-                              icon: const Icon(Icons.settings_rounded),
-                            )
-                          : headerAction,
-                    ),
+                  if (headerAction != null)
+                    _MainPageHeader(action: headerAction),
                   Expanded(
                     child: widget.appState._performanceBoundary(
                       widget.navigationShell,
@@ -291,6 +281,14 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
   }
 
   Widget? _headerAction(BuildContext context, String location) {
+    if (location == '/profile') {
+      return IconButton(
+        tooltip: appText(context, 'Settings'),
+        onPressed: () => context.go('/profile/settings'),
+        icon: const Icon(Icons.settings_rounded),
+      );
+    }
+
     if (location == '/chat' && !widget.appState._isChatRoomOpen) {
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -464,13 +462,12 @@ String? _parentLocation(String location) {
 }
 
 class _MainPageHeader extends StatelessWidget {
-  const _MainPageHeader({required this.title, this.action});
+  const _MainPageHeader({required this.action});
 
   static const height = 40.0;
   static const verticalPadding = 8.0;
 
-  final String title;
-  final Widget? action;
+  final Widget action;
 
   @override
   Widget build(BuildContext context) {
@@ -490,34 +487,10 @@ class _MainPageHeader extends StatelessWidget {
           color: pageColor,
           child: SizedBox(
             height: height,
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    appText(context, title),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                if (action != null) action!,
-              ],
-            ),
+            child: Align(alignment: Alignment.centerRight, child: action),
           ),
         ),
       ),
     );
   }
-}
-
-String? _mainPageTitle(String location) {
-  return switch (location) {
-    '/' => 'Home',
-    '/trips' => 'Trips',
-    '/chat' => 'Chat',
-    '/profile' => 'Profile',
-    _ => null,
-  };
 }

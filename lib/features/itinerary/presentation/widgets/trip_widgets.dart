@@ -1,6 +1,6 @@
 part of travel_agent_app;
 
-/// Two-option view toggle: 1 card per row or 2 cards per row.
+/// Two-option view toggle for list or grid layouts.
 class LayoutColumnsToggle extends StatelessWidget {
   const LayoutColumnsToggle({
     required this.columns,
@@ -26,7 +26,9 @@ class LayoutColumnsToggle extends StatelessWidget {
           backgroundColor: selected
               ? scheme.primary
               : scheme.surfaceContainerHigh,
-          foregroundColor: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
+          foregroundColor: selected
+              ? scheme.onPrimary
+              : scheme.onSurfaceVariant,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
@@ -38,9 +40,9 @@ class LayoutColumnsToggle extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        button(1, Icons.view_agenda_rounded, 'One per row'),
+        button(1, Icons.view_agenda_rounded, 'List view'),
         const SizedBox(width: 8),
-        button(2, Icons.grid_view_rounded, 'Two per row'),
+        button(2, Icons.grid_view_rounded, 'Grid view'),
       ],
     );
   }
@@ -746,6 +748,7 @@ class TripListCard extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        final ultraCompact = constraints.maxWidth < 220;
         final compact = constraints.maxWidth < 520;
         return Material(
           key: ValueKey('trip-card-${trip.id}'),
@@ -757,7 +760,13 @@ class TripListCard extends StatelessWidget {
           child: InkWell(
             onTap: onTap,
             child: Padding(
-              padding: EdgeInsets.all(compact ? 14 : 18),
+              padding: EdgeInsets.all(
+                ultraCompact
+                    ? 10
+                    : compact
+                    ? 14
+                    : 18,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -765,9 +774,13 @@ class TripListCard extends StatelessWidget {
                     children: [
                       _TripListAvatar(
                         image: imageAt(0),
-                        size: compact ? 44 : 50,
+                        size: ultraCompact
+                            ? 36
+                            : compact
+                            ? 44
+                            : 50,
                       ),
-                      const SizedBox(width: 12),
+                      SizedBox(width: ultraCompact ? 8 : 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -778,54 +791,73 @@ class TripListCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 color: scheme.onSurface,
-                                fontSize: compact ? 18 : 20,
+                                fontSize: ultraCompact
+                                    ? 15
+                                    : compact
+                                    ? 18
+                                    : 20,
                                 fontWeight: FontWeight.w900,
                               ),
                             ),
-                            const SizedBox(height: 3),
-                            _TripDateTravelerLine(
-                              dates: trip.startDate == trip.endDate
-                                  ? trip.startDate
-                                  : '${trip.startDate} to ${trip.endDate}',
-                              travelerCount: trip.numOfTravelers,
-                              dateStyle: TextStyle(
-                                color: scheme.onSurfaceVariant,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
+                            if (!ultraCompact) ...[
+                              const SizedBox(height: 3),
+                              _TripDateTravelerLine(
+                                dates: trip.startDate == trip.endDate
+                                    ? trip.startDate
+                                    : '${trip.startDate} to ${trip.endDate}',
+                                travelerCount: trip.numOfTravelers,
+                                dateStyle: TextStyle(
+                                  color: scheme.onSurfaceVariant,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                                travelerForeground: const Color(0xFF355872),
+                                travelerBackground: const Color(
+                                  0xFFB6D8F2,
+                                ).withValues(alpha: .55),
+                                compactBreakpoint: compact ? 245 : 310,
                               ),
-                              travelerForeground: const Color(0xFF355872),
-                              travelerBackground: const Color(
-                                0xFFB6D8F2,
-                              ).withValues(alpha: .55),
-                              compactBreakpoint: compact ? 245 : 310,
-                            ),
+                            ],
                           ],
                         ),
                       ),
-                      const SizedBox(width: 10),
                       if (onToggleFavorite != null)
-                        IconButton(
-                          tooltip: favorite
-                              ? 'Remove favorite trip'
-                              : 'Favorite trip',
-                          onPressed: onToggleFavorite,
-                          icon: Icon(
-                            favorite
-                                ? Icons.favorite_rounded
-                                : Icons.favorite_border_rounded,
-                            color: favorite
-                                ? scheme.error
-                                : scheme.onSurfaceVariant,
+                        Padding(
+                          padding: const EdgeInsets.only(left: 10),
+                          child: IconButton(
+                            tooltip: appText(
+                              context,
+                              favorite
+                                  ? 'Remove favorite trip'
+                                  : 'Favorite trip',
+                            ),
+                            onPressed: onToggleFavorite,
+                            icon: Icon(
+                              favorite
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
+                              color: favorite
+                                  ? scheme.error
+                                  : scheme.onSurfaceVariant,
+                            ),
                           ),
                         ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: ultraCompact ? 10 : 16),
                   SizedBox(
-                    height: compact ? 112 : 150,
+                    height: ultraCompact
+                        ? 82
+                        : compact
+                        ? 112
+                        : 150,
                     child: Row(
                       children: [
-                        for (var index = 0; index < 3; index++) ...[
+                        for (
+                          var index = 0;
+                          index < (ultraCompact ? 1 : 3);
+                          index++
+                        ) ...[
                           Expanded(
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(12),
@@ -844,41 +876,44 @@ class TripListCard extends StatelessWidget {
                               ),
                             ),
                           ),
-                          if (index != 2) const SizedBox(width: 8),
+                          if (!ultraCompact && index != 2)
+                            const SizedBox(width: 8),
                         ],
                       ],
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _TripListStat(
-                          value: _displayMoney(
-                            context,
-                            trip.spent,
-                            trip.currency,
+                  if (!ultraCompact) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _TripListStat(
+                            value: _displayMoney(
+                              context,
+                              trip.spent,
+                              trip.currency,
+                            ),
+                            label: 'SPENT',
                           ),
-                          label: 'SPENT',
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _TripListStat(
-                          value: '${trip.items.length}',
-                          label: 'PLACES',
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _TripListStat(
+                            value: '${trip.items.length}',
+                            label: 'PLACES',
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _TripListStat(
-                          value: '${trip.bookings.length}',
-                          label: 'BOOKINGS',
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _TripListStat(
+                            value: '${trip.bookings.length}',
+                            label: 'BOOKINGS',
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
+                      ],
+                    ),
+                  ],
+                  SizedBox(height: ultraCompact ? 10 : 14),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
@@ -886,20 +921,24 @@ class TripListCard extends StatelessWidget {
                           ? onTap
                           : onStart,
                       style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48),
+                        minimumSize: Size.fromHeight(ultraCompact ? 40 : 48),
                         backgroundColor: const Color(0xFF3D5A6C),
                         foregroundColor: Colors.white,
                         shape: const StadiumBorder(),
-                        textStyle: const TextStyle(
-                          fontSize: 11,
+                        textStyle: TextStyle(
+                          fontSize: ultraCompact ? 10 : 11,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 1,
                         ),
                       ),
-                      child: Text(actionLabel),
+                      child: Text(
+                        appText(context, actionLabel),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
-                  if (canDelete) ...[
+                  if (canDelete && !ultraCompact) ...[
                     const SizedBox(height: 8),
                     Center(
                       child: Text(
@@ -1022,7 +1061,7 @@ class ScheduleTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    item.time,
+                    _to24HourLabel(item.time),
                     style: const TextStyle(
                       fontSize: 11,
                       color: _secondary,

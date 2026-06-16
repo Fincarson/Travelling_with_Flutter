@@ -42,7 +42,8 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final _query = TextEditingController();
   List<Destination> _recommendations = const [];
-  final Map<String, bool> _pendingFavoriteStates = {};
+  final Map<String, bool> _favoriteOverrides = {};
+  final Set<String> _busyFavoriteIds = {};
   var _recommendationsLoading = true;
   var _columns = 1;
 
@@ -73,12 +74,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void didUpdateWidget(covariant DashboardScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _pendingFavoriteStates.removeWhere((id, desiredState) {
+    _favoriteOverrides.removeWhere((id, desiredState) {
       final persistedState = widget.user.favoritePlaces.any(
         (place) => place.id == id,
       );
       return persistedState == desiredState;
     });
+    _busyFavoriteIds.removeWhere((id) => !_favoriteOverrides.containsKey(id));
     if (oldWidget.user.interests != widget.user.interests ||
         oldWidget.user.favoritePlaces != widget.user.favoritePlaces ||
         oldWidget.memories != widget.memories) {
@@ -207,18 +209,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ],
           const SizedBox(height: 28),
-          SectionHeader(
-            title: 'Places picked for you',
-            action: _recommendationsLoading ? 'Personalizing...' : 'Refresh',
-            onTap: _recommendationsLoading ? null : _loadRecommendations,
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: LayoutColumnsToggle(
-              columns: _columns,
-              onChanged: _setColumns,
-            ),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            alignment: WrapAlignment.spaceBetween,
+            children: [
+              Text(
+                appText(context, 'Places picked for you').toUpperCase(),
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.2,
+                ),
+              ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  TextButton(
+                    onPressed: _recommendationsLoading
+                        ? null
+                        : _loadRecommendations,
+                    child: Text(
+                      appText(
+                        context,
+                        _recommendationsLoading
+                            ? 'Personalizing...'
+                            : 'Refresh',
+                      ),
+                    ),
+                  ),
+                  LayoutColumnsToggle(
+                    columns: _columns,
+                    onChanged: _setColumns,
+                  ),
+                ],
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           LayoutBuilder(
@@ -237,7 +266,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: _RecommendedPlaceCard(
                         destination: destination,
                         favorite: _isFavorite(destination),
-                        favoriteBusy: _pendingFavoriteStates.containsKey(
+                        favoriteBusy: _busyFavoriteIds.contains(
                           _favoritePlaceId(destination.name),
                         ),
                         onFavorite: () => _toggleFavorite(destination),
@@ -256,7 +285,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool _isFavorite(Destination destination) {
     final id = _favoritePlaceId(destination.name);
-    return _pendingFavoriteStates[id] ??
+    return _favoriteOverrides[id] ??
         widget.user.favoritePlaces.any((place) => place.id == id);
   }
 
@@ -265,21 +294,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (callback == null) return;
     final id = _favoritePlaceId(destination.name);
     final desiredState = !_isFavorite(destination);
-    setState(() => _pendingFavoriteStates[id] = desiredState);
+    setState(() {
+      _favoriteOverrides[id] = desiredState;
+      _busyFavoriteIds.add(id);
+    });
     try {
       await callback(destination);
+      if (!mounted) return;
+      setState(() => _busyFavoriteIds.remove(id));
     } catch (_) {
       if (!mounted) return;
+      setState(() {
+        _favoriteOverrides.remove(id);
+        _busyFavoriteIds.remove(id);
+      });
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(content: Text('Could not update favorite place.')),
+          SnackBar(
+            content: Text(appText(context, 'Could not update favorite place.')),
+          ),
         );
-    } finally {
-      // Always drop the optimistic flag so the card reflects the real saved
-      // state (widget.user.favoritePlaces); leaving it set masks unlikes and
-      // desyncs from the profile favorites list.
-      if (mounted) setState(() => _pendingFavoriteStates.remove(id));
     }
   }
 
@@ -288,7 +323,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     showGeneralDialog<void>(
       context: context,
       barrierDismissible: true,
-      barrierLabel: 'Close place details',
+      barrierLabel: appText(context, 'Close place details'),
       barrierColor: Colors.black.withValues(alpha: .42),
       transitionDuration: settings.animationsEnabled
           ? settings.transitionDuration
@@ -359,6 +394,7 @@ class _RecommendedPlaceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Material(
+      key: ValueKey('recommended-place-${_favoritePlaceId(destination.name)}'),
       color: scheme.surface,
       elevation: 1,
       shadowColor: Colors.black.withValues(alpha: .08),
@@ -367,110 +403,106 @@ class _RecommendedPlaceCard extends StatelessWidget {
         side: BorderSide(color: scheme.outlineVariant),
       ),
       clipBehavior: Clip.antiAlias,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 560;
-          final image = ClipRRect(
-            borderRadius: compact
-                ? BorderRadius.zero
-                : const BorderRadius.horizontal(left: Radius.circular(20)),
-            child: Image.network(
-              destination.image,
-              height: compact ? 170 : 210,
-              width: compact ? double.infinity : 220,
-              fit: BoxFit.cover,
-              filterQuality: PerformanceScope.maybeSettingsOf(
-                context,
-              ).filterQuality,
-              errorBuilder: (_, __, ___) => Container(
-                color: scheme.surfaceContainer,
-                child: Icon(Icons.landscape_rounded, color: scheme.primary),
+      child: InkWell(
+        onTap: onDetails,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 560;
+            final image = ClipRRect(
+              borderRadius: compact
+                  ? BorderRadius.zero
+                  : const BorderRadius.horizontal(left: Radius.circular(20)),
+              child: Image.network(
+                destination.image,
+                height: compact ? 170 : 210,
+                width: compact ? double.infinity : 220,
+                fit: BoxFit.cover,
+                filterQuality: PerformanceScope.maybeSettingsOf(
+                  context,
+                ).filterQuality,
+                errorBuilder: (_, __, ___) => Container(
+                  color: scheme.surfaceContainer,
+                  child: Icon(Icons.landscape_rounded, color: scheme.primary),
+                ),
               ),
-            ),
-          );
-          final content = Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        destination.name,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w900,
+            );
+            final content = Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          destination.name,
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900),
                         ),
                       ),
-                    ),
-                    IconButton(
-                      key: ValueKey(
-                        'favorite-place-${_favoritePlaceId(destination.name)}',
-                      ),
-                      tooltip: favorite
-                          ? 'Remove from favorites'
-                          : 'Save place',
-                      onPressed: favoriteBusy ? null : onFavorite,
-                      icon: AnimatedSwitcher(
-                        duration: PerformanceScope.maybeSettingsOf(
+                      IconButton(
+                        key: ValueKey(
+                          'favorite-place-${_favoritePlaceId(destination.name)}',
+                        ),
+                        tooltip: appText(
                           context,
-                        ).transitionDuration,
-                        transitionBuilder: (child, animation) =>
-                            ScaleTransition(scale: animation, child: child),
-                        child: Icon(
-                          favorite
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
-                          key: ValueKey(favorite),
-                          color: favorite ? scheme.error : scheme.primary,
+                          favorite ? 'Remove from favorites' : 'Save place',
+                        ),
+                        onPressed: favoriteBusy ? null : onFavorite,
+                        icon: AnimatedSwitcher(
+                          duration: PerformanceScope.maybeSettingsOf(
+                            context,
+                          ).transitionDuration,
+                          transitionBuilder: (child, animation) =>
+                              ScaleTransition(scale: animation, child: child),
+                          child: Icon(
+                            favorite
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            key: ValueKey(favorite),
+                            color: favorite ? scheme.error : scheme.primary,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                Text(
-                  destination.description,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    height: 1.35,
+                    ],
                   ),
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    OutlinedButton(
-                      onPressed: onDetails,
-                      child: const Text('Details'),
+                  Text(
+                    destination.description,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant,
+                      height: 1.35,
                     ),
-                    FilledButton.icon(
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
                       onPressed: onAdd,
                       icon: const Icon(Icons.add_rounded, size: 18),
-                      label: const Text('Add to trip'),
+                      label: Text(appText(context, 'Add to trip')),
                     ),
-                  ],
-                ),
-              ],
-            ),
-          );
-          if (compact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [image, content],
+                  ),
+                ],
+              ),
             );
-          }
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              image,
-              Expanded(child: content),
-            ],
-          );
-        },
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [image, content],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                image,
+                Expanded(child: content),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -534,7 +566,7 @@ class _DestinationDetailsPanel extends StatelessWidget {
                         top: 12,
                         right: 12,
                         child: IconButton.filledTonal(
-                          tooltip: 'Close details',
+                          tooltip: appText(context, 'Close details'),
                           onPressed: () => Navigator.of(context).pop(),
                           icon: const Icon(Icons.close_rounded),
                         ),
@@ -582,13 +614,18 @@ class _DestinationDetailsPanel extends StatelessWidget {
                                     : Icons.favorite_border_rounded,
                               ),
                               label: Text(
-                                favorite ? 'Favorited' : 'Save place',
+                                appText(
+                                  context,
+                                  favorite ? 'Favorited' : 'Save place',
+                                ),
                               ),
                             ),
                             FilledButton.icon(
                               onPressed: onAdd,
                               icon: const Icon(Icons.add_location_alt_rounded),
-                              label: const Text('Add to a new trip'),
+                              label: Text(
+                                appText(context, 'Add to a new trip'),
+                              ),
                             ),
                           ],
                         ),
@@ -720,9 +757,12 @@ class _NotificationCenterSheet extends StatelessWidget {
                           const LabelText('Notification center'),
                           const SizedBox(height: 3),
                           Text(
-                            notificationsEnabled
-                                ? 'Daily agent notifications are ready.'
-                                : 'Notifications are off for this browser.',
+                            appText(
+                              context,
+                              notificationsEnabled
+                                  ? 'Daily agent notifications are ready.'
+                                  : 'Notifications are off for this browser.',
+                            ),
                             style: const TextStyle(
                               color: _primary,
                               fontSize: 16,

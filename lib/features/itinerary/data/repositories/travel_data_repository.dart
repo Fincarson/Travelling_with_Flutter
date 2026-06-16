@@ -64,12 +64,22 @@ class TravelDataRepository {
     String accountId, {
     required List<FavoritePlace> favoritePlaces,
     required List<String> favoriteTripIds,
-  }) {
-    return _userDoc(accountId).set({
+  }) async {
+    final data = {
       'favoritePlaces': favoritePlaces.map((place) => place.toMap()).toList(),
       'favoriteTripIds': favoriteTripIds,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
+    try {
+      await _functions.httpsCallable('saveUserFavorites').call(data);
+    } on FirebaseFunctionsException catch (error) {
+      if (error.code != 'not-found' && error.code != 'unavailable') {
+        rethrow;
+      }
+      await _userDoc(accountId).set({
+        ...data,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
   }
 
   Future<void> completeOnboarding(String accountId) {

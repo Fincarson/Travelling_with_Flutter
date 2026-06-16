@@ -35,6 +35,13 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   StreamSubscription<UserProfile?>? _userSubscription;
   StreamSubscription<List<Trip>>? _tripsSubscription;
   StreamSubscription<List<TripMemory>>? _memoriesSubscription;
+  final _previewJobs = TripPreviewJobService();
+  StreamSubscription<List<TripPreviewJob>>? _previewJobsSubscription;
+  // Jobs already turned into trips, so the watcher never double-creates.
+  final Set<String> _handledPreviewJobIds = {};
+  // Destination of a background itinerary job currently generating (drives the
+  // "Generating..." banner). Null when nothing is running.
+  String? _generatingTripDestination;
   var _isLoading = true;
   var _loadingMessage = 'Checking account updates...';
   var _exchangeData = CurrencyExchangeData.fallback;
@@ -58,12 +65,12 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   Trip? _activeTrip;
   String? _pendingTripAiPrompt;
   String? _suggestedDestination;
+  UserProfile? _pendingFavoritesProfile;
   String? _accountId;
   String? _activeChatId;
   String? _pendingNotificationPath;
   String? _loadError;
   var _helpOpen = false;
-  var _tutorialDismissedForSession = false;
 
   int get _cachedTabIndex => switch (_tab) {
     _NavTab.home => 0,
@@ -205,17 +212,29 @@ class _TravelAgentAppState extends State<TravelAgentApp>
         .listen(
           (profile) {
             if (!mounted || profile == null) return;
-            final normalizedRemote = profile.currencySettingsVersion < 1
+            var normalizedRemote = profile.currencySettingsVersion < 1
                 ? profile.copyWith(
                     displayCurrencyCode: AppCurrency.fallbackCurrencyCode,
                     currencyUpdateMode: CurrencyUpdateMode.automatic,
                     currencySettingsVersion: 1,
                   )
                 : profile;
+            final pendingFavorites = _pendingFavoritesProfile;
+            if (pendingFavorites != null) {
+              if (_sameFavorites(normalizedRemote, pendingFavorites)) {
+                _pendingFavoritesProfile = null;
+              } else {
+                normalizedRemote = normalizedRemote.copyWith(
+                  favoritePlaces: pendingFavorites.favoritePlaces,
+                  favoriteTripIds: pendingFavorites.favoriteTripIds,
+                );
+              }
+            }
             setState(() {
               _user = normalizedRemote;
               _loadError = null;
             });
+            _notifyRoutes();
             unawaited(_syncTripReminders());
             unawaited(_syncPushTokenRegistration());
             unawaited(
@@ -288,6 +307,109 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             setState(() => _loadError = 'Could not sync trip memories: $error');
           },
         );
+
+    _previewJobsSubscription?.cancel();
+    _previewJobsSubscription = _previewJobs
+        .watchRecentJobs(accountId)
+        .listen(
+          _handlePreviewJobs,
+          onError: (Object _) {},
+        );
+  }
+
+  // Background itinerary generation: watch the user's preview jobs, show a
+  // "Generating..." banner while one runs, and auto-create + notify when ready.
+  void _handlePreviewJobs(List<TripPreviewJob> jobs) {
+    if (!mounted) return;
+    final active = jobs.where((job) => job.isActive).toList();
+    final nextGenerating = active.isEmpty
+        ? null
+        : (active.first.place?.name ?? 'your trip');
+    if (nextGenerating != _generatingTripDestination) {
+      setState(() => _generatingTripDestination = nextGenerating);
+    }
+    for (final job in jobs) {
+      if (job.isReady && !_handledPreviewJobIds.contains(job.id)) {
+        _handledPreviewJobIds.add(job.id);
+        unawaited(_finishPreviewJob(job));
+      }
+    }
+  }
+
+  Future<void> _finishPreviewJob(TripPreviewJob job) async {
+    final accountId = _accountId ?? widget.account.uid;
+    final trip = _tripFromPreviewJob(job);
+    final saved = await _saveTripOnline(trip);
+    // Clear the job either way so it does not linger or re-fire.
+    unawaited(_previewJobs.deleteJob(accountId, job.id));
+    if (!saved || !mounted) return;
+    await _refreshTripsFromBackend(selectTripId: trip.id);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(
+            appText(context, 'Your ${trip.destination} trip is ready.'),
+          ),
+          action: SnackBarAction(
+            label: appText(context, 'View trip'),
+            onPressed: () => _go(_tripLocation(trip.id)),
+          ),
+        ),
+      );
+  }
+
+  // Called by CreateTripScreen for AI generation. Queues a background job and
+  // returns the user to the trips list; the watcher finishes the trip.
+  Future<void> _startTripPreviewGeneration({
+    required PlaceSuggestion place,
+    required DateTime startDate,
+    required DateTime endDate,
+    required int budget,
+    required String groupType,
+    required List<String> preferences,
+    required String currency,
+    required AppDeviceContext appContext,
+    required TripStartLocation? startLocation,
+    required List<String> fallbackImages,
+    String airline = '',
+    String flightCode = '',
+  }) async {
+    setState(() => _generatingTripDestination = place.name);
+    _go('/trips');
+    try {
+      await _previewJobs.createJob(
+        accountId: _accountId ?? widget.account.uid,
+        place: place,
+        startDate: startDate,
+        endDate: endDate,
+        budget: budget,
+        groupType: groupType,
+        preferences: preferences,
+        currency: currency,
+        profileLanguage: _user.language,
+        appContext: appContext,
+        startLocation: startLocation,
+        fallbackImages: fallbackImages,
+        airline: airline,
+        flightCode: flightCode,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _generatingTripDestination = null);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              appText(context, 'Could not start trip generation: $error'),
+            ),
+          ),
+        );
+    }
   }
 
   void _openTrip(Trip trip) {
@@ -416,10 +538,12 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   // unrelated legacy field can't get the whole save rejected by the rules.
   Future<void> _persistFavorites(UserProfile updated) async {
     final previous = _user;
+    _pendingFavoritesProfile = updated;
     setState(() {
       _user = updated;
       _loadError = null;
     });
+    _notifyRoutes();
     final accountId = _accountId ?? widget.account.uid;
     await _saveLocalProfile(accountId, updated);
     try {
@@ -430,14 +554,33 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       );
     } catch (error) {
       if (!mounted) return;
+      if (_pendingFavoritesProfile == updated) {
+        _pendingFavoritesProfile = null;
+      }
       final messenger = ScaffoldMessenger.of(context);
       final message = appText(context, 'Could not update favorite.');
       setState(() => _user = previous);
+      _notifyRoutes();
       unawaited(_saveLocalProfile(accountId, previous));
       messenger
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(message)));
     }
+  }
+
+  bool _sameFavorites(UserProfile a, UserProfile b) {
+    if (a.favoritePlaces.length != b.favoritePlaces.length ||
+        a.favoriteTripIds.length != b.favoriteTripIds.length) {
+      return false;
+    }
+    final aPlaces = a.favoritePlaces.map((place) => place.id).toSet();
+    final bPlaces = b.favoritePlaces.map((place) => place.id).toSet();
+    if (aPlaces.length != bPlaces.length || !aPlaces.containsAll(bPlaces)) {
+      return false;
+    }
+    final aTrips = a.favoriteTripIds.toSet();
+    final bTrips = b.favoriteTripIds.toSet();
+    return aTrips.length == bTrips.length && aTrips.containsAll(bTrips);
   }
 
   Future<void> _rateTripMemory(
@@ -468,7 +611,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     final shouldPersist = !_user.tutorialCompleted;
     setState(() {
       _helpOpen = false;
-      _tutorialDismissedForSession = true;
     });
     if (shouldPersist) {
       await _saveProfile(_user.copyWith(tutorialCompleted: true));
@@ -561,21 +703,23 @@ class _TravelAgentAppState extends State<TravelAgentApp>
         context: context,
         barrierDismissible: false,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Change display currency?'),
+          title: Text(appText(context, 'Change display currency?')),
           content: Text(
-            'You appear to be in '
+            '${appText(context, 'You appear to be in')} '
             '${countryName == null || countryName.isEmpty ? countryCode : countryName}. '
-            'Would you like to change your display currency from '
-            '$currentCurrency to $suggestedCurrency?',
+            '${appText(context, 'Would you like to change your display currency from')} '
+            '$currentCurrency ${appText(context, 'to')} $suggestedCurrency?',
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: Text('Keep $currentCurrency'),
+              child: Text('${appText(context, 'Keep')} $currentCurrency'),
             ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: Text('Change to $suggestedCurrency'),
+              child: Text(
+                '${appText(context, 'Change to')} $suggestedCurrency',
+              ),
             ),
           ],
         ),
@@ -880,6 +1024,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     _userSubscription?.cancel();
     _tripsSubscription?.cancel();
     _memoriesSubscription?.cancel();
+    _previewJobsSubscription?.cancel();
     _bottomNavController.dispose();
     unawaited(_pushTokenService.dispose());
     unawaited(_appNotificationService.dispose());
@@ -900,14 +1045,6 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             : TravelAgentTheme.light(),
         child: Scaffold(
           resizeToAvoidBottomInset: false,
-          floatingActionButton: _isLoading
-              ? null
-              : FloatingActionButton.small(
-                  heroTag: 'global-help',
-                  tooltip: 'App help',
-                  onPressed: () => setState(() => _helpOpen = true),
-                  child: const Icon(Icons.help_outline_rounded),
-                ),
           bottomNavigationBar: _isLoading
               ? null
               : ValueListenableBuilder<_BottomNavController?>(
@@ -934,10 +1071,16 @@ class _TravelAgentAppState extends State<TravelAgentApp>
                           top: 12,
                           child: SyncBanner(message: _loadError!),
                         ),
-                      if (_helpOpen ||
-                          (_user.onboardingCompleted &&
-                              !_user.tutorialCompleted &&
-                              !_tutorialDismissedForSession))
+                      if (_generatingTripDestination != null)
+                        Positioned(
+                          left: 16,
+                          right: 16,
+                          bottom: 86,
+                          child: _GeneratingTripBanner(
+                            destination: _generatingTripDestination!,
+                          ),
+                        ),
+                      if (_helpOpen)
                         Positioned.fill(
                           child: _AppTutorialOverlay(
                             onClose: () => unawaited(_closeTutorial()),
@@ -1025,9 +1168,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
       onStartTrip: _startTrip,
       onDeleteTrip: _deleteTrip,
       favoriteTripIds: _user.favoriteTripIds,
-      onToggleFavoriteTrip: (trip) {
-        unawaited(_toggleFavoriteTrip(trip));
-      },
+      onToggleFavoriteTrip: _toggleFavoriteTrip,
       onRateMemory: _rateTripMemory,
     );
   }
@@ -1045,6 +1186,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
         _suggestedDestination = null;
         return _createTrip(trip);
       },
+      onGenerateInBackground: _startTripPreviewGeneration,
     );
   }
 
@@ -1156,15 +1298,22 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Widget _buildProfileScreen(BuildContext context) {
-    return ProfileScreen(
-      account: widget.account,
-      user: _user,
-      trips: _visibleTrips,
-      memories: _tripMemories,
-      onOpenTrip: (trip) => _go(_tripLocation(trip.id)),
-      onToggleFavoriteTrip: (trip) {
-        unawaited(_toggleFavoriteTrip(trip));
-      },
+    // Rebuild in place when routes are notified (e.g. after a favorite
+    // change). The profile lives in an inactive shell branch, which
+    // refreshListenable alone does not rebuild, so it would otherwise show
+    // stale favorites until the branch is re-navigated.
+    return ListenableBuilder(
+      listenable: _routerRefresh,
+      builder: (context, _) => ProfileScreen(
+        account: widget.account,
+        user: _user,
+        trips: _visibleTrips,
+        memories: _tripMemories,
+        onOpenTrip: (trip) => _go(_tripLocation(trip.id)),
+        onToggleFavoriteTrip: (trip) {
+          unawaited(_toggleFavoriteTrip(trip));
+        },
+      ),
     );
   }
 
@@ -1325,6 +1474,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
               onOpenTrip: _openTrip,
               onStartTrip: _startTrip,
               onDeleteTrip: _deleteTrip,
+              favoriteTripIds: _user.favoriteTripIds,
+              onToggleFavoriteTrip: _toggleFavoriteTrip,
             ),
             performance,
           ),
@@ -1391,6 +1542,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             _tab = _NavTab.home;
           }),
           onGenerate: _createTrip,
+          onGenerateInBackground: _startTripPreviewGeneration,
         );
       case _Screen.tripDetail:
         final trip = _selectedTrip;
@@ -1444,6 +1596,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
           onOpenTrip: _openTrip,
           onStartTrip: _startTrip,
           onDeleteTrip: _deleteTrip,
+          favoriteTripIds: _user.favoriteTripIds,
+          onToggleFavoriteTrip: _toggleFavoriteTrip,
         );
       case _Screen.chatList:
         return ChatListScreen(
@@ -1890,7 +2044,7 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
                       Align(
                         alignment: Alignment.centerRight,
                         child: IconButton(
-                          tooltip: 'Close tutorial',
+                          tooltip: appText(context, 'Close tutorial'),
                           onPressed: widget.onClose,
                           icon: const Icon(Icons.close_rounded),
                         ),
@@ -1916,7 +2070,7 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
                                   IconBadge(icon: step.$1, size: 72),
                                   const SizedBox(height: 24),
                                   Text(
-                                    step.$2,
+                                    appText(context, step.$2),
                                     textAlign: TextAlign.center,
                                     style: Theme.of(context)
                                         .textTheme
@@ -1925,7 +2079,7 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
                                   ),
                                   const SizedBox(height: 12),
                                   Text(
-                                    step.$3,
+                                    appText(context, step.$3),
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       color: Theme.of(
@@ -1944,7 +2098,10 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
                       Row(
                         children: [
                           Text(
-                            '${_page + 1} of ${_steps.length}',
+                            appText(
+                              context,
+                              '${_page + 1} of ${_steps.length}',
+                            ),
                             style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                           const Spacer(),
@@ -1961,9 +2118,12 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
                               );
                             },
                             child: Text(
-                              _page == _steps.length - 1
-                                  ? 'Start exploring'
-                                  : 'Next',
+                              appText(
+                                context,
+                                _page == _steps.length - 1
+                                    ? 'Start exploring'
+                                    : 'Next',
+                              ),
                             ),
                           ),
                         ],
@@ -1984,6 +2144,49 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
 /// the page background) peels upward off the top edge, uncovering the
 /// already-loaded itinerary page below, while a screen-wide plane rides the
 /// peeling edge from offscreen-bottom to offscreen-top.
+/// Persistent banner shown while a background itinerary job is generating, so
+/// the user can leave the create screen without losing progress.
+class _GeneratingTripBanner extends StatelessWidget {
+  const _GeneratingTripBanner({required this.destination});
+
+  final String destination;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      elevation: 6,
+      borderRadius: BorderRadius.circular(16),
+      color: scheme.primary,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: scheme.onPrimary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                appText(context, 'Generating your $destination trip in the background...'),
+                style: TextStyle(
+                  color: scheme.onPrimary,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _PlaneRevealTransition extends StatefulWidget {
   const _PlaneRevealTransition({required this.onCompleted});
 

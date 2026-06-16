@@ -52,7 +52,7 @@ String _favoritePlaceId(String name) {
   return name
       .trim()
       .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), '-')
       .replaceAll(RegExp(r'^-+|-+$'), '');
 }
 
@@ -266,7 +266,7 @@ class UserProfile {
       themeMode: (settings['themeMode'] as String?) ?? 'Light',
       onboardingRequired: (settings['onboardingRequired'] as bool?) ?? false,
       onboardingCompleted: (settings['onboardingCompleted'] as bool?) ?? true,
-      tutorialCompleted: (settings['tutorialCompleted'] as bool?) ?? false,
+      tutorialCompleted: (settings['tutorialCompleted'] as bool?) ?? true,
       ageRange: onboarding['ageRange'] as String?,
       travelPace: (onboarding['travelPace'] as String?) ?? 'Balanced',
       termsAcceptedVersion: legalConsent['termsVersion'] as String?,
