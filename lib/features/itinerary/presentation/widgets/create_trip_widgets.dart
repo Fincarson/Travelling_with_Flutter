@@ -581,11 +581,13 @@ class DraftStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: scheme.surfaceContainerHighest.withValues(alpha: .78),
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .45)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -594,8 +596,8 @@ class DraftStat extends StatelessWidget {
             appText(context, label).toUpperCase(),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _secondary,
+            style: TextStyle(
+              color: scheme.primary.withValues(alpha: .72),
               fontSize: 9,
               fontWeight: FontWeight.w900,
             ),
@@ -605,8 +607,8 @@ class DraftStat extends StatelessWidget {
             appText(context, value),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _primary,
+            style: TextStyle(
+              color: scheme.onSurface,
               fontSize: 11,
               fontWeight: FontWeight.w900,
             ),
@@ -747,85 +749,101 @@ class DateRangeCard extends StatelessWidget {
   }
 }
 
-class GeneratingTripPanel extends StatefulWidget {
-  const GeneratingTripPanel({super.key});
+class GeneratingTripPanel extends StatelessWidget {
+  const GeneratingTripPanel({
+    this.progress = AiTripGenerationProgress.initial,
+    super.key,
+  });
 
-  @override
-  State<GeneratingTripPanel> createState() => _GeneratingTripPanelState();
-}
+  final AiTripGenerationProgress progress;
 
-class _GeneratingTripPanelState extends State<GeneratingTripPanel> {
-  static const _steps = [
-    (icon: Icons.travel_explore, text: 'Connecting to AI travel agent...'),
-    (icon: Icons.location_on_outlined, text: 'Researching destination and local highlights...'),
-    (icon: Icons.calendar_today_outlined, text: 'Planning daily activities...'),
-    (icon: Icons.attach_money_outlined, text: 'Finding best prices and budgeting...'),
-    (icon: Icons.hotel_outlined, text: 'Building accommodation and booking suggestions...'),
-    (icon: Icons.directions_outlined, text: 'Mapping transportation routes...'),
-    (icon: Icons.checklist_outlined, text: 'Creating your packing checklist...'),
-    (icon: Icons.place_outlined, text: 'Searching for venue details and addresses...'),
-    (icon: Icons.photo_library_outlined, text: 'Finding photos for each stop...'),
-    (icon: Icons.auto_awesome_outlined, text: 'Finalizing your itinerary...'),
+  static const _icons = [
+    Icons.travel_explore,
+    Icons.public_rounded,
+    Icons.location_on_outlined,
+    Icons.calendar_today_outlined,
+    Icons.attach_money_outlined,
+    Icons.directions_outlined,
+    Icons.checklist_outlined,
+    Icons.photo_library_outlined,
+    Icons.auto_awesome_outlined,
   ];
-
-  static const _delaysMs = [0, 4000, 10000, 18000, 26000, 35000, 44000, 55000, 68000, 82000];
-
-  final List<bool> _visible = List.filled(_steps.length, false);
-  final List<Timer> _timers = [];
-
-  @override
-  void initState() {
-    super.initState();
-    for (var i = 0; i < _steps.length; i++) {
-      _timers.add(
-        Timer(Duration(milliseconds: _delaysMs[i]), () {
-          if (mounted) setState(() => _visible[i] = true);
-        }),
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    for (final t in _timers) {
-      t.cancel();
-    }
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
-    final lastVisible = _visible.lastIndexWhere((v) => v);
+    final clampedIndex = progress.stepIndex.clamp(
+      0,
+      _aiTripProgressSteps.length - 1,
+    );
+    final value = progress.value.clamp(0.0, 1.0);
     return GlassPanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const SizedBox.square(
+              SizedBox.square(
                 dimension: 36,
-                child: CircularProgressIndicator(strokeWidth: 3),
+                child: CircularProgressIndicator(strokeWidth: 3, value: value),
               ),
               const SizedBox(width: 14),
               Expanded(
-                child: Text(
-                  appText(context, 'Generating schedule...'),
-                  style: const TextStyle(fontWeight: FontWeight.w900),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      appText(context, 'Generating schedule...'),
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      appText(context, progress.status),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _secondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          for (var i = 0; i < _steps.length; i++)
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 8,
+              value: value,
+              backgroundColor: Theme.of(
+                context,
+              ).colorScheme.primary.withValues(alpha: .14),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              '${(value * 100).round()}%',
+              style: const TextStyle(
+                color: _secondary,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          for (var i = 0; i <= clampedIndex; i++)
             AnimatedSize(
               duration: const Duration(milliseconds: 280),
               curve: Curves.easeOutCubic,
-              child: _visible[i]
-                  ? _GeneratingStep(
-                      icon: _steps[i].icon,
-                      text: _steps[i].text,
-                      isActive: i == lastVisible,
-                    )
-                  : const SizedBox.shrink(),
+              child: _GeneratingStep(
+                key: ValueKey('generating-step-$i'),
+                icon: _icons[i],
+                text: _aiTripProgressSteps[i].status,
+                isActive: i == clampedIndex,
+              ),
             ),
         ],
       ),
@@ -838,6 +856,7 @@ class _GeneratingStep extends StatefulWidget {
     required this.icon,
     required this.text,
     required this.isActive,
+    super.key,
   });
 
   final IconData icon;

@@ -124,15 +124,108 @@ class _AlertRailState extends State<AlertRail> {
 
 Future<List<_DailyAgentUpdate>> _loadGeneralAgentUpdates() async {
   final updates = <_DailyAgentUpdate>[];
-  final context = await AppDeviceContextService().load();
+  final context = await AppDeviceContextService().loadCurrentLocation();
   if (context.hasLocation) {
-    final weather = await _loadLocalWeatherUpdate(context);
+    final weatherFuture = _loadLocalWeatherUpdate(context);
+    final placeFuture = _loadCurrentPlace(context);
+    final weather = await weatherFuture;
+    final place = await placeFuture;
     if (weather != null) updates.add(weather);
     updates.add(_generalRoadWatchUpdate(hasLocation: true));
+    final city = _cityLabelFromPlace(place);
+    if (city != null) {
+      updates.addAll(await _loadLocalNewsUpdates(city: city));
+    }
   } else {
     updates.addAll(_generalAgentFallbackUpdates());
   }
-  return updates.take(3).toList(growable: false);
+  return updates.take(5).toList(growable: false);
+}
+
+Future<PlaceSuggestion?> _loadCurrentPlace(AppDeviceContext context) async {
+  final latitude = context.latitude;
+  final longitude = context.longitude;
+  if (latitude == null || longitude == null) return null;
+  return GeoapifyPlacesService().reverseLocation(
+    latitude: latitude,
+    longitude: longitude,
+  );
+}
+
+String? _cityLabelFromPlace(PlaceSuggestion? place) {
+  if (place == null) return null;
+  final candidates = [
+    place.name,
+    ...place.formatted.split(',').map((part) => part.trim()),
+  ];
+  for (final candidate in candidates) {
+    final value = candidate.trim();
+    if (value.length < 3) continue;
+    final lower = value.toLowerCase();
+    if (lower.contains('city') ||
+        lower.contains('county') ||
+        lower.contains('municipality') ||
+        lower.contains('prefecture')) {
+      return value;
+    }
+  }
+  final parts = place.formatted
+      .split(',')
+      .map((part) => part.trim())
+      .where((part) => part.length >= 3)
+      .toList();
+  if (parts.length >= 2) return parts[parts.length - 2];
+  final name = place.name.split(',').first.trim();
+  return name.length >= 3 ? name : null;
+}
+
+Future<List<_DailyAgentUpdate>> _loadLocalNewsUpdates({
+  required String city,
+}) async {
+  final queryCity = city.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (queryCity.length < 3) return const [];
+  final uri = Uri.https('api.gdeltproject.org', '/api/v2/doc/doc', {
+    'query': '"$queryCity"',
+    'mode': 'ArtList',
+    'format': 'json',
+    'maxrecords': '3',
+    'sort': 'DateDesc',
+    'timespan': '7d',
+  });
+
+  final client = http.Client();
+  try {
+    final response = await client.get(uri).timeout(const Duration(seconds: 6));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return const [];
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) return const [];
+    final articles = decoded['articles'];
+    if (articles is! List) return const [];
+    final seen = <String>{};
+    final updates = <_DailyAgentUpdate>[];
+    for (final item in articles.whereType<Map>()) {
+      final title = (item['title'] as String?)?.trim();
+      if (title == null || title.length < 8 || !seen.add(title)) continue;
+      final domain = (item['domain'] as String?)?.trim();
+      updates.add(
+        _DailyAgentUpdate(
+          title: title,
+          detail: domain == null || domain.isEmpty
+              ? 'Recent local update for $queryCity'
+              : 'Recent local update for $queryCity - $domain',
+          icon: Icons.article_outlined,
+        ),
+      );
+      if (updates.length >= 3) break;
+    }
+    return updates;
+  } catch (_) {
+    return const [];
+  } finally {
+    client.close();
+  }
 }
 
 Future<_DailyAgentUpdate?> _loadLocalWeatherUpdate(
