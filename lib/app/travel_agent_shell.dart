@@ -745,9 +745,30 @@ class _TravelAgentAppState extends State<TravelAgentApp>
 
   Future<void> _updateTrip(Trip trip) async {
     if (!trip.canEdit) return;
+    _replaceTripLocally(trip);
     final saved = await _saveTripOnline(trip);
     if (!saved || !mounted) return;
-    await _refreshTripsFromBackend();
+    await _refreshTripsFromBackend(selectTripId: trip.id);
+  }
+
+  void _replaceTripLocally(Trip trip) {
+    if (!mounted) return;
+    setState(() {
+      final index = _trips.indexWhere((item) => item.id == trip.id);
+      if (index == -1) {
+        _trips.add(trip);
+      } else {
+        _trips[index] = trip;
+      }
+      if (_selectedTrip?.id == trip.id || _selectedTrip == null) {
+        _selectedTrip = trip;
+      }
+      if (_activeTrip?.id == trip.id || trip.status == TripStatus.ongoing) {
+        _activeTrip = _firstOngoingTrip(_visibleTrips);
+      }
+      _loadError = null;
+    });
+    _notifyRoutes();
   }
 
   Future<bool> _saveTripOnline(Trip trip) async {
@@ -1028,7 +1049,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Widget _buildTripDetailScreen(BuildContext context, String tripId) {
-    final trip = _tripById(_visibleTrips, tripId) ?? _selectedTrip;
+    final selectedTrip = _selectedTrip?.id == tripId ? _selectedTrip : null;
+    final trip = _tripById(_visibleTrips, tripId) ?? selectedTrip;
     if (trip == null) {
       return _NoTripSelectedScreen(
         title: 'Trip',
@@ -1054,7 +1076,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Widget _buildTripSettingsScreen(BuildContext context, String tripId) {
-    final trip = _tripById(_visibleTrips, tripId) ?? _selectedTrip;
+    final selectedTrip = _selectedTrip?.id == tripId ? _selectedTrip : null;
+    final trip = _tripById(_visibleTrips, tripId) ?? selectedTrip;
     if (trip == null) {
       return _NoTripSelectedScreen(
         title: 'Trip settings',
@@ -1072,7 +1095,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Widget _buildTripMapScreen(BuildContext context, String tripId) {
-    final trip = _tripById(_visibleTrips, tripId) ?? _selectedTrip;
+    final selectedTrip = _selectedTrip?.id == tripId ? _selectedTrip : null;
+    final trip = _tripById(_visibleTrips, tripId) ?? selectedTrip;
     if (trip == null) {
       return _NoTripSelectedScreen(
         title: 'Map',
@@ -1084,7 +1108,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Widget _buildBudgetScreen(BuildContext context, String tripId) {
-    final trip = _tripById(_visibleTrips, tripId) ?? _selectedTrip;
+    final selectedTrip = _selectedTrip?.id == tripId ? _selectedTrip : null;
+    final trip = _tripById(_visibleTrips, tripId) ?? selectedTrip;
     if (trip == null) {
       return _NoTripSelectedScreen(
         title: 'Budget',
@@ -1096,7 +1121,8 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Widget _buildPackingScreen(BuildContext context, String tripId) {
-    final trip = _tripById(_visibleTrips, tripId) ?? _selectedTrip;
+    final selectedTrip = _selectedTrip?.id == tripId ? _selectedTrip : null;
+    final trip = _tripById(_visibleTrips, tripId) ?? selectedTrip;
     if (trip == null) {
       return _NoTripSelectedScreen(
         title: 'Packing',

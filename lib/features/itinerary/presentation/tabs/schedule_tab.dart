@@ -164,9 +164,11 @@ class _ScheduleTabState extends State<ScheduleTab> {
 
   Future<ScheduleItem?> _manualScheduleStopDialog(BuildContext context) async {
     final activity = TextEditingController();
-    final time = TextEditingController(text: '10:00 AM');
     final cost = TextEditingController(text: '0');
-    var day = _tripRuntimePlan(trip).currentDay;
+    final day = _selectedDay;
+    var selectedMinutes = _suggestStopMinutes(trip, day) == 10 * 60
+        ? 10 * 60
+        : _suggestStopMinutes(trip, day);
     try {
       return await _showTravelFormSheet<ScheduleItem>(
         context: context,
@@ -190,11 +192,18 @@ class _ScheduleTabState extends State<ScheduleTab> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: time,
-                  decoration: InputDecoration(
-                    labelText: appText(context, 'Time'),
-                  ),
+                _SheetPickerField(
+                  label: 'Time',
+                  value: _minutesToPickerTimeLabel(selectedMinutes),
+                  icon: Icons.schedule_rounded,
+                  onTap: () async {
+                    final picked = await _showWheelTimePicker(
+                      context,
+                      initialMinutes: selectedMinutes,
+                    );
+                    if (picked == null || !context.mounted) return;
+                    setDialogState(() => selectedMinutes = picked);
+                  },
                 ),
                 const SizedBox(height: 10),
                 TextField(
@@ -205,38 +214,36 @@ class _ScheduleTabState extends State<ScheduleTab> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                _ScheduleDayStepper(
-                  label: '${appText(context, 'Day')} $day',
-                  onMinus: () =>
-                      setDialogState(() => day = math.max(1, day - 1)),
-                  onPlus: () => setDialogState(() => day += 1),
-                ),
+                _SelectedScheduleDayNotice(day: day),
                 const SizedBox(height: 16),
                 Row(
                   children: [
                     Expanded(
                       child: TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
+                        onPressed: () => unawaited(
+                          _closeTravelFormSheet<ScheduleItem>(context),
+                        ),
                         child: Text(appText(context, 'Cancel')),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: FilledButton(
-                        onPressed: () => Navigator.of(context).pop(
-                          ScheduleItem(
-                            day,
-                            time.text.trim().isEmpty
-                                ? '10:00 AM'
-                                : time.text.trim(),
-                            activity.text.trim().isEmpty
-                                ? 'New activity'
-                                : activity.text.trim(),
-                            Icons.place_rounded,
-                            int.tryParse(
-                                  cost.text.replaceAll(RegExp(r'\D'), ''),
-                                ) ??
-                                0,
+                        onPressed: () => unawaited(
+                          _closeTravelFormSheet<ScheduleItem>(
+                            context,
+                            ScheduleItem(
+                              day,
+                              _minutesToPickerTimeLabel(selectedMinutes),
+                              activity.text.trim().isEmpty
+                                  ? 'New activity'
+                                  : activity.text.trim(),
+                              Icons.place_rounded,
+                              int.tryParse(
+                                    cost.text.replaceAll(RegExp(r'\D'), ''),
+                                  ) ??
+                                  0,
+                            ),
                           ),
                         ),
                         child: Text(appText(context, 'Add')),
@@ -251,14 +258,13 @@ class _ScheduleTabState extends State<ScheduleTab> {
       );
     } finally {
       activity.dispose();
-      time.dispose();
       cost.dispose();
     }
   }
 
   Future<ScheduleItem?> _aiScheduleStopDialog(BuildContext context) async {
     final description = TextEditingController();
-    var day = _tripRuntimePlan(trip).currentDay;
+    final day = _selectedDay;
     var isGenerating = false;
     String? error;
     try {
@@ -281,12 +287,15 @@ class _ScheduleTabState extends State<ScheduleTab> {
                     )
                     .timeout(const Duration(seconds: 20));
                 if (!context.mounted) return;
-                Navigator.of(context).pop(item);
+                unawaited(_closeTravelFormSheet<ScheduleItem>(context, item));
               } catch (_) {
                 if (!context.mounted) return;
-                Navigator.of(
-                  context,
-                ).pop(_fallbackAiScheduleStop(trip, day, description.text));
+                unawaited(
+                  _closeTravelFormSheet<ScheduleItem>(
+                    context,
+                    _fallbackAiScheduleStop(trip, day, description.text),
+                  ),
+                );
               }
             }
 
@@ -315,16 +324,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  _ScheduleDayStepper(
-                    label: '${appText(context, 'Day')} $day',
-                    onMinus: isGenerating
-                        ? null
-                        : () =>
-                              setDialogState(() => day = math.max(1, day - 1)),
-                    onPlus: isGenerating
-                        ? null
-                        : () => setDialogState(() => day += 1),
-                  ),
+                  _SelectedScheduleDayNotice(day: day),
                   if (error != null) ...[
                     const SizedBox(height: 10),
                     FormNotice(message: error!),
@@ -336,7 +336,9 @@ class _ScheduleTabState extends State<ScheduleTab> {
                         child: TextButton(
                           onPressed: isGenerating
                               ? null
-                              : () => Navigator.of(context).pop(),
+                              : () => unawaited(
+                                  _closeTravelFormSheet<ScheduleItem>(context),
+                                ),
                           child: Text(appText(context, 'Cancel')),
                         ),
                       ),
@@ -397,7 +399,7 @@ class _ScheduleTabState extends State<ScheduleTab> {
         : _titleFromDescription(description);
     return ScheduleItem(
       day,
-      _minutesToScheduleLabel(minutes),
+      _minutesToPickerTimeLabel(minutes),
       activity,
       isFood
           ? Icons.restaurant_rounded
@@ -421,18 +423,6 @@ class _ScheduleTabState extends State<ScheduleTab> {
         .whereType<int>()
         .fold<int>(10 * 60, math.max);
     return math.min(21 * 60, last + 120);
-  }
-
-  String _minutesToScheduleLabel(int minutes) {
-    var hour = (minutes ~/ 60) % 24;
-    final minute = minutes % 60;
-    final suffix = hour >= 12 ? 'PM' : 'AM';
-    final displayHour = hour == 0
-        ? 12
-        : hour > 12
-        ? hour - 12
-        : hour;
-    return '$displayHour:${minute.toString().padLeft(2, '0')} $suffix';
   }
 
   String _titleFromDescription(String description) {
@@ -819,30 +809,37 @@ class _AddStopModeCard extends StatelessWidget {
   }
 }
 
-class _ScheduleDayStepper extends StatelessWidget {
-  const _ScheduleDayStepper({
-    required this.label,
-    required this.onMinus,
-    required this.onPlus,
-  });
-  final String label;
-  final VoidCallback? onMinus;
-  final VoidCallback? onPlus;
+class _SelectedScheduleDayNotice extends StatelessWidget {
+  const _SelectedScheduleDayNotice({required this.day});
+
+  final int day;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        IconButton(onPressed: onMinus, icon: const Icon(Icons.remove_rounded)),
-        Expanded(
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontWeight: FontWeight.w900),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _accent.withValues(alpha: .16),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.calendar_view_day_rounded, color: _primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '${appText(context, 'Adding to selected day')} $day',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _primary,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
           ),
-        ),
-        IconButton(onPressed: onPlus, icon: const Icon(Icons.add_rounded)),
-      ],
+        ],
+      ),
     );
   }
 }
