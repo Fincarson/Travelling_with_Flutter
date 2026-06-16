@@ -73,10 +73,9 @@ class TravelAssistantService {
 
   static const _chatTimeout = Duration(seconds: 20);
   static const _createTripReplyTimeout = Duration(seconds: 35);
-  static const _tripPlanTimeout = Duration(seconds: 100);
-  static const _scheduleStopTimeout = Duration(seconds: 18);
-  static const _dayPlanEditTimeout = Duration(seconds: 28);
-  static const _transportRecommendationsTimeout = Duration(seconds: 35);
+  // Itinerary creation, AI place-adds, and transport search have no client
+  // timeout: they wait for the full AI result (callable timeout raised at each
+  // call site).
 
   final FirebaseFunctions _functions;
   final _deviceContext = AppDeviceContextService();
@@ -167,7 +166,13 @@ class TravelAssistantService {
     final tripStartLocation =
         startLocation ?? TripStartLocation.fromContext(resolvedAppContext);
     final outputLanguage = _aiLanguageName(profileLanguage);
-    final callable = _functions.httpsCallable('generateTripPlan');
+    // The Firebase callable SDK defaults to a 70s client timeout. Itinerary
+    // generation is pure AI and can reason long, so use the gen-2 server
+    // maximum (3600s / 60 min) instead of cutting it off.
+    final callable = _functions.httpsCallable(
+      'generateTripPlan',
+      options: HttpsCallableOptions(timeout: const Duration(seconds: 3600)),
+    );
     final response = await callable
         .call<Map<String, dynamic>>({
           'place': {
@@ -197,8 +202,7 @@ class TravelAssistantService {
           'flightConfirmation': flightConfirmation,
           'startLocation': tripStartLocation?.toAiMap(),
           'appContext': resolvedAppContext.toAiMap(),
-        })
-        .timeout(_tripPlanTimeout);
+        });
     final data = response.data['plan'] is Map
         ? Map<String, dynamic>.from(response.data['plan'] as Map)
         : response.data;
@@ -246,10 +250,14 @@ class TravelAssistantService {
       'appContext': appContext.toAiMap(),
     };
 
-    final callable = _functions.httpsCallable('generateScheduleStop');
-    final response = await callable
-        .call<Map<String, dynamic>>({'tripId': trip.id, ...input})
-        .timeout(_scheduleStopTimeout);
+    final callable = _functions.httpsCallable(
+      'generateScheduleStop',
+      options: HttpsCallableOptions(timeout: const Duration(seconds: 3600)),
+    );
+    final response = await callable.call<Map<String, dynamic>>({
+      'tripId': trip.id,
+      ...input,
+    });
     final data = response.data['item'] is Map
         ? Map<String, dynamic>.from(response.data['item'] as Map)
         : response.data;
@@ -284,10 +292,14 @@ class TravelAssistantService {
       'appContext': appContext.toAiMap(),
     };
 
-    final callable = _functions.httpsCallable('generateDayPlanEdit');
-    final response = await callable
-        .call<Map<String, dynamic>>({'tripId': trip.id, ...input})
-        .timeout(_dayPlanEditTimeout);
+    final callable = _functions.httpsCallable(
+      'generateDayPlanEdit',
+      options: HttpsCallableOptions(timeout: const Duration(seconds: 3600)),
+    );
+    final response = await callable.call<Map<String, dynamic>>({
+      'tripId': trip.id,
+      ...input,
+    });
     final data = response.data['result'] is Map
         ? Map<String, dynamic>.from(response.data['result'] as Map)
         : response.data;
@@ -305,19 +317,18 @@ class TravelAssistantService {
     final appContext = await _deviceContext.load(requestLocation: false);
     final callable = _functions.httpsCallable(
       'generateTransportRecommendations',
+      options: HttpsCallableOptions(timeout: const Duration(seconds: 3600)),
     );
-    final response = await callable
-        .call<Map<String, dynamic>>({
-          'origin': origin,
-          'destination': destination,
-          'startDate': _dateKey(startDate),
-          'endDate': _dateKey(endDate),
-          'currency': currency,
-          'groupType': groupType,
-          'numOfTravelers': _travelerCountForGroupType(groupType),
-          'appContext': appContext.toAiMap(),
-        })
-        .timeout(_transportRecommendationsTimeout);
+    final response = await callable.call<Map<String, dynamic>>({
+      'origin': origin,
+      'destination': destination,
+      'startDate': _dateKey(startDate),
+      'endDate': _dateKey(endDate),
+      'currency': currency,
+      'groupType': groupType,
+      'numOfTravelers': _travelerCountForGroupType(groupType),
+      'appContext': appContext.toAiMap(),
+    });
     final data = response.data['result'] is Map
         ? Map<String, dynamic>.from(response.data['result'] as Map)
         : response.data;

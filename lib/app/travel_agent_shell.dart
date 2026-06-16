@@ -35,6 +35,13 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   StreamSubscription<UserProfile?>? _userSubscription;
   StreamSubscription<List<Trip>>? _tripsSubscription;
   StreamSubscription<List<TripMemory>>? _memoriesSubscription;
+  final _previewJobs = TripPreviewJobService();
+  StreamSubscription<List<TripPreviewJob>>? _previewJobsSubscription;
+  // Jobs already turned into trips, so the watcher never double-creates.
+  final Set<String> _handledPreviewJobIds = {};
+  // Destination of a background itinerary job currently generating (drives the
+  // "Generating..." banner). Null when nothing is running.
+  String? _generatingTripDestination;
   var _isLoading = true;
   var _loadingMessage = 'Checking account updates...';
   var _exchangeData = CurrencyExchangeData.fallback;
@@ -300,6 +307,109 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             setState(() => _loadError = 'Could not sync trip memories: $error');
           },
         );
+
+    _previewJobsSubscription?.cancel();
+    _previewJobsSubscription = _previewJobs
+        .watchRecentJobs(accountId)
+        .listen(
+          _handlePreviewJobs,
+          onError: (Object _) {},
+        );
+  }
+
+  // Background itinerary generation: watch the user's preview jobs, show a
+  // "Generating..." banner while one runs, and auto-create + notify when ready.
+  void _handlePreviewJobs(List<TripPreviewJob> jobs) {
+    if (!mounted) return;
+    final active = jobs.where((job) => job.isActive).toList();
+    final nextGenerating = active.isEmpty
+        ? null
+        : (active.first.place?.name ?? 'your trip');
+    if (nextGenerating != _generatingTripDestination) {
+      setState(() => _generatingTripDestination = nextGenerating);
+    }
+    for (final job in jobs) {
+      if (job.isReady && !_handledPreviewJobIds.contains(job.id)) {
+        _handledPreviewJobIds.add(job.id);
+        unawaited(_finishPreviewJob(job));
+      }
+    }
+  }
+
+  Future<void> _finishPreviewJob(TripPreviewJob job) async {
+    final accountId = _accountId ?? widget.account.uid;
+    final trip = _tripFromPreviewJob(job);
+    final saved = await _saveTripOnline(trip);
+    // Clear the job either way so it does not linger or re-fire.
+    unawaited(_previewJobs.deleteJob(accountId, job.id));
+    if (!saved || !mounted) return;
+    await _refreshTripsFromBackend(selectTripId: trip.id);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(
+            appText(context, 'Your ${trip.destination} trip is ready.'),
+          ),
+          action: SnackBarAction(
+            label: appText(context, 'View trip'),
+            onPressed: () => _go(_tripLocation(trip.id)),
+          ),
+        ),
+      );
+  }
+
+  // Called by CreateTripScreen for AI generation. Queues a background job and
+  // returns the user to the trips list; the watcher finishes the trip.
+  Future<void> _startTripPreviewGeneration({
+    required PlaceSuggestion place,
+    required DateTime startDate,
+    required DateTime endDate,
+    required int budget,
+    required String groupType,
+    required List<String> preferences,
+    required String currency,
+    required AppDeviceContext appContext,
+    required TripStartLocation? startLocation,
+    required List<String> fallbackImages,
+    String airline = '',
+    String flightCode = '',
+  }) async {
+    setState(() => _generatingTripDestination = place.name);
+    _go('/trips');
+    try {
+      await _previewJobs.createJob(
+        accountId: _accountId ?? widget.account.uid,
+        place: place,
+        startDate: startDate,
+        endDate: endDate,
+        budget: budget,
+        groupType: groupType,
+        preferences: preferences,
+        currency: currency,
+        profileLanguage: _user.language,
+        appContext: appContext,
+        startLocation: startLocation,
+        fallbackImages: fallbackImages,
+        airline: airline,
+        flightCode: flightCode,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _generatingTripDestination = null);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              appText(context, 'Could not start trip generation: $error'),
+            ),
+          ),
+        );
+    }
   }
 
   void _openTrip(Trip trip) {
@@ -893,6 +1003,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
     _userSubscription?.cancel();
     _tripsSubscription?.cancel();
     _memoriesSubscription?.cancel();
+    _previewJobsSubscription?.cancel();
     _bottomNavController.dispose();
     unawaited(_pushTokenService.dispose());
     unawaited(_appNotificationService.dispose());
@@ -938,6 +1049,15 @@ class _TravelAgentAppState extends State<TravelAgentApp>
                           right: 16,
                           top: 12,
                           child: SyncBanner(message: _loadError!),
+                        ),
+                      if (_generatingTripDestination != null)
+                        Positioned(
+                          left: 16,
+                          right: 16,
+                          bottom: 86,
+                          child: _GeneratingTripBanner(
+                            destination: _generatingTripDestination!,
+                          ),
                         ),
                       if (_helpOpen)
                         Positioned.fill(
@@ -1045,6 +1165,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
         _suggestedDestination = null;
         return _createTrip(trip);
       },
+      onGenerateInBackground: _startTripPreviewGeneration,
     );
   }
 
@@ -1151,15 +1272,22 @@ class _TravelAgentAppState extends State<TravelAgentApp>
   }
 
   Widget _buildProfileScreen(BuildContext context) {
-    return ProfileScreen(
-      account: widget.account,
-      user: _user,
-      trips: _visibleTrips,
-      memories: _tripMemories,
-      onOpenTrip: (trip) => _go(_tripLocation(trip.id)),
-      onToggleFavoriteTrip: (trip) {
-        unawaited(_toggleFavoriteTrip(trip));
-      },
+    // Rebuild in place when routes are notified (e.g. after a favorite
+    // change). The profile lives in an inactive shell branch, which
+    // refreshListenable alone does not rebuild, so it would otherwise show
+    // stale favorites until the branch is re-navigated.
+    return ListenableBuilder(
+      listenable: _routerRefresh,
+      builder: (context, _) => ProfileScreen(
+        account: widget.account,
+        user: _user,
+        trips: _visibleTrips,
+        memories: _tripMemories,
+        onOpenTrip: (trip) => _go(_tripLocation(trip.id)),
+        onToggleFavoriteTrip: (trip) {
+          unawaited(_toggleFavoriteTrip(trip));
+        },
+      ),
     );
   }
 
@@ -1388,6 +1516,7 @@ class _TravelAgentAppState extends State<TravelAgentApp>
             _tab = _NavTab.home;
           }),
           onGenerate: _createTrip,
+          onGenerateInBackground: _startTripPreviewGeneration,
         );
       case _Screen.tripDetail:
         final trip = _selectedTrip;
@@ -1989,6 +2118,49 @@ class _AppTutorialOverlayState extends State<_AppTutorialOverlay> {
 /// the page background) peels upward off the top edge, uncovering the
 /// already-loaded itinerary page below, while a screen-wide plane rides the
 /// peeling edge from offscreen-bottom to offscreen-top.
+/// Persistent banner shown while a background itinerary job is generating, so
+/// the user can leave the create screen without losing progress.
+class _GeneratingTripBanner extends StatelessWidget {
+  const _GeneratingTripBanner({required this.destination});
+
+  final String destination;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      elevation: 6,
+      borderRadius: BorderRadius.circular(16),
+      color: scheme.primary,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: scheme.onPrimary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                appText(context, 'Generating your $destination trip in the background...'),
+                style: TextStyle(
+                  color: scheme.onPrimary,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _PlaneRevealTransition extends StatefulWidget {
   const _PlaneRevealTransition({required this.onCompleted});
 

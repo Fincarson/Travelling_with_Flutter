@@ -662,6 +662,16 @@ String _clockLabel(DateTime value) {
   return '$hour:$minute';
 }
 
+// Normalizes any schedule time string ("6:00 PM", "09:00 AM", "7:30") to a
+// 24-hour "HH:mm" label. Non-time text (e.g. "TBD") is returned unchanged.
+String _to24HourLabel(String value) {
+  final minutes = _parseActivityTimeMinutes(value);
+  if (minutes == null) return value;
+  final hour = (minutes ~/ 60).toString().padLeft(2, '0');
+  final minute = (minutes % 60).toString().padLeft(2, '0');
+  return '$hour:$minute';
+}
+
 class _TimedScheduleItem {
   const _TimedScheduleItem(this.item, this.startsAt);
 

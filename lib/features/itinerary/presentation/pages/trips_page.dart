@@ -263,19 +263,11 @@ class _TripsScreenState extends State<TripsScreen> {
                 pastCount: _pastCount,
                 activeFilterCount: _activeFilterCount,
                 filtersExpanded: _filtersExpanded,
+                columns: _columns,
+                onColumnsChanged: _setColumns,
                 onToggleFilters: () =>
                     setState(() => _filtersExpanded = !_filtersExpanded),
                 onSelected: (tab) => setState(() => _selectedTab = tab),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: LayoutColumnsToggle(
-                    columns: _columns,
-                    onChanged: _setColumns,
-                  ),
-                ),
               ),
               AnimatedSize(
                 duration: duration,
@@ -484,6 +476,8 @@ class _TripsControlBar extends StatelessWidget {
     required this.pastCount,
     required this.activeFilterCount,
     required this.filtersExpanded,
+    required this.columns,
+    required this.onColumnsChanged,
     required this.onToggleFilters,
     required this.onSelected,
   });
@@ -493,6 +487,8 @@ class _TripsControlBar extends StatelessWidget {
   final int pastCount;
   final int activeFilterCount;
   final bool filtersExpanded;
+  final int columns;
+  final ValueChanged<int> onColumnsChanged;
   final VoidCallback onToggleFilters;
   final ValueChanged<_TripsTab> onSelected;
 
@@ -514,20 +510,26 @@ class _TripsControlBar extends StatelessWidget {
         padding: const EdgeInsets.all(10),
         child: Column(
           children: [
-            Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 240),
-                child: _TripsControlButton(
-                  key: const ValueKey('trip-filter-button'),
-                  label: 'FILTER',
-                  icon: filtersExpanded
-                      ? Icons.tune_rounded
-                      : Icons.filter_list_rounded,
-                  count: activeFilterCount,
-                  selected: filtersExpanded,
-                  onTap: onToggleFilters,
+            Row(
+              children: [
+                Expanded(
+                  child: _TripsControlButton(
+                    key: const ValueKey('trip-filter-button'),
+                    label: 'FILTER',
+                    icon: filtersExpanded
+                        ? Icons.tune_rounded
+                        : Icons.filter_list_rounded,
+                    count: activeFilterCount,
+                    selected: filtersExpanded,
+                    onTap: onToggleFilters,
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                LayoutColumnsToggle(
+                  columns: columns,
+                  onChanged: onColumnsChanged,
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             Container(

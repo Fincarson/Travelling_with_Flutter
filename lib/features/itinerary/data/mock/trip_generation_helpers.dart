@@ -1,5 +1,58 @@
 part of travel_agent_app;
 
+// Builds a finished Trip from a completed background preview job, mirroring the
+// synchronous trip assembly in CreateTripScreen so background generation
+// produces the same shape of trip.
+Trip _tripFromPreviewJob(TripPreviewJob job) {
+  final plan = job.plan ?? const GeneratedTripPlan(
+    items: [],
+    bookings: [],
+    checklist: [],
+  );
+  final place = job.place;
+  final start = job.startDate ?? DateTime.now();
+  final end = job.endDate ?? start;
+  final bookings = plan.bookings;
+  final budgetCategories = _defaultBudgetCategories(
+    budget: job.budget,
+    actual: 0,
+    items: plan.items,
+    bookings: bookings,
+  );
+  final budgetLimit = _budgetLimitForCategories(
+    budget: job.budget,
+    categories: budgetCategories,
+  );
+  final destination = place?.name ?? 'New trip';
+  final images = job.images.isNotEmpty
+      ? job.images
+      : _imagesForDestination(destination);
+  return Trip(
+    id: 't-${DateTime.now().millisecondsSinceEpoch}',
+    destination: destination,
+    placeId: place?.placeId ?? destination,
+    formattedAddress: place?.formatted ?? destination,
+    latitude: place?.latitude ?? 0,
+    longitude: place?.longitude ?? 0,
+    originLabel: job.startLocation?.displayLabel,
+    originLatitude: job.startLocation?.latitude,
+    originLongitude: job.startLocation?.longitude,
+    startDate: _dateKey(start),
+    endDate: _dateKey(end),
+    budget: budgetLimit,
+    spent: 0,
+    numOfTravelers: _travelerCountForGroupType(job.groupType),
+    currency: job.currency,
+    status: TripStatus.upcoming,
+    images: images,
+    items: plan.items,
+    bookings: bookings,
+    checklist: plan.checklist,
+    preferences: job.preferences,
+    budgetCategories: budgetCategories,
+  );
+}
+
 // ignore: unused_element
 GeneratedTripPlan _fallbackTripPlan({
   required PlaceSuggestion place,
@@ -55,7 +108,9 @@ GeneratedTripPlan _fallbackTripPlan({
     ScheduleItem(
       1,
       '12:30 PM',
-      wantsFood ? '$placeName local food crawl' : 'Central cafe lunch stop',
+      wantsFood
+          ? '$placeName local food crawl'
+          : 'Central $placeName cafe lunch stop',
       wantsFood ? Icons.restaurant_rounded : Icons.local_cafe_rounded,
       (budget * .03).round(),
     ),
@@ -63,10 +118,10 @@ GeneratedTripPlan _fallbackTripPlan({
       1,
       '03:00 PM',
       wantsRainReady
-          ? 'Indoor museum or cultural backup plan'
+          ? 'Indoor museum or cultural stop in $placeName'
           : wantsShopping
-          ? 'Market and boutique shopping route'
-          : 'Historic district walk',
+          ? '$placeName market and boutique shopping route'
+          : 'Historic district walk in $placeName',
       wantsRainReady
           ? Icons.museum_rounded
           : wantsShopping
@@ -79,10 +134,10 @@ GeneratedTripPlan _fallbackTripPlan({
         2,
         wantsEasyPace ? '10:30 AM' : '09:00 AM',
         wantsLowWalking
-            ? 'Accessible landmark and cafe route'
+            ? 'Accessible landmark and cafe route in $placeName'
             : wantsNature
-            ? 'Scenic outdoor viewpoint and easy trail'
-            : 'Signature landmark visit',
+            ? 'Scenic $placeName viewpoint and easy trail'
+            : 'Signature $placeName landmark visit',
         wantsLowWalking
             ? Icons.place_rounded
             : wantsNature
@@ -392,10 +447,30 @@ ScheduleItem? _preferenceStop({
   return ScheduleItem(
     day,
     time,
-    '$preference-focused stop: find the best local scene, venue, or event in $destination',
+    _focusStopActivity(preference, destination),
     Icons.place_rounded,
     activityCost,
   );
+}
+
+// Builds a clean, location-anchored stop name from a preference tag, stripping
+// trailing qualifiers ("Food-focused" -> "food") so we never produce labels
+// like "Food-focused-focused" or "Japan-wide-focused".
+String _focusStopActivity(String preference, String destination) {
+  final label = preference
+      .trim()
+      .replaceAll(
+        RegExp(
+          r'[-\s]*(focused|focus|wide|themed|oriented)$',
+          caseSensitive: false,
+        ),
+        '',
+      )
+      .trim();
+  if (label.isEmpty || label.toLowerCase() == destination.toLowerCase()) {
+    return 'Explore standout local spots around $destination';
+  }
+  return 'Explore the best ${label.toLowerCase()} spots around $destination';
 }
 
 String _openPreferenceStopTime(List<ScheduleItem> items, int day, int offset) {
@@ -987,15 +1062,10 @@ int _tripDayCount(DateTime startDate, DateTime endDate) {
 }
 
 String _minutesToTimeLabel(int minutes) {
-  var hour = (minutes ~/ 60) % 24;
+  final hour = (minutes ~/ 60) % 24;
   final minute = minutes % 60;
-  final suffix = hour >= 12 ? 'PM' : 'AM';
-  final displayHour = hour == 0
-      ? 12
-      : hour > 12
-      ? hour - 12
-      : hour;
-  return '$displayHour:${minute.toString().padLeft(2, '0')} $suffix';
+  return '${hour.toString().padLeft(2, '0')}:'
+      '${minute.toString().padLeft(2, '0')}';
 }
 
 class _TransportProfile {

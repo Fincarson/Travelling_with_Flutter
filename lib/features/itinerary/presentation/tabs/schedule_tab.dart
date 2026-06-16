@@ -424,15 +424,10 @@ class _ScheduleTabState extends State<ScheduleTab> {
   }
 
   String _minutesToScheduleLabel(int minutes) {
-    var hour = (minutes ~/ 60) % 24;
+    final hour = (minutes ~/ 60) % 24;
     final minute = minutes % 60;
-    final suffix = hour >= 12 ? 'PM' : 'AM';
-    final displayHour = hour == 0
-        ? 12
-        : hour > 12
-        ? hour - 12
-        : hour;
-    return '$displayHour:${minute.toString().padLeft(2, '0')} $suffix';
+    return '${hour.toString().padLeft(2, '0')}:'
+        '${minute.toString().padLeft(2, '0')}';
   }
 
   String _titleFromDescription(String description) {
@@ -467,7 +462,14 @@ class _ScheduleTabState extends State<ScheduleTab> {
     }
     final days = _scheduleDays(widget.trip.items);
     final selectedEntries =
-        grouped[_selectedDay] ?? const <({int index, ScheduleItem item})>[];
+        (grouped[_selectedDay] ?? const <({int index, ScheduleItem item})>[])
+            .toList()
+          // Show the day in chronological order; unparseable times go last.
+          ..sort((a, b) {
+            final am = _parseActivityTimeMinutes(a.item.time) ?? 1 << 30;
+            final bm = _parseActivityTimeMinutes(b.item.time) ?? 1 << 30;
+            return am.compareTo(bm);
+          });
 
     return ListView(
       padding: _responsivePagePadding(context, top: 16),

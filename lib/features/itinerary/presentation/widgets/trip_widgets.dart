@@ -1061,7 +1061,7 @@ class ScheduleTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    item.time,
+                    _to24HourLabel(item.time),
                     style: const TextStyle(
                       fontSize: 11,
                       color: _secondary,

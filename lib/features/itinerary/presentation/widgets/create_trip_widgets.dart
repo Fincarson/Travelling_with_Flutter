@@ -370,19 +370,23 @@ class CreateTripDraftCard extends StatelessWidget {
   const CreateTripDraftCard({
     required this.draft,
     required this.confirmed,
-    required this.onConfirm,
     required this.onChange,
-    required this.onEdit,
     this.onUse,
     super.key,
   });
 
   final CreateTripDraft draft;
   final bool confirmed;
-  final VoidCallback onConfirm;
   final ValueChanged<String> onChange;
-  final VoidCallback onEdit;
   final VoidCallback? onUse;
+
+  String get _lengthLabel {
+    final start = draft.startDate;
+    final end = draft.endDate;
+    if (start == null || end == null) return 'TBD';
+    final days = end.difference(start).inDays + 1;
+    return days <= 1 ? '1 day' : '$days days';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -423,17 +427,35 @@ class CreateTripDraftCard extends StatelessWidget {
                     ? 'TBD'
                     : '${_dateKey(draft.startDate!)} / ${_dateKey(draft.endDate!)}',
               ),
+              DraftStat(label: 'Trip length', value: _lengthLabel),
               DraftStat(
                 label: 'Budget',
                 value: draft.budget == null
                     ? 'TBD'
                     : '${draft.currency ?? 'USD'} ${_formatAmountText(draft.budget!)}',
               ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ResponsiveSplit(
+            children: [
               DraftStat(
                 label: 'Travelers',
                 value: draft.numOfTravelers == null
                     ? 'TBD'
                     : _travelerCountLabel(draft.numOfTravelers!),
+              ),
+              DraftStat(
+                label: 'Group',
+                value: (draft.groupType?.trim().isNotEmpty ?? false)
+                    ? draft.groupType!
+                    : 'TBD',
+              ),
+              DraftStat(
+                label: 'Trip type',
+                value: draft.preferences.isEmpty
+                    ? 'TBD'
+                    : '${draft.preferences.length} selected',
               ),
             ],
           ),
@@ -477,56 +499,22 @@ class CreateTripDraftCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          ResponsiveSplit(
-            children: [
-              FilledButton(
-                onPressed: onEdit,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFF8FAFC),
-                  foregroundColor: _primary,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
-                child: Text(
-                  appText(context, 'CUSTOMIZE'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              FilledButton(
-                onPressed: onConfirm,
-                style: FilledButton.styleFrom(
-                  backgroundColor: confirmed ? _accent : _primary,
-                  foregroundColor: confirmed ? _primary : Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
-                child: Text(
-                  appText(context, confirmed ? 'CONFIRMED' : 'CONFIRM'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
+          FilledButton.icon(
             onPressed: onUse,
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _primary,
-              minimumSize: const Size.fromHeight(48),
-              side: const BorderSide(color: Color(0xFFEFF3F6)),
+            style: FilledButton.styleFrom(
+              backgroundColor: _primary,
+              foregroundColor: Colors.white,
+              minimumSize: const Size.fromHeight(50),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
             ),
-            icon: const Icon(Icons.auto_awesome_rounded),
+            icon: const Icon(Icons.map_rounded),
             label: Text(
-              appText(context, 'USE CUSTOMIZED PLAN'),
+              appText(context, 'Preview Itinerary'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w900),
             ),
           ),
         ],
