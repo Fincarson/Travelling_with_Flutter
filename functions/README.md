@@ -1,23 +1,26 @@
-# Firebase Function API Keys
+# Firebase Function Secrets
 
-Do not put API keys in Flutter code or committed env files. Flutter apps can be inspected by customers, so secrets must stay on the server.
+Provider credentials must stay in Firebase Secret Manager. The Flutter app only
+calls authenticated callable Functions and contains no OpenAI or Geoapify
+credential fallback.
 
-This project keeps external API keys in a local `functions/.env` file and exposes only callable Firebase Functions to the app:
+- `GEOAPIFY_API_KEY` is bound to the place-search Functions.
+- `OPENAI_API_KEY` is bound to the itinerary and assistant Functions.
 
-- `searchPlaces` uses `GEOAPIFY_API_KEY`.
-- `chatWithAssistant`, `generateTripPlan`, and `createTripReply` use `OPENAI_API_KEY`.
+Set or rotate both secrets and deploy:
 
-Set or rotate the function environment keys with:
-
-```sh
-../scripts/configure_firebase_ai.ps1
+```powershell
+..\scripts\configure_firebase_ai.ps1
 ```
 
-For local Flutter debugging without deployed Functions, pass temporary keys at
-launch time instead of committing them:
+Or run the commands separately:
 
 ```sh
-flutter run --dart-define=OPENAI_API_KEY=your_openai_key --dart-define=GEOAPIFY_API_KEY=your_geoapify_key
+firebase functions:secrets:set GEOAPIFY_API_KEY
+firebase functions:secrets:set OPENAI_API_KEY
+firebase deploy --only functions
 ```
 
-After a key has been committed, rotate it in the provider dashboard. Deleting the file from the repo does not invalidate a key that was already exposed.
+Never pass these provider keys with Flutter `--dart-define` values. Firebase web
+configuration values in `firebase_options.dart` identify the Firebase app and
+are not provider secrets; Firebase Rules and Auth protect backend data.

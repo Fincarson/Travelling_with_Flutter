@@ -4,6 +4,21 @@ import 'package:flutter_app/core/performance/app_performance.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+Future<void> _noopBackgroundGeneration({
+  required PlaceSuggestion place,
+  required DateTime startDate,
+  required DateTime endDate,
+  required int budget,
+  required String groupType,
+  required List<String> preferences,
+  required String currency,
+  required AppDeviceContext appContext,
+  required TripStartLocation? startLocation,
+  required List<String> fallbackImages,
+  String airline = '',
+  String flightCode = '',
+}) async {}
+
 void main() {
   for (final preset in PerformancePreset.values) {
     testWidgets('create trip opens with ${preset.name} performance', (
@@ -27,6 +42,7 @@ void main() {
                 savedTrips: const [],
                 onBack: () {},
                 onGenerate: (_) async {},
+                onGenerateInBackground: _noopBackgroundGeneration,
               ),
             ),
           ),
@@ -62,6 +78,7 @@ void main() {
               savedTrips: const [],
               onBack: () {},
               onGenerate: (_) async {},
+              onGenerateInBackground: _noopBackgroundGeneration,
             ),
           ),
         ),
@@ -85,41 +102,56 @@ void main() {
     final performance = AppPerformanceController();
     addTearDown(performance.dispose);
 
-    Widget page() => PerformanceScope(
+    Widget page(Key key) => PerformanceScope(
       controller: performance,
       child: MaterialApp(
         theme: TravelAgentTheme.light(),
         home: Scaffold(
           body: CreateTripScreen(
+            key: key,
             profileLanguage: 'en',
             savedTrips: const [],
             onBack: () {},
             onGenerate: (_) async {},
+            onGenerateInBackground: _noopBackgroundGeneration,
           ),
         ),
       ),
     );
 
-    await tester.pumpWidget(page());
+    await tester.pumpWidget(page(const ValueKey('manual-planner-test')));
     await tester.pump();
-    await tester.tap(find.text('Create Manually'));
+    final manualOption = find.widgetWithText(
+      CreateOptionCard,
+      'Create Manually',
+    );
+    await tester.ensureVisible(manualOption);
+    await tester.pump();
+    tester.widget<CreateOptionCard>(manualOption).onTap();
     await tester.pumpAndSettle();
-    expect(find.text('Trip Basics'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('create-trip-manual-page')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
 
-    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(page(const ValueKey('template-planner-test')));
     await tester.pump();
-    await tester.pumpWidget(page());
-    await tester.pump();
-    final templateOption = find.widgetWithText(
-      CreateOptionCard,
-      'Use a Template',
+    final templateOption = find.byKey(
+      const ValueKey('create-trip-template-option'),
     );
-    await tester.ensureVisible(templateOption);
+    await tester.scrollUntilVisible(
+      templateOption,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pump();
     tester.widget<CreateOptionCard>(templateOption).onTap();
     await tester.pumpAndSettle();
-    expect(find.text('Trip templates'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('create-trip-template-page')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -143,6 +175,7 @@ void main() {
               initialDestination: 'Kyoto, Japan',
               onBack: () {},
               onGenerate: (_) async {},
+              onGenerateInBackground: _noopBackgroundGeneration,
             ),
           ),
         ),

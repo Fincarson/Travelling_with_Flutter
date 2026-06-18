@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/app/travel_agent_app.dart';
 import 'package:flutter_app/core/performance/app_performance.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/features/auth/data/account_auth_service.dart';
 import 'package:flutter_app/features/auth/presentation/pages/account_gate.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -27,6 +28,25 @@ void main() {
       ),
     );
     await tester.pump();
+  }
+
+  Future<_FakeAccountAuthService> pumpAccountGate(WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final performance = AppPerformanceController();
+    final authService = _FakeAccountAuthService();
+
+    await tester.pumpWidget(
+      PerformanceScope(
+        controller: performance,
+        child: MaterialApp(
+          theme: TravelAgentTheme.light(),
+          home: AccountGate(authService: authService),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    return authService;
   }
 
   testWidgets('collects onboarding details and draft terms consent', (
@@ -111,29 +131,64 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('account gate starts with onboarding on every fresh launch', (
+  testWidgets('account gate starts on sign in for every fresh launch', (
     tester,
   ) async {
-    await tester.binding.setSurfaceSize(const Size(390, 844));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final performance = AppPerformanceController();
+    final authService = await pumpAccountGate(tester);
 
-    await tester.pumpWidget(
-      PerformanceScope(
-        controller: performance,
-        child: MaterialApp(
-          theme: TravelAgentTheme.light(),
-          home: const AccountGate(),
-        ),
-      ),
-    );
-    await tester.pump();
+    expect(find.byKey(const ValueKey('pre-account-onboarding')), findsNothing);
+    expect(find.text('Travel Agent'), findsOneWidget);
+    expect(find.text('Sign in'), findsOneWidget);
+    expect(authService.freshSignInPreparations, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('onboarding opens only after create account is selected', (
+    tester,
+  ) async {
+    await pumpAccountGate(tester);
+
+    await tester.tap(find.text('Create a new account'));
+    await tester.pumpAndSettle();
 
     expect(
       find.byKey(const ValueKey('pre-account-onboarding')),
       findsOneWidget,
     );
     expect(find.text('Plan smarter. Travel faster.'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('onboarding-back')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Travel Agent'), findsOneWidget);
+    expect(find.byKey(const ValueKey('pre-account-onboarding')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('existing account sign in does not open onboarding', (
+    tester,
+  ) async {
+    final authService = await pumpAccountGate(tester);
+    final fields = find.byType(TextFormField);
+
+    await tester.enterText(fields.at(0), 'existing@example.com');
+    await tester.enterText(fields.at(1), 'password123');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pumpAndSettle();
+
+    expect(authService.emailSignIns, 1);
+    expect(authService.lastEmail, 'existing@example.com');
+    expect(find.byKey(const ValueKey('pre-account-onboarding')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('unavailable provider button gives feedback', (tester) async {
+    await pumpAccountGate(tester);
+
+    await tester.tap(find.text('Facebook coming later'));
+    await tester.pump();
+
+    expect(find.text('Facebook sign-in is not available yet.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -171,23 +226,41 @@ void main() {
     expect(restored.favoritePlaces.single.name, 'Kyoto');
   });
 
-  test('onboarding details override the launch profile', () {
-    const onboarding = PreAccountOnboardingData(
-      name: 'Nicolas',
-      interests: ['Architecture', 'Food'],
-      travelPace: 'Fast',
-      termsVersion: 'draft-2026-06-15',
-    );
-    const profile = UserProfile(
-      name: 'Old Name',
-      email: 'nicolas@example.com',
-      interests: ['Nature'],
-    );
+  test('legacy profiles without tutorial flag do not reopen tutorial', () {
+    final restored = UserProfile.fromMap(const {
+      'name': 'Nicolas',
+      'email': 'nicolas@example.com',
+      'settings': {'onboardingCompleted': true},
+    });
 
-    final updated = onboarding.applyToProfile(profile);
-
-    expect(updated.name, 'Nicolas');
-    expect(updated.interests, ['Architecture', 'Food']);
-    expect(updated.travelPace, 'Fast');
+    expect(restored.onboardingCompleted, isTrue);
+    expect(restored.tutorialCompleted, isTrue);
   });
+}
+
+class _FakeAccountAuthService implements AccountAuthService {
+  int freshSignInPreparations = 0;
+  int emailSignIns = 0;
+  String? lastEmail;
+
+  @override
+  Stream<AuthenticatedAccount?> get accountChanges =>
+      const Stream<AuthenticatedAccount?>.empty();
+
+  @override
+  Future<void> prepareForFreshSignIn() async {
+    freshSignInPreparations++;
+  }
+
+  @override
+  Future<void> signInWithEmail({
+    required String email,
+    required String password,
+  }) async {
+    emailSignIns++;
+    lastEmail = email;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

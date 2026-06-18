@@ -19,18 +19,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   debugPrint = (String? message, {int? wrapWidth}) {};
-  FlutterError.onError = (details) {
-    AppErrorController.report(details.exception, details.stack);
-  };
-  PlatformDispatcher.instance.onError = (error, stackTrace) {
-    AppErrorController.report(error, stackTrace);
-    return true;
-  };
-  ErrorWidget.builder = (details) {
-    return UnexpectedErrorView(
-      error: AppErrorData.from(details.exception, details.stack),
-    );
-  };
+  // Most framework and asynchronous errors are recoverable and should not
+  // replace an otherwise usable page.
+  FlutterError.onError = (_) {};
+  PlatformDispatcher.instance.onError = (_, _) => true;
+  // Error page disabled: render nothing instead of swapping in an error
+  // screen when a widget fails to build. PageErrorFallback is kept for reuse.
+  ErrorWidget.builder = (details) => const SizedBox.shrink();
 
   try {
     await Firebase.initializeApp(
@@ -62,7 +57,7 @@ class _BootstrapErrorApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: TravelAgentTheme.light(),
-      home: UnexpectedErrorView(error: error),
+      home: UnexpectedErrorView(error: error, showBackButton: false),
     );
   }
 }

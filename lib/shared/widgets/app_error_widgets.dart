@@ -1,17 +1,52 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/errors/app_error.dart';
 import '../../core/localization/app_text.dart';
+
+class PageErrorFallback extends StatelessWidget {
+  const PageErrorFallback({required this.error, super.key});
+
+  final AppErrorData error;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!_occupiesMostOfPage(context, constraints)) {
+          return const SizedBox.shrink();
+        }
+        return UnexpectedErrorView(error: error);
+      },
+    );
+  }
+
+  bool _occupiesMostOfPage(BuildContext context, BoxConstraints constraints) {
+    if (!constraints.hasBoundedWidth || !constraints.hasBoundedHeight) {
+      return false;
+    }
+
+    final viewport = MediaQuery.maybeSizeOf(context);
+    if (viewport == null || viewport.isEmpty) {
+      return constraints.maxWidth >= 280 && constraints.maxHeight >= 320;
+    }
+
+    return constraints.maxWidth >= viewport.width * .72 &&
+        constraints.maxHeight >= viewport.height * .55;
+  }
+}
 
 class UnexpectedErrorView extends StatelessWidget {
   const UnexpectedErrorView({
     required this.error,
     this.compact = false,
+    this.showBackButton = true,
     super.key,
   });
 
   final AppErrorData error;
   final bool compact;
+  final bool showBackButton;
 
   @override
   Widget build(BuildContext context) {
@@ -22,21 +57,42 @@ class UnexpectedErrorView extends StatelessWidget {
     return ColoredBox(
       color: Theme.of(context).scaffoldBackgroundColor,
       child: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Material(
-                color: colors.surfaceContainerLow,
-                borderRadius: BorderRadius.circular(28),
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: content,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(
+                    24,
+                    showBackButton ? 72 : 24,
+                    24,
+                    24,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    child: Material(
+                      color: colors.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(28),
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: content,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
+            if (showBackButton)
+              Positioned(
+                left: 8,
+                top: 8,
+                child: IconButton(
+                  tooltip: appText(context, 'Back'),
+                  onPressed: () => _returnWithRouter(context),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -149,6 +205,37 @@ class _UnexpectedErrorPanelState extends State<_UnexpectedErrorPanel> {
       ],
     );
   }
+}
+
+void _returnWithRouter(BuildContext context) {
+  final router = GoRouter.maybeOf(context);
+  AppErrorController.clear();
+  if (router == null) return;
+
+  if (router.canPop()) {
+    router.pop();
+    return;
+  }
+
+  final fallback = _routerFallbackLocation(
+    router.routerDelegate.currentConfiguration.uri,
+  );
+  if (fallback != null) router.go(fallback);
+}
+
+String? _routerFallbackLocation(Uri currentUri) {
+  final path = currentUri.path;
+  if (path == '/') return null;
+  if (path == '/notifications' || path.startsWith('/tools/')) return '/';
+  if (path.startsWith('/chat/')) return '/chat';
+  if (path == '/profile/settings/linked-accounts') {
+    return '/profile/settings';
+  }
+  if (path == '/profile/settings') return '/profile';
+  if (path == '/profile/performance' || path == '/profile/archived') {
+    return '/profile/settings';
+  }
+  return '/';
 }
 
 Future<void> showUnexpectedErrorDialog(

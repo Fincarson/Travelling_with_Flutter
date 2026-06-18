@@ -245,7 +245,6 @@ service cloud.firestore {
         request.resource.data.type in [
           'text',
           'attachment',
-          'system',
           'ai',
           'trip_update',
           'poll',
@@ -418,6 +417,19 @@ service cloud.firestore {
         ]);
     }
 
+    function validTripMembershipSnapshot(tripId) {
+      return request.resource.data.tripId == tripId &&
+        validRole(request.resource.data.role) &&
+        request.resource.data.status in ['active', 'invited', 'left'] &&
+        request.resource.data.titleSnapshot is string &&
+        request.resource.data.destinationSnapshot is string &&
+        (
+          !request.resource.data.keys().hasAny(['coverImageUrl']) ||
+          request.resource.data.coverImageUrl == null ||
+          request.resource.data.coverImageUrl is string
+        );
+    }
+
     function editorTripFieldsOnly() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
         'title',
@@ -539,13 +551,14 @@ service cloud.firestore {
         );
     }
 
+    // The travel_users/{uid} document is private: only its owner can read or
+    // write it. Strict per-field enum/shape validators previously rejected the
+    // ENTIRE write (merge re-validates existing fields), so a single legacy
+    // value (e.g. an old travelPace) blocked favorites and profile saves.
+    // Ownership is the security boundary here; field validation is the client's
+    // job, so we only require the caller to be the owner.
     function canWriteOwnTravelUser(userId) {
-      return signedIn() &&
-        request.auth.uid == userId &&
-        validTravelUserSettings() &&
-        validTravelUserOnboarding() &&
-        validTravelUserLegalConsent() &&
-        validTravelUserPersonalization();
+      return signedIn() && request.auth.uid == userId;
     }
 
     match /travel_users/{userId} {
@@ -557,15 +570,12 @@ service cloud.firestore {
         allow read: if signedIn() &&
           (request.auth.uid == userId || canReadTrip(tripId));
         allow create, update: if signedIn() &&
-          request.resource.data.tripId == tripId &&
-          validRole(request.resource.data.role) &&
+          validTripMembershipSnapshot(tripId) &&
           (
-            request.auth.uid == userId ||
             canEditTrip(tripId) ||
             canEditTripAfter(tripId)
           );
-        allow delete: if signedIn() &&
-          (request.auth.uid == userId || canEditTrip(tripId));
+        allow delete: if signedIn() && canEditTrip(tripId);
       }
 
       match /trips/{tripId} {
@@ -581,6 +591,16 @@ service cloud.firestore {
       }
 
       match /notificationTokens/{tokenId} {
+        allow read, create, update, delete: if signedIn() &&
+          request.auth.uid == userId;
+      }
+
+      match /tripPreviewJobs/{jobId} {
+        allow read, delete: if signedIn() && request.auth.uid == userId;
+        allow create, update: if false;
+      }
+
+      match /createTripPlannerSessions/{sessionId} {
         allow read, create, update, delete: if signedIn() &&
           request.auth.uid == userId;
       }
@@ -713,9 +733,10 @@ service cloud.firestore {
         match /messages/{messageId} {
           allow read: if canReadTrip(tripId);
           allow create: if signedIn() &&
-            canReadTrip(tripId) &&
+            canEditTrip(tripId) &&
             request.resource.data.senderId == request.auth.uid;
           allow update, delete: if signedIn() &&
+            canEditTrip(tripId) &&
             (
               isOwner(tripId) ||
               resource.data.senderId == request.auth.uid

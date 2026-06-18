@@ -304,6 +304,9 @@ class _TripAiMessage {
 
 String _assistantErrorMessage(Object error) {
   final text = error.toString();
+  if (_isInvalidAiProviderKeyError(error)) {
+    return 'The server OpenAI key is invalid or revoked.';
+  }
   if (text.contains('timeout')) {
     return 'AI took too long to answer. Try again with a shorter request.';
   }

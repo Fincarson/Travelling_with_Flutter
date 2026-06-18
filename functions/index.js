@@ -2,6 +2,7 @@
 
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
+const {defineSecret} = require("firebase-functions/params");
 const {
   onDocumentCreated,
   onDocumentWritten,
@@ -13,8 +14,14 @@ const {randomInt} = require("crypto");
 
 admin.initializeApp();
 
-const openAiModel = "gpt-5.5";
+// Real OpenAI model IDs. The previous "gpt-5.4-mini"/"gpt-5.5" do not exist,
+// so every Responses API call returned 400 and the AI failed instantly.
+// These support the reasoning.effort / text.verbosity params used below.
+const openAiChatModel = "gpt-5-mini";
+const openAiItineraryModel = "gpt-5";
 const openAiTimeoutMs = 30000;
+const geoapifyApiKeySecret = defineSecret("GEOAPIFY_API_KEY");
+const openAiApiKeySecret = defineSecret("OPENAI_API_KEY");
 const translationClient = new TranslationServiceClient();
 const currencyRatesCacheLifetimeMs = 24 * 60 * 60 * 1000;
 const currencyRatesDocument = admin
@@ -23,11 +30,241 @@ const currencyRatesDocument = admin
     .doc("currencyRates");
 
 function geoapifyApiKey() {
-  return String(process.env.GEOAPIFY_API_KEY ?? "").trim();
+  return String(geoapifyApiKeySecret.value() ?? "").trim();
 }
 
 function openAiApiKey() {
-  return String(process.env.OPENAI_API_KEY ?? "").trim();
+  return String(openAiApiKeySecret.value() ?? "").trim();
+}
+
+function requireAuthenticatedUid(request, message = "Sign in to continue.") {
+  const uid = String(request.auth?.uid ?? "").trim();
+  if (!uid) {
+    throw new HttpsError("unauthenticated", message);
+  }
+  return uid;
+}
+
+function validDocumentId(value) {
+  const text = String(value ?? "").trim();
+  return text.length > 0 && text.length <= 128 && !text.includes("/");
+}
+
+function validLatitude(value) {
+  return Number.isFinite(value) && value >= -90 && value <= 90;
+}
+
+function validLongitude(value) {
+  return Number.isFinite(value) && value >= -180 && value <= 180;
+}
+
+function validIsoDate(value) {
+  const text = String(value ?? "");
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return false;
+  const date = new Date(`${text}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) &&
+    date.getUTCFullYear() === Number(match[1]) &&
+    date.getUTCMonth() + 1 === Number(match[2]) &&
+    date.getUTCDate() === Number(match[3]);
+}
+
+function safeShortStrings(value, {limit = 20, maxLength = 120} = {}) {
+  if (!Array.isArray(value)) return [];
+  return value
+      .slice(0, limit)
+      .map((item) => String(item ?? "").trim())
+      .filter((item) => item.length > 0 && item.length <= maxLength);
+}
+
+function favoritePlaceId(value) {
+  return String(value ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, "-")
+      .replace(/^-+|-+$/g, "");
+}
+
+function cleanFavoritePlaces(value) {
+  if (!Array.isArray(value) || value.length > 50) {
+    throw new HttpsError(
+        "invalid-argument",
+        "Favorite places must be a list of 50 places or fewer.",
+    );
+  }
+  return value.map((place) => {
+    const raw = place && typeof place === "object" ? place : {};
+    const name = String(raw.name ?? "").trim();
+    const id = String(raw.id ?? favoritePlaceId(name)).trim();
+    if (!id || id.length > 128 || !name || name.length > 160) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Favorite places must include a valid id and name.",
+      );
+    }
+    return {
+      id,
+      name,
+      description: String(raw.description ?? "").trim().slice(0, 500),
+      imageUrl: String(raw.imageUrl ?? "").trim().slice(0, 1000),
+      tags: safeShortStrings(raw.tags, {limit: 12, maxLength: 40}),
+    };
+  });
+}
+
+function cleanFavoriteTripIds(value) {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new HttpsError(
+        "invalid-argument",
+        "Favorite trips must be a list of 100 trips or fewer.",
+    );
+  }
+  return [...new Set(
+      value
+          .map((item) => String(item ?? "").trim())
+          .filter((item) =>
+            item.length > 0 && item.length <= 128 && !item.includes("/"),
+          ),
+  )].sort();
+}
+
+async function requireTripEditor(request, tripId) {
+  const uid = requireAuthenticatedUid(
+      request,
+      "Sign in to update a trip plan.",
+  );
+  if (!validDocumentId(tripId)) {
+    throw new HttpsError("invalid-argument", "A valid trip is required.");
+  }
+
+  const snapshot = await admin.firestore()
+      .collection("trips")
+      .doc(String(tripId).trim())
+      .get();
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Trip not found.");
+  }
+
+  const trip = snapshot.data() || {};
+  const memberIds = Array.isArray(trip.memberIds)
+    ? trip.memberIds.map(String)
+    : [];
+  const role = String(trip.roles?.[uid] ?? "");
+  if (!memberIds.includes(uid) || !["owner", "editor"].includes(role)) {
+    throw new HttpsError(
+        "permission-denied",
+        "Only trip owners and editors can update the plan.",
+    );
+  }
+  return trip;
+}
+
+function activeMemberIds(data) {
+  return Array.isArray(data?.memberIds) ?
+    data.memberIds.map(String) :
+    [];
+}
+
+function roleMap(data) {
+  return data?.roles && typeof data.roles === "object" ?
+    {...data.roles} :
+    {};
+}
+
+function tripTitle(data) {
+  const destination = String(data?.destination || "Untitled trip").trim() ||
+    "Untitled trip";
+  return String(data?.title || destination).trim() || destination;
+}
+
+function tripCoverImage(data) {
+  if (!Array.isArray(data?.images)) return null;
+  const image = data.images
+      .map((value) => String(value || "").trim())
+      .find((value) => value.length > 0);
+  return image || null;
+}
+
+async function deleteReferencesInBatches(db, references) {
+  const unique = new Map();
+  for (const reference of references) {
+    unique.set(reference.path, reference);
+  }
+  const values = [...unique.values()];
+  for (let start = 0; start < values.length; start += 450) {
+    const batch = db.batch();
+    for (const reference of values.slice(start, start + 450)) {
+      batch.delete(reference);
+    }
+    await batch.commit();
+  }
+}
+
+async function deleteGroupChatTree({
+  db,
+  chatId,
+  ownerId,
+  requireSoleOwner = false,
+}) {
+  const chatRef = db.collection("chat_groups").doc(chatId);
+  const chatSnapshot = await chatRef.get();
+  if (!chatSnapshot.exists) return;
+  const chat = chatSnapshot.data() || {};
+  if (
+    String(chat.ownerId || "") !== ownerId ||
+    String(chat.roles?.[ownerId] || "") !== "owner"
+  ) {
+    throw new HttpsError(
+        "permission-denied",
+        "Only the group owner can delete this chat.",
+    );
+  }
+  if (requireSoleOwner && activeMemberIds(chat).length > 1) {
+    throw new HttpsError(
+        "failed-precondition",
+        "Choose a new group owner before leaving.",
+    );
+  }
+
+  const [members, invites, joinCodes, globalInvites] = await Promise.all([
+    chatRef.collection("members").get(),
+    chatRef.collection("invites").get(),
+    db.collection("chat_join_codes").where("chatId", "==", chatId).get(),
+    db.collection("chat_invites").where("chatId", "==", chatId).get(),
+  ]);
+  const externalReferences = [];
+  for (const member of members.docs) {
+    externalReferences.push(
+        db.collection("travel_users")
+            .doc(member.id)
+            .collection("chatMemberships")
+            .doc(chatId),
+    );
+  }
+  for (const invite of [...invites.docs, ...globalInvites.docs]) {
+    const inviteeUid = String(invite.data()?.inviteeUid || "").trim();
+    if (inviteeUid) {
+      externalReferences.push(
+          db.collection("travel_users")
+              .doc(inviteeUid)
+              .collection("chatInvites")
+              .doc(invite.id),
+      );
+    }
+  }
+  externalReferences.push(...joinCodes.docs.map((doc) => doc.ref));
+  externalReferences.push(...globalInvites.docs.map((doc) => doc.ref));
+
+  await deleteReferencesInBatches(db, externalReferences);
+  await db.recursiveDelete(chatRef);
+  await admin.storage().bucket().deleteFiles({
+    prefix: `chat_attachments/${chatId}/`,
+  }).catch((error) => {
+    logger.warn("Could not delete every group chat attachment", {
+      chatId,
+      message: error?.message,
+    });
+  });
 }
 
 function safeTravelerCount(value) {
@@ -36,9 +273,23 @@ function safeTravelerCount(value) {
   return Math.min(99, Math.max(1, parsed));
 }
 
+function travelerCountFromGroupType(value) {
+  switch (String(value ?? "").trim().toLowerCase()) {
+    case "couple":
+      return 2;
+    case "family":
+    case "friends":
+      return 4;
+    case "tour":
+      return 8;
+    default:
+      return 1;
+  }
+}
+
 const travelAssistantInstructions = [
   "You are a concise travel planning assistant inside a mobile app.",
-  "Help with itinerary order, budget tradeoffs, packing, food, transit,",
+  "Help with schedule order, budget tradeoffs, packing, food, transit,",
   "and practical destination advice. Keep replies friendly and short.",
   "Use appContext.localDate, appContext.localTime, and appContext.timeZoneOffset",
   "as the source of truth for today, tomorrow, and relative dates.",
@@ -46,13 +297,14 @@ const travelAssistantInstructions = [
 ].join(" ");
 
 const tripPlanInstructions = [
-  "Generate a practical travel itinerary for a mobile travel app.",
-  "Use realistic attraction names, reasonable pacing, and approximate costs.",
+  "Generate a practical travel schedule as strict JSON only.",
+  "Use 24-hour time format like '19:30' (zero-padded HH:mm) for every schedule time. Never use AM/PM.",
+  "Use current attraction names for the destination.",
+  "Keep costs realistic but approximate.",
   "Treat selected tags and custom preference tags as concrete itinerary requirements, not decorative labels.",
   "For each distinctive tag, include at least one matching schedule item, venue area, event search, food stop, accessibility choice, or practical constraint.",
   "For example, anime should trigger anime convention/event-calendar research when dates match, or anime districts, stores, themed cafes, arcades, museums, or pop-culture stops when no convention is current.",
   "Halal food should trigger halal restaurants or Muslim-friendly food areas. Wheelchair access should trigger accessible transit and step-free venues.",
-  "Keep activities suitable for the destination, dates, budget, number of travelers, and tags.",
   "Use appContext.localDate and appContext.timeZoneOffset as today's context.",
   "Use startLocation as the trip origin when provided. If startLocation is missing, use appContext.location when available.",
   "If startLocation has an address, use that address as the origin reference; do not show raw coordinates in user-facing itinerary text.",
@@ -64,19 +316,26 @@ const tripPlanInstructions = [
   "Every day must include realistic place-to-place movement between separated stops, such as walk, metro, taxi, train, airport transfer, or buffer time before the next venue.",
   "Do not list attractions back-to-back as if travel time is zero. Leave realistic gaps for transit, walking, queues, family pacing, meals, check-in, check-out, airport security, and baggage.",
   "If exact public transport schedules or flight times are uncertain, say to confirm the exact operator/time instead of presenting the time as guaranteed.",
+  "If flight details include departure or landing time/place, treat those as fixed user-provided constraints and build airport transfers and sightseeing around them.",
   "For international trips, do not end the itinerary at sightseeing. Add pack-up, airport or station transfer, departure, arrival, and return-home steps when the trip ends.",
   "For a one-day trip, do not add hotel stays or hotel bookings unless the user explicitly asks for lodging.",
   "When moving to a different city or district, or when returning home, include pack-up/preparation wording before the transport.",
   "Choose transport by distance: local transit/taxi for nearby trips, train/bus/high-speed rail for regional trips, and flights only for genuinely long-distance trips.",
   "Never suggest a plane for short regional travel such as Hsinchu to Taipei.",
   "Use current-known attraction names, transportation options, ticket prices, and local food costs.",
+  "Use specific real place names or clearly named local areas. Do not use generic stop titles like \"signature landmark visit\", \"historic district walk\", \"scenic viewpoint stop\", or \"local scene stop\" unless the title also includes the actual venue or district name.",
+  "Every schedule item title must name a specific real place, venue, neighborhood, station, market, or street at the destination. Even transfer/movement steps must name where they go (for example, \"Walk to Nishiki Market\", not \"Move to the next area\").",
+  "When the destination name has multiple comma-separated parts, keep enough administrative context to avoid choosing a different city with the same name.",
+  "For mappable sightseeing, food, shopping, museum, cafe, beach, hiking, and temple stops, include address, latitude, longitude, and imageUrl when you can; use null only for non-place reminders, uncertain transport, or unknown coordinates.",
   "When live data may vary, mark times, prices, and operator details as approximate and tell the user to confirm before departure.",
   "Use ordinary local price ranges for meals. Do not price a normal Taipei local lunch at TWD 700 unless it is fine dining, a multi-person/shared meal, or explicitly expensive.",
+  "Return no markdown and no explanation.",
 ].join(" ");
 
 const createTripInstructions = [
   "You are the Create Trip assistant inside a mobile travel app.",
-  "Interpret the user message and update the trip draft.",
+  "Actually interpret the user message and update the trip draft.",
+  "Preserve the exact destination name as provided by the user, especially for well-known cities like Tokyo, Taipei, Osaka, Seoul, Bangkok, Singapore, etc. Do not shorten or alter city names.",
   "Ask for exactly one missing important field at a time.",
   "When useful, create a tappable widget with 2 to 4 options.",
   "Widget option values must be short user messages the app can send back.",
@@ -85,7 +344,8 @@ const createTripInstructions = [
   "Use appContext.location only when the user says near me, nearby, my location, or asks for location-aware help.",
   "Required final fields: destination, startDate, endDate, budget, numOfTravelers.",
   "Dates must be ISO yyyy-MM-dd. numOfTravelers must be an integer from 1 to 99.",
-  "If the user names a currency, set currency to its three-letter ISO 4217 code.",
+  "If the user names a currency, set currency to USD, TWD, IDR, JPY, or EUR.",
+  "Return only JSON matching the schema.",
 ].join(" ");
 
 function aiLanguageName(profileLanguage, outputLanguage) {
@@ -121,14 +381,6 @@ function aiLanguageName(profileLanguage, outputLanguage) {
     default:
       return "English";
   }
-}
-
-function outputLanguageInstructions(profileLanguage, outputLanguage) {
-  const language = aiLanguageName(profileLanguage, outputLanguage);
-  return [
-    `Write all user-facing text in ${language}.`,
-    "Do not infer language from currency; currency only controls money values.",
-  ].join(" ");
 }
 
 const tripPlanFormat = {
@@ -169,8 +421,22 @@ const tripPlanFormat = {
               ],
             },
             cost: {type: "integer"},
+            address: {type: ["string", "null"]},
+            latitude: {type: ["number", "null"]},
+            longitude: {type: ["number", "null"]},
+            imageUrl: {type: ["string", "null"]},
           },
-          required: ["day", "time", "activity", "type", "cost"],
+          required: [
+            "day",
+            "time",
+            "activity",
+            "type",
+            "cost",
+            "address",
+            "latitude",
+            "longitude",
+            "imageUrl",
+          ],
         },
       },
       bookings: {
@@ -310,6 +576,98 @@ const scheduleStopFormat = {
       cost: {type: "integer"},
     },
     required: ["day", "time", "activity", "type", "cost"],
+  },
+};
+
+const dayPlanEditFormat = {
+  type: "json_schema",
+  name: "day_plan_edit",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      feasible: {type: "boolean"},
+      warning: {type: "string"},
+      items: {
+        type: "array",
+        maxItems: 8,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            day: {type: "integer"},
+            time: {type: "string"},
+            activity: {type: "string"},
+            type: {
+              type: "string",
+              enum: [
+                "place",
+                "food",
+                "restaurant",
+                "walk",
+                "museum",
+                "beach",
+                "shopping",
+                "train",
+                "flight",
+                "hotel",
+                "cafe",
+                "hiking",
+                "temple",
+              ],
+            },
+            cost: {type: "integer"},
+          },
+          required: ["day", "time", "activity", "type", "cost"],
+        },
+      },
+    },
+    required: ["feasible", "warning", "items"],
+  },
+};
+
+const transportRecommendationsFormat = {
+  type: "json_schema",
+  name: "transport_recommendations",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      summary: {type: "string"},
+      options: {
+        type: "array",
+        maxItems: 5,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            mode: {type: "string"},
+            provider: {type: "string"},
+            route: {type: "string"},
+            duration: {type: "string"},
+            price: {type: "integer"},
+            currency: {type: "string"},
+            bookingHint: {type: "string"},
+            sourceName: {type: "string"},
+            sourceUrl: {type: "string"},
+          },
+          required: [
+            "mode",
+            "provider",
+            "route",
+            "duration",
+            "price",
+            "currency",
+            "bookingHint",
+            "sourceName",
+            "sourceUrl",
+          ],
+        },
+      },
+    },
+    required: ["summary", "options"],
   },
 };
 
@@ -553,11 +911,16 @@ async function fetchCurrencyRates() {
 exports.searchPlaces = onCall(
   {
     region: "us-central1",
+    secrets: [geoapifyApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to search for places.");
     const query = String(request.data?.query ?? "").trim();
     if (query.length < 3) {
       return {results: []};
+    }
+    if (query.length > 120) {
+      throw new HttpsError("invalid-argument", "Search text is too long.");
     }
 
     const apiKey = geoapifyApiKey();
@@ -594,11 +957,13 @@ exports.searchPlaces = onCall(
 exports.reversePlace = onCall(
   {
     region: "us-central1",
+    secrets: [geoapifyApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to look up a location.");
     const latitude = Number(request.data?.latitude);
     const longitude = Number(request.data?.longitude);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    if (!validLatitude(latitude) || !validLongitude(longitude)) {
       throw new HttpsError("invalid-argument", "Location is required.");
     }
 
@@ -635,13 +1000,16 @@ exports.reversePlace = onCall(
 exports.searchNearbyPlaces = onCall(
   {
     region: "us-central1",
+    secrets: [geoapifyApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to search nearby places.");
     const latitude = Number(request.data?.latitude);
     const longitude = Number(request.data?.longitude);
-    const categories = Array.isArray(request.data?.categories) ?
-      request.data.categories.map((item) => String(item).trim()).filter(Boolean) :
-      [];
+    const categories = safeShortStrings(request.data?.categories, {
+      limit: 10,
+      maxLength: 80,
+    }).filter((item) => /^[a-z0-9_.-]+$/i.test(item));
     const radiusMeters = Math.min(
       5000,
       Math.max(100, Number.parseInt(request.data?.radiusMeters ?? 1200, 10)),
@@ -652,8 +1020,8 @@ exports.searchNearbyPlaces = onCall(
     );
 
     if (
-      !Number.isFinite(latitude) ||
-      !Number.isFinite(longitude) ||
+      !validLatitude(latitude) ||
+      !validLongitude(longitude) ||
       !categories.length
     ) {
       throw new HttpsError(
@@ -689,6 +1057,62 @@ exports.searchNearbyPlaces = onCall(
         message: error?.message,
       });
       throw new HttpsError("unavailable", "Nearby places are unavailable.");
+    }
+  },
+);
+
+exports.searchItineraryStop = onCall(
+  {
+    region: "us-central1",
+    secrets: [geoapifyApiKeySecret],
+  },
+  async (request) => {
+    requireAuthenticatedUid(request, "Sign in to search itinerary stops.");
+    const query = String(request.data?.query ?? "").trim();
+    const destination = String(request.data?.destination ?? "").trim();
+    const latitude = Number(request.data?.latitude);
+    const longitude = Number(request.data?.longitude);
+    if (query.length < 3) {
+      return {results: []};
+    }
+    if (query.length > 200 || destination.length > 200) {
+      throw new HttpsError("invalid-argument", "Place search is too long.");
+    }
+    if (
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      (!validLatitude(latitude) || !validLongitude(longitude))
+    ) {
+      throw new HttpsError("invalid-argument", "Location is invalid.");
+    }
+
+    const apiKey = geoapifyApiKey();
+    if (!apiKey) {
+      logger.error("Geoapify itinerary stop lookup is not configured");
+      throw new HttpsError(
+        "failed-precondition",
+        "Itinerary stop lookup is not configured.",
+      );
+    }
+
+    try {
+      const results = await fetchGeoapifyStopSearch({
+        query,
+        destination,
+        latitude,
+        longitude,
+        apiKey,
+      });
+      return {
+        results: rankGeoapifyResults(results, query).slice(0, 4),
+      };
+    } catch (error) {
+      logger.error("Geoapify itinerary stop lookup failed", {
+        query,
+        destination,
+        message: error?.message,
+      });
+      throw new HttpsError("unavailable", "Itinerary stop lookup is unavailable.");
     }
   },
 );
@@ -734,6 +1158,36 @@ async function fetchGeoapifyReverse({latitude, longitude, apiKey}) {
   return Array.isArray(body.results) && body.results.length
     ? body.results[0]
     : null;
+}
+
+async function fetchGeoapifyStopSearch({
+  query,
+  destination,
+  latitude,
+  longitude,
+  apiKey,
+}) {
+  const url = new URL("https://api.geoapify.com/v1/geocode/search");
+  const text = destination ? `${query}, ${destination}` : query;
+  url.searchParams.set("text", text);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("limit", "4");
+  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    url.searchParams.set("bias", `proximity:${longitude},${latitude}`);
+  }
+  url.searchParams.set("apiKey", apiKey);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Geoapify stop search failed with ${response.status}: ` +
+      detail.slice(0, 300),
+    );
+  }
+
+  const body = await response.json();
+  return Array.isArray(body.results) ? body.results : [];
 }
 
 async function fetchGeoapifyPlaces({
@@ -865,11 +1319,506 @@ function normalizedPlaceName(value) {
     .replace(/[^a-z0-9]+/g, "");
 }
 
-exports.chatWithAssistant = onCall(
+function validateTripPlanRequest(data) {
+  const place = data.place ?? {};
+  const destination = String(place.name ?? "").trim();
+  const startDate = String(data.startDate ?? "").trim();
+  const endDate = String(data.endDate ?? "").trim();
+  const budget = Number.parseInt(data.budget, 10);
+  const numOfTravelers = data.numOfTravelers == null ?
+    travelerCountFromGroupType(data.groupType) :
+    Number.parseInt(data.numOfTravelers, 10);
+
+  if (
+    !destination ||
+    destination.length > 200 ||
+    !validIsoDate(startDate) ||
+    !validIsoDate(endDate) ||
+    new Date(`${endDate}T00:00:00.000Z`) <
+      new Date(`${startDate}T00:00:00.000Z`) ||
+    !Number.isFinite(budget) ||
+    budget < 0 ||
+    budget > 1000000000 ||
+    !Number.isFinite(numOfTravelers) ||
+    numOfTravelers < 1 ||
+    numOfTravelers > 99
+  ) {
+    throw new HttpsError("invalid-argument", "Trip details are required.");
+  }
+}
+
+async function generateTripPlanFromRequest(data, options = {}) {
+  validateTripPlanRequest(data);
+  const place = data.place ?? {};
+  const destination = String(place.name ?? "").trim();
+  const startDate = String(data.startDate ?? "").trim();
+  const endDate = String(data.endDate ?? "").trim();
+  const budget = Number.parseInt(data.budget, 10);
+  const numOfTravelers = data.numOfTravelers == null ?
+    travelerCountFromGroupType(data.groupType) :
+    safeTravelerCount(data.numOfTravelers);
+  const outputLanguage = aiLanguageName(
+      data.profileLanguage,
+      data.outputLanguage,
+  );
+  const languageInstructions = [
+    `Write all user-facing itinerary text in ${outputLanguage}.`,
+    "Do not infer language from currency; currency only controls money.",
+  ].join(" ");
+
+  const plan = await createStructuredResponse({
+    instructions: `${tripPlanInstructions} ${languageInstructions}`,
+    input: {
+      destination,
+      formattedAddress: String(place.formatted ?? destination),
+      destinationLocation: {
+        latitude: Number(place.latitude ?? 0),
+        longitude: Number(place.longitude ?? 0),
+      },
+      startDate,
+      endDate,
+      budgetUsd: budget,
+      currency: String(data.currency ?? "USD"),
+      profileLanguage: String(data.profileLanguage ?? "en"),
+      outputLanguage,
+      numOfTravelers,
+      preferences: safeShortStrings(data.preferences),
+      flight: {
+        airline: String(data.airline ?? ""),
+        flightNumber: String(data.flightCode ?? ""),
+        confirmation: String(data.flightConfirmation ?? ""),
+        departureTime: String(data.flightDepartureTime ?? ""),
+        departurePlace: String(data.flightDeparturePlace ?? ""),
+        landingTime: String(data.flightLandingTime ?? ""),
+        landingPlace: String(data.flightLandingPlace ?? ""),
+      },
+      startLocation: data.startLocation ?? null,
+      appContext: data.appContext ?? null,
+      schema: {
+        items: [{
+          day: 1,
+          time: "09:00 AM",
+          activity: "Activity name",
+          type: "place|food|walk|museum|beach|shopping|train",
+          cost: 25,
+          address: "Venue address or null",
+          latitude: -6.9175,
+          longitude: 107.6191,
+          imageUrl: "https://example.com/photo.jpg or null",
+        }],
+        bookings: [{
+          title: "Hotel or transport booking",
+          date: "YYYY-MM-DD",
+          time: "15:00",
+          reference: "short reference",
+          cost: 300,
+          type: "hotel|flight|train|place",
+        }],
+        checklist: [{
+          category: "Essentials",
+          items: ["Passport"],
+        }],
+      },
+    },
+    format: tripPlanFormat,
+    logContext: "OpenAI itinerary generation failed",
+    publicMessage: "AI itinerary generation failed.",
+    timeoutMs: options.timeoutMs,
+  });
+  return enrichTripPlanPlaces(plan, {
+    destination,
+    latitude: Number(place.latitude ?? 0),
+    longitude: Number(place.longitude ?? 0),
+  });
+}
+
+function sanitizedTripPreviewRequest(data) {
+  const place = data.place ?? {};
+  return {
+    place: {
+      name: String(place.name ?? "").trim(),
+      formatted: String(place.formatted ?? place.name ?? "").trim(),
+      latitude: Number(place.latitude ?? 0),
+      longitude: Number(place.longitude ?? 0),
+      placeId: String(place.placeId ?? place.formatted ?? place.name ?? ""),
+      country: place.country ? String(place.country) : null,
+    },
+    startDate: String(data.startDate ?? "").trim(),
+    endDate: String(data.endDate ?? "").trim(),
+    budget: Number.parseInt(data.budget, 10),
+    numOfTravelers: data.numOfTravelers == null ?
+      travelerCountFromGroupType(data.groupType) :
+      safeTravelerCount(data.numOfTravelers),
+    groupType: String(data.groupType ?? ""),
+    preferences: Array.isArray(data.preferences) ?
+      data.preferences.map((item) => String(item)).slice(0, 20) :
+      [],
+    currency: String(data.currency ?? "USD"),
+    profileLanguage: String(data.profileLanguage ?? "en"),
+    outputLanguage: String(data.outputLanguage ?? ""),
+    airline: String(data.airline ?? ""),
+    flightCode: String(data.flightCode ?? ""),
+    flightDepartureTime: String(data.flightDepartureTime ?? ""),
+    flightDeparturePlace: String(data.flightDeparturePlace ?? ""),
+    flightLandingTime: String(data.flightLandingTime ?? ""),
+    flightLandingPlace: String(data.flightLandingPlace ?? ""),
+    startLocation: data.startLocation ?? null,
+    appContext: data.appContext ?? null,
+    fallbackImages: Array.isArray(data.fallbackImages) ?
+      data.fallbackImages
+        .map((item) => String(item))
+        .filter((item) => item.startsWith("https://"))
+        .slice(0, 8) :
+      [],
+  };
+}
+
+async function enrichTripPlanPlaces(plan, destinationContext) {
+  const apiKey = geoapifyApiKey();
+  if (!apiKey || !Array.isArray(plan.items)) return plan;
+
+  const enrichedItems = [];
+  for (const item of plan.items) {
+    const enriched = {...item};
+    enriched.imageUrl = null;
+    if (shouldEnrichScheduleItem(item)) {
+      try {
+        const query = scheduleItemPlaceQuery(item);
+        const results = await fetchGeoapifyStopSearch({
+          query,
+          destination: destinationContext.destination,
+          latitude: destinationContext.latitude,
+          longitude: destinationContext.longitude,
+          apiKey,
+        });
+        const place = rankGeoapifyResults(results, query)[0];
+        if (place && shouldAcceptEnrichedPlace(item, place, destinationContext)) {
+          enriched.address = place.formatted;
+          enriched.latitude = place.latitude;
+          enriched.longitude = place.longitude;
+        }
+        const image = await firstPreviewImageForQueries([
+          `${query} ${destinationContext.destination}`,
+          query,
+          destinationContext.destination,
+        ]);
+        if (image) enriched.imageUrl = image;
+      } catch (error) {
+        logger.warn("Schedule item enrichment failed", {
+          activity: item.activity,
+          message: error?.message,
+        });
+      }
+    }
+    enrichedItems.push(enriched);
+  }
+  return {...plan, items: enrichedItems};
+}
+
+function shouldEnrichScheduleItem(item) {
+  const activity = String(item?.activity ?? "").trim().toLowerCase();
+  if (activity.length < 3) return false;
+  if (isGenericScheduleActivity(activity)) return false;
+  if (activity.includes("weather check") || activity.includes("rain chance")) {
+    return false;
+  }
+  if (
+    activity.includes("rain expected") ||
+    activity.includes("pack umbrella") ||
+    activity.includes("raincoat") ||
+    activity.includes("protect tickets") ||
+    activity.includes("indoor backup") ||
+    activity.startsWith("weather ") ||
+    activity.startsWith("ai weather ") ||
+    activity.startsWith("reminder:") ||
+    activity.startsWith("note:") ||
+    activity.startsWith("pack ") ||
+    activity.startsWith("prepare ") ||
+    activity.startsWith("bring ")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isGenericScheduleActivity(activity) {
+  return activity.includes("signature landmark") ||
+    activity.includes("transit-friendly district route") ||
+    activity.includes("scenic walk, riverside, or viewpoint") ||
+    activity.includes("find the best local scene") ||
+    activity.includes("nearby cafe or market stop") ||
+    activity.includes("known landmark or historic area") ||
+    activity.includes("local lunch area") ||
+    activity.includes("dinner near the evening area") ||
+    activity.includes("easy evening viewpoint") ||
+    activity.includes("shopping street or neighborhood browse") ||
+    activity.includes("food market or local specialty lunch") ||
+    activity.includes("golden-hour park, bridge, or plaza");
+}
+
+function shouldAcceptEnrichedPlace(item, place, destinationContext) {
+  const destinationLat = Number(destinationContext.latitude);
+  const destinationLng = Number(destinationContext.longitude);
+  const placeLat = Number(place.latitude);
+  const placeLng = Number(place.longitude);
+  if (
+    !Number.isFinite(destinationLat) ||
+    !Number.isFinite(destinationLng) ||
+    !Number.isFinite(placeLat) ||
+    !Number.isFinite(placeLng) ||
+    destinationLat === 0 ||
+    destinationLng === 0 ||
+    placeLat === 0 ||
+    placeLng === 0
+  ) {
+    return true;
+  }
+  const distance = distanceKm(destinationLat, destinationLng, placeLat, placeLng);
+  if (distance <= 80) return true;
+  return isLongDistanceScheduleItem(item);
+}
+
+function isLongDistanceScheduleItem(item) {
+  const activity = String(item?.activity ?? "").toLowerCase();
+  const type = String(item?.type ?? "").toLowerCase();
+  return type === "flight" ||
+    activity.includes("flight ") ||
+    activity.includes("fly ") ||
+    activity.includes("airport") ||
+    activity.includes("intercity") ||
+    activity.includes("long-haul") ||
+    activity.includes("return home") ||
+    activity.includes("go home");
+}
+
+function scheduleItemPlaceQuery(item) {
+  return String(item?.activity ?? "")
+    .replace(/\b(move|transfer|walk|visit|stop|check)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function distanceKm(lat1, lng1, lat2, lng2) {
+  const radiusKm = 6371;
+  const dLat = degreesToRadians(lat2 - lat1);
+  const dLng = degreesToRadians(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(degreesToRadians(lat1)) *
+      Math.cos(degreesToRadians(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return radiusKm * c;
+}
+
+function degreesToRadians(degrees) {
+  return degrees * Math.PI / 180;
+}
+
+async function previewImagesForJob(requestData, plan) {
+  const fallbackImages = Array.isArray(requestData.fallbackImages) ?
+    requestData.fallbackImages :
+    [];
+  const itemQueries = Array.isArray(plan?.items) ?
+    plan.items
+      .filter(shouldEnrichScheduleItem)
+      .map((item) => `${scheduleItemPlaceQuery(item)} ${requestData.place?.name}`)
+      .slice(0, 6) :
+    [];
+  const preferenceQueries = previewPreferenceImageQueries({
+    destination: requestData.place?.name,
+    preferences: requestData.preferences,
+  });
+  const searchedImages = [];
+  for (const query of [
+    ...preferenceQueries,
+    ...itemQueries,
+    requestData.place?.name,
+  ]) {
+    searchedImages.push(...await fetchDestinationPreviewImages(query));
+  }
+  if (!searchedImages.length) {
+    searchedImages.push(
+        ...await fetchDestinationPreviewImages(requestData.place?.name),
+    );
+  }
+  const seen = new Set();
+  return [...searchedImages, ...fallbackImages]
+    .filter((image) => typeof image === "string" && image.startsWith("https://"))
+    .filter((image) => {
+      if (seen.has(image)) return false;
+      seen.add(image);
+      return true;
+    })
+    .slice(0, 8);
+}
+
+function previewPreferenceImageQueries({destination, preferences}) {
+  const base = String(destination ?? "").trim();
+  if (!base || !Array.isArray(preferences)) return [];
+  const seen = new Set();
+  return preferences
+    .map((preference) => String(preference ?? "").trim())
+    .filter((preference) => {
+      if (preference.length < 2) return false;
+      const lower = preference.toLowerCase();
+      if (lower.startsWith("ai focus:")) return false;
+      if (seen.has(lower)) return false;
+      seen.add(lower);
+      return true;
+    })
+    .slice(0, 5)
+    .map((preference) => `${base} ${preference} travel`);
+}
+
+async function firstPreviewImageForQueries(queries) {
+  for (const query of queries) {
+    const images = await fetchDestinationPreviewImages(query);
+    if (images.length) return images[0];
+  }
+  return null;
+}
+
+async function fetchDestinationPreviewImages(destination, limit = 8) {
+  const googleImages = await fetchGooglePreviewImages(destination, limit);
+  if (googleImages.length) return googleImages;
+  return fetchWikimediaPreviewImages(destination, limit);
+}
+
+async function fetchGooglePreviewImages(destination, limit = 8) {
+  const query = `${String(destination ?? "").trim()} travel landmark`.trim();
+  const apiKey = String(process.env.GOOGLE_CUSTOM_SEARCH_API_KEY ?? "").trim();
+  const cx = String(process.env.GOOGLE_CUSTOM_SEARCH_CX ?? "").trim();
+  if (!query || !apiKey || !cx) return [];
+
+  const url = new URL("https://www.googleapis.com/customsearch/v1");
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("cx", cx);
+  url.searchParams.set("searchType", "image");
+  url.searchParams.set("q", query);
+  url.searchParams.set("num", String(Math.min(Math.max(limit, 1), 10)));
+  url.searchParams.set("safe", "active");
+  url.searchParams.set("imgType", "photo");
+
+  try {
+    const response = await fetch(url, {
+      headers: {"Accept": "application/json"},
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return [];
+    const body = await response.json();
+    return (Array.isArray(body.items) ? body.items : [])
+      .map((item) => item.link)
+      .filter(isPreviewImageUrl)
+      .slice(0, limit);
+  } catch (error) {
+    logger.warn("Google preview image search failed", {
+      destination,
+      message: error?.message,
+    });
+    return [];
+  }
+}
+
+async function fetchWikimediaPreviewImages(destination, limit = 8) {
+  const query = `${String(destination ?? "").trim()} travel landmark`.trim();
+  if (!query) return [];
+
+  const url = new URL("https://commons.wikimedia.org/w/api.php");
+  url.searchParams.set("action", "query");
+  url.searchParams.set("generator", "search");
+  url.searchParams.set("gsrsearch", query);
+  url.searchParams.set("gsrnamespace", "6");
+  url.searchParams.set("gsrlimit", "8");
+  url.searchParams.set("prop", "imageinfo");
+  url.searchParams.set("iiprop", "url");
+  url.searchParams.set("iiurlwidth", "900");
+  url.searchParams.set("format", "json");
+  url.searchParams.set("origin", "*");
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "TravellingWithFlutter/1.0 trip-preview-jobs",
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return [];
+    const body = await response.json();
+    const pages = body?.query?.pages ?? {};
+    return Object.values(pages)
+      .flatMap((page) => Array.isArray(page.imageinfo) ? page.imageinfo : [])
+      .map((info) => info.thumburl ?? info.url)
+      .filter(isPreviewImageUrl)
+      .slice(0, limit);
+  } catch (error) {
+    logger.warn("Preview image search failed", {
+      destination,
+      message: error?.message,
+    });
+    return [];
+  }
+}
+
+function isPreviewImageUrl(value) {
+  const lower = String(value ?? "").toLowerCase();
+  return lower.startsWith("https://") &&
+    (lower.includes(".jpg") ||
+      lower.includes(".jpeg") ||
+      lower.includes(".png") ||
+      lower.includes(".webp"));
+}
+
+function publicTripPreviewError(error) {
+  if (error instanceof HttpsError) return error.message;
+  return "AI could not finish the itinerary preview. Please try again.";
+}
+
+exports.searchDestinationImages = onCall(
   {
     region: "us-central1",
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to search trip images.");
+    const destination = String(request.data?.destination ?? "").trim();
+    const limit = Math.min(
+        Math.max(Number(request.data?.limit ?? 8) || 8, 1),
+        10,
+    );
+    if (destination.length < 2) {
+      throw new HttpsError("invalid-argument", "Destination is required.");
+    }
+    const preferences = Array.isArray(request.data?.preferences) ?
+      request.data.preferences :
+      [];
+    const queries = [
+      ...previewPreferenceImageQueries({destination, preferences}),
+      destination,
+    ];
+    const images = [];
+    const seen = new Set();
+    for (const query of queries) {
+      const results = await fetchDestinationPreviewImages(query, limit);
+      for (const image of results) {
+        if (seen.has(image)) continue;
+        seen.add(image);
+        images.push(image);
+        if (images.length >= limit) return {images};
+      }
+    }
+    return {images};
+  },
+);
+
+exports.chatWithAssistant = onCall(
+  {
+    region: "us-central1",
+    secrets: [openAiApiKeySecret],
+  },
+  async (request) => {
+    requireAuthenticatedUid(request, "Sign in to use the travel assistant.");
     const message = String(request.data?.message ?? "").trim();
     if (!message) {
       throw new HttpsError("invalid-argument", "Message is required.");
@@ -880,7 +1829,7 @@ exports.chatWithAssistant = onCall(
 
     const response = await fetchOpenAiResponses({
       payload: {
-        model: openAiModel,
+        model: openAiChatModel,
         instructions: travelAssistantInstructions,
         input: JSON.stringify({
           message,
@@ -893,14 +1842,6 @@ exports.chatWithAssistant = onCall(
       logContext: "OpenAI chat failed",
       publicMessage: "AI chat is unavailable.",
     });
-
-    if (!response.ok) {
-      logger.error("OpenAI chat failed", {
-        status: response.status,
-        messageLength: message.length,
-      });
-      throw new HttpsError("unavailable", "AI chat is unavailable.");
-    }
 
     const body = await response.json();
     const reply = outputText(body).trim();
@@ -915,6 +1856,7 @@ exports.chatWithAssistant = onCall(
 exports.recommendDestinations = onCall(
   {
     region: "us-central1",
+    secrets: [openAiApiKeySecret],
   },
   async (request) => {
     if (!request.auth) {
@@ -974,71 +1916,160 @@ exports.recommendDestinations = onCall(
   },
 );
 
-exports.generateTripPlan = onCall(
+exports.saveUserFavorites = onCall(
   {
     region: "us-central1",
   },
   async (request) => {
-    const data = request.data ?? {};
-    const place = data.place ?? {};
-    const destination = String(place.name ?? "").trim();
-    const startDate = String(data.startDate ?? "").trim();
-    const endDate = String(data.endDate ?? "").trim();
-    const budget = Number.parseInt(data.budget, 10);
-
-    if (!destination || !startDate || !endDate || !Number.isFinite(budget)) {
-      throw new HttpsError("invalid-argument", "Trip details are required.");
-    }
-
-    const languageInstructions = outputLanguageInstructions(
-      data.profileLanguage,
-      data.outputLanguage,
+    const uid = requireAuthenticatedUid(
+        request,
+        "Sign in to update favorites.",
+    );
+    const favoritePlaces = cleanFavoritePlaces(request.data?.favoritePlaces);
+    const favoriteTripIds = cleanFavoriteTripIds(
+        request.data?.favoriteTripIds,
     );
 
-    const plan = await createStructuredResponse({
-      instructions: `${tripPlanInstructions} ${languageInstructions}`,
-      input: {
-        destination,
-        formattedAddress: String(place.formatted ?? destination),
-        destinationLocation: {
-          latitude: Number(place.latitude ?? 0),
-          longitude: Number(place.longitude ?? 0),
-        },
-        startDate,
-        endDate,
-        budget,
-        currency: String(data.currency ?? "USD"),
-        profileLanguage: String(data.profileLanguage ?? "en"),
-        outputLanguage: aiLanguageName(data.profileLanguage, data.outputLanguage),
-        numOfTravelers: safeTravelerCount(data.numOfTravelers),
-        preferences: Array.isArray(data.preferences) ? data.preferences : [],
-        flight: {
-          airline: String(data.airline ?? ""),
-          confirmation: String(data.flightConfirmation ?? ""),
-        },
-        startLocation: data.startLocation ?? null,
-        appContext: data.appContext ?? null,
-      },
-      format: tripPlanFormat,
-      logContext: "OpenAI itinerary generation failed",
-      publicMessage: "AI itinerary generation failed.",
+    await admin.firestore().collection("travel_users").doc(uid).set({
+      favoritePlaces,
+      favoriteTripIds,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, {merge: true});
+
+    return {
+      favoritePlaceCount: favoritePlaces.length,
+      favoriteTripCount: favoriteTripIds.length,
+    };
+  },
+);
+
+exports.generateTripPlan = onCall(
+  {
+    region: "us-central1",
+    // Itinerary creation is pure AI with no client fallback. Use the gen-2
+    // maximum (3600s / 60 min) so the model is effectively never cut off.
+    timeoutSeconds: 3600,
+    memory: "512MiB",
+    secrets: [openAiApiKeySecret, geoapifyApiKeySecret],
+  },
+  async (request) => {
+    requireAuthenticatedUid(request, "Sign in to generate a trip.");
+    const plan = await generateTripPlanFromRequest(request.data ?? {}, {
+      timeoutMs: 3500000,
+    });
+    return {plan};
+  },
+);
+
+exports.createTripPreviewJob = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const userId = request.auth?.uid;
+    if (!userId) {
+      throw new HttpsError("unauthenticated", "Sign in to create a preview.");
+    }
+
+    validateTripPlanRequest(request.data ?? {});
+    const jobRef = admin
+      .firestore()
+      .collection("travel_users")
+      .doc(userId)
+      .collection("tripPreviewJobs")
+      .doc();
+
+    await jobRef.set({
+      ownerId: userId,
+      status: "queued",
+      request: sanitizedTripPreviewRequest(request.data ?? {}),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    return {plan};
+    return {jobId: jobRef.id};
+  },
+);
+
+exports.runTripPreviewJob = onDocumentCreated(
+  {
+    region: "us-central1",
+    document: "travel_users/{userId}/tripPreviewJobs/{jobId}",
+    // Background itinerary generation: use the event-function maximum (540s)
+    // so the model is not cut off.
+    timeoutSeconds: 540,
+    memory: "512MiB",
+    secrets: [openAiApiKeySecret, geoapifyApiKeySecret],
+  },
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) return;
+
+    const data = snapshot.data() ?? {};
+    if (data.status !== "queued") return;
+
+    const userId = event.params.userId;
+    const jobId = event.params.jobId;
+    const jobRef = admin
+      .firestore()
+      .collection("travel_users")
+      .doc(userId)
+      .collection("tripPreviewJobs")
+      .doc(jobId);
+
+    await jobRef.set({
+      status: "running",
+      startedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, {merge: true});
+
+    try {
+      const requestData = data.request ?? {};
+      const plan = await generateTripPlanFromRequest(requestData, {
+        timeoutMs: 520000,
+      });
+      const images = await previewImagesForJob(requestData, plan);
+      await jobRef.set({
+        status: "ready",
+        result: {plan, images},
+        finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, {merge: true});
+    } catch (error) {
+      logger.error("Trip preview job failed", {
+        userId,
+        jobId,
+        message: error?.message,
+      });
+      await jobRef.set({
+        status: "failed",
+        errorMessage: publicTripPreviewError(error),
+        finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, {merge: true});
+    }
   },
 );
 
 exports.generateScheduleStop = onCall(
   {
     region: "us-central1",
+    timeoutSeconds: 3600,
+    secrets: [openAiApiKeySecret],
   },
   async (request) => {
     const data = request.data ?? {};
-    const destination = String(data.destination ?? "").trim();
+    const trip = await requireTripEditor(request, data.tripId);
+    const destination = String(trip.destination ?? "").trim();
     const targetDay = Number.parseInt(data.targetDay, 10);
     const requestText = String(data.request ?? "").trim();
 
-    if (!destination || !Number.isFinite(targetDay)) {
+    if (
+      !destination ||
+      !Number.isFinite(targetDay) ||
+      targetDay < 1 ||
+      targetDay > 366
+    ) {
       throw new HttpsError("invalid-argument", "Trip day is required.");
     }
     if (requestText.length > 800) {
@@ -1047,24 +2078,27 @@ exports.generateScheduleStop = onCall(
 
     const item = await createStructuredResponse({
       instructions: [
-        "Generate exactly one practical schedule stop for a mobile travel app.",
-        "Fit it into the requested trip day without duplicating existing stops.",
-        "Use current local time and location only if the request asks for nearby or location-aware help.",
-        "Keep the activity title concise, specific, and useful during the trip.",
-        "Return only JSON matching the schema.",
+        "Generate exactly one practical schedule stop as strict JSON only.",
+        "Honor the user's request precisely: if they name a type of place (e.g. a conveyor-belt/rolling sushi restaurant, a specific cuisine, a museum), the activity title MUST be a specific real named venue of that type at the destination — never echo the user's instruction back as the title and never use a generic placeholder.",
+        "Schedule it at a time that fits the activity: dinner in the evening (about 6-8 PM), lunch around midday, breakfast/cafe in the morning, nightlife at night. Do not place a dinner in the afternoon.",
+        "Use 24-hour time format like '19:30' (zero-padded HH:mm). Never use AM/PM.",
+        "Fit it into the requested trip day without duplicating existing stops, leaving realistic travel/time gaps.",
+        "Include address, latitude, longitude, and imageUrl when known; use null only when genuinely unknown.",
+        "Use current local time and location only if the user asks for nearby or location-aware help.",
+        "Return no markdown and no explanation.",
       ].join(" "),
       input: {
         destination,
-        startDate: String(data.startDate ?? ""),
-        endDate: String(data.endDate ?? ""),
-        currency: String(data.currency ?? "USD"),
-        budget: Number.parseInt(data.budget, 10) || 0,
-        numOfTravelers: safeTravelerCount(data.numOfTravelers),
-        preferences: Array.isArray(data.preferences) ? data.preferences : [],
+        startDate: String(trip.startDate ?? ""),
+        endDate: String(trip.endDate ?? ""),
+        currency: String(trip.currency ?? "USD"),
+        budget: Number.parseInt(trip.budget, 10) || 0,
+        numOfTravelers: safeTravelerCount(trip.numOfTravelers),
+        preferences: safeShortStrings(trip.preferences),
         targetDay,
         request: requestText || "Suggest a useful trip stop.",
         existingSchedule: Array.isArray(data.existingSchedule)
-          ? data.existingSchedule
+          ? data.existingSchedule.slice(0, 60)
           : [],
         appContext: data.appContext ?? null,
       },
@@ -1077,11 +2111,182 @@ exports.generateScheduleStop = onCall(
   },
 );
 
+exports.generateDayPlanEdit = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 3600,
+    secrets: [openAiApiKeySecret],
+  },
+  async (request) => {
+    const data = request.data ?? {};
+    const tripId = String(data.tripId ?? "").trim();
+    let trip;
+    if (tripId.startsWith("preview-")) {
+      requireAuthenticatedUid(request, "Sign in to edit an itinerary preview.");
+      const destination = String(data.destination ?? "").trim();
+      if (!destination || destination.length > 200) {
+        throw new HttpsError(
+            "invalid-argument",
+            "A preview destination is required.",
+        );
+      }
+      trip = {
+        destination,
+        startDate: String(data.startDate ?? ""),
+        endDate: String(data.endDate ?? ""),
+        currency: String(data.currency ?? "USD"),
+        budget: Number.parseInt(data.budget, 10) || 0,
+        numOfTravelers: safeTravelerCount(data.numOfTravelers),
+        preferences: safeShortStrings(data.preferences),
+      };
+    } else {
+      trip = await requireTripEditor(request, tripId);
+    }
+    const targetDay = Number.parseInt(data.targetDay, 10);
+    const placeRequest = String(data.placeRequest ?? "").trim();
+
+    if (
+      !Number.isFinite(targetDay) ||
+      targetDay < 1 ||
+      targetDay > 366 ||
+      !placeRequest
+    ) {
+      throw new HttpsError(
+          "invalid-argument",
+          "A trip day and place are required.",
+      );
+    }
+    if (placeRequest.length > 800) {
+      throw new HttpsError("invalid-argument", "Place request is too long.");
+    }
+
+    const result = await createStructuredResponse({
+      instructions: [
+        "Edit one day of a travel itinerary and return strict JSON only.",
+        "Honor the user's placeRequest precisely: resolve it to a specific real named venue of the requested type at the destination (e.g. an actual conveyor-belt/rolling sushi restaurant), and use that real name as the activity title. Never echo the user's instruction text as the title and never use a generic placeholder.",
+        "Schedule the new place at a time that suits it: dinner in the evening (about 6-8 PM), lunch midday, breakfast/cafe morning, nightlife at night. Do not place a dinner in the afternoon.",
+        "Use 24-hour time format like '19:30' (zero-padded HH:mm), consistent with the rest of the day. Never use AM/PM.",
+        "Judge whether the requested place realistically fits the day.",
+        "Consider route distance, schedule density, opening hours, and travel time.",
+        "If it does not fit, set feasible=false and preserve the existing day.",
+        "If it fits, return the complete revised day in practical time order, including address/latitude/longitude/imageUrl for the new place when known.",
+        "Return no markdown or explanation outside the JSON fields.",
+      ].join(" "),
+      input: {
+        destination: String(trip.destination ?? ""),
+        startDate: String(trip.startDate ?? ""),
+        endDate: String(trip.endDate ?? ""),
+        currency: String(trip.currency ?? "USD"),
+        budget: Number.parseInt(trip.budget, 10) || 0,
+        numOfTravelers: safeTravelerCount(trip.numOfTravelers),
+        preferences: safeShortStrings(trip.preferences),
+        targetDay,
+        placeRequest,
+        targetDaySchedule: Array.isArray(data.targetDaySchedule)
+          ? data.targetDaySchedule.slice(0, 20)
+          : [],
+        fullSchedule: Array.isArray(data.fullSchedule)
+          ? data.fullSchedule.slice(0, 80)
+          : [],
+        appContext: data.appContext ?? null,
+      },
+      format: dayPlanEditFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "low",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "required",
+      logContext: "OpenAI day plan edit failed",
+      publicMessage: "AI day edit failed.",
+    });
+
+    return {result};
+  },
+);
+
+exports.generateTransportRecommendations = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 3600,
+    secrets: [openAiApiKeySecret],
+  },
+  async (request) => {
+    requireAuthenticatedUid(
+        request,
+        "Sign in to get transport recommendations.",
+    );
+    const data = request.data ?? {};
+    const origin = String(data.origin ?? "").trim();
+    const destination = String(data.destination ?? "").trim();
+    const startDate = String(data.startDate ?? "").trim();
+    const endDate = String(data.endDate ?? "").trim();
+    const currency = String(data.currency ?? "USD").trim().toUpperCase();
+
+    if (
+      !origin ||
+      !destination ||
+      origin.length > 240 ||
+      destination.length > 240 ||
+      !validIsoDate(startDate) ||
+      !validIsoDate(endDate) ||
+      new Date(`${endDate}T00:00:00.000Z`) <
+        new Date(`${startDate}T00:00:00.000Z`) ||
+      !/^[A-Z]{3}$/.test(currency)
+    ) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Valid transport route details are required.",
+      );
+    }
+
+    const result = await createStructuredResponse({
+      instructions: [
+        "Find practical transportation options for a travel app booking workspace.",
+        "Use current web search data from useful booking, operator, or travel information sources.",
+        "Return options sorted from cheapest to most expensive.",
+        "Use the requested currency when prices can be estimated.",
+        "If exact live booking prices are unavailable, use realistic current public fare ranges and mark them approximate in bookingHint.",
+        "Include only useful route options for the supplied origin and destination.",
+        "Return no markdown or explanation outside the JSON fields.",
+      ].join(" "),
+      input: {
+        origin,
+        destination,
+        startDate,
+        endDate,
+        currency,
+        groupType: String(data.groupType ?? "").slice(0, 80),
+        numOfTravelers: safeTravelerCount(data.numOfTravelers),
+        appContext: data.appContext ?? null,
+      },
+      format: transportRecommendationsFormat,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "medium",
+          external_web_access: true,
+        },
+      ],
+      toolChoice: "required",
+      logContext: "OpenAI transport recommendations failed",
+      publicMessage: "AI transport recommendations failed.",
+      timeoutMs: 40000,
+    });
+
+    return {result};
+  },
+);
+
 exports.createTripReply = onCall(
   {
     region: "us-central1",
+    secrets: [openAiApiKeySecret],
   },
   async (request) => {
+    requireAuthenticatedUid(request, "Sign in to plan a trip.");
     const message = String(request.data?.message ?? "").trim();
     if (!message) {
       throw new HttpsError("invalid-argument", "Message is required.");
@@ -1090,12 +2295,17 @@ exports.createTripReply = onCall(
       throw new HttpsError("invalid-argument", "Message is too long.");
     }
 
-    const languageInstructions = outputLanguageInstructions(
-      request.data?.profileLanguage,
-      request.data?.outputLanguage,
+    const outputLanguage = aiLanguageName(
+        request.data?.profileLanguage,
+        request.data?.outputLanguage,
     );
+    const languageInstructions = [
+      `Write message, widget title, widget labels, widget descriptions, and preferences in ${outputLanguage}.`,
+      "Do not infer language from currency; currency only controls money.",
+    ].join(" ");
 
     const reply = await createStructuredResponse({
+      model: openAiChatModel,
       instructions: `${createTripInstructions} ${languageInstructions}`,
       input: {
         latestMessage: message,
@@ -1105,10 +2315,7 @@ exports.createTripReply = onCall(
           : [],
         today: request.data?.today ?? null,
         profileLanguage: String(request.data?.profileLanguage ?? "en"),
-        outputLanguage: aiLanguageName(
-          request.data?.profileLanguage,
-          request.data?.outputLanguage,
-        ),
+        outputLanguage,
         appContext: request.data?.appContext ?? null,
       },
       format: createTripReplyFormat,
@@ -1178,6 +2385,464 @@ exports.ensureGroupChatJoinCode = onDocumentCreated(
         });
       });
     },
+);
+
+exports.setGroupChatTrip = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to attach a trip.",
+    );
+    const chatId = String(request.data?.chatId || "").trim();
+    const rawTripId = request.data?.tripId;
+    const tripId = rawTripId == null ? null : String(rawTripId).trim();
+    if (!validDocumentId(chatId) || (tripId && !validDocumentId(tripId))) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Choose a valid group and trip.",
+      );
+    }
+
+    const db = admin.firestore();
+    const chatRef = db.collection("chat_groups").doc(chatId);
+    const memberRef = chatRef.collection("members").doc(accountId);
+    await db.runTransaction(async (transaction) => {
+      const [chatSnapshot, memberSnapshot] = await Promise.all([
+        transaction.get(chatRef),
+        transaction.get(memberRef),
+      ]);
+      if (!chatSnapshot.exists) {
+        throw new HttpsError("not-found", "Group chat not found.");
+      }
+      const chat = chatSnapshot.data() || {};
+      if (
+        String(chat.ownerId || "") !== accountId ||
+        String(chat.roles?.[accountId] || "") !== "owner" ||
+        memberSnapshot.data()?.status !== "active"
+      ) {
+        throw new HttpsError(
+            "permission-denied",
+            "Only the group owner can change the attached trip.",
+        );
+      }
+
+      let linkedTripTitle = null;
+      let linkedTripDestination = null;
+      let linkedTripCoverImageUrl = null;
+      if (tripId) {
+        const tripRef = db.collection("trips").doc(tripId);
+        const tripSnapshot = await transaction.get(tripRef);
+        if (!tripSnapshot.exists) {
+          throw new HttpsError("not-found", "Trip not found.");
+        }
+        const trip = tripSnapshot.data() || {};
+        if (
+          String(trip.ownerId || "") !== accountId ||
+          String(trip.roles?.[accountId] || "") !== "owner"
+        ) {
+          throw new HttpsError(
+              "permission-denied",
+              "You can only attach a trip that you own.",
+          );
+        }
+        linkedTripTitle = tripTitle(trip);
+        linkedTripDestination =
+          String(trip.destination || "Untitled trip").trim() ||
+          "Untitled trip";
+        linkedTripCoverImageUrl = tripCoverImage(trip);
+      }
+
+      transaction.set(
+          chatRef,
+          {
+            linkedTripId: tripId,
+            linkedTripTitle,
+            linkedTripDestination,
+            linkedTripCoverImageUrl,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          {merge: true},
+      );
+    });
+    return {chatId, tripId};
+  },
+);
+
+exports.joinGroupChatTrip = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to join this trip.",
+    );
+    const chatId = String(request.data?.chatId || "").trim();
+    if (!validDocumentId(chatId)) {
+      throw new HttpsError("invalid-argument", "Choose a valid group.");
+    }
+
+    const db = admin.firestore();
+    const chatRef = db.collection("chat_groups").doc(chatId);
+    const chatMemberRef = chatRef.collection("members").doc(accountId);
+    const profileRef = db.collection("travel_users").doc(accountId);
+    return db.runTransaction(async (transaction) => {
+      const [chatSnapshot, chatMemberSnapshot, profileSnapshot] =
+        await Promise.all([
+          transaction.get(chatRef),
+          transaction.get(chatMemberRef),
+          transaction.get(profileRef),
+        ]);
+      if (!chatSnapshot.exists) {
+        throw new HttpsError("not-found", "Group chat not found.");
+      }
+      const chat = chatSnapshot.data() || {};
+      if (
+        !activeMemberIds(chat).includes(accountId) ||
+        chatMemberSnapshot.data()?.status !== "active"
+      ) {
+        throw new HttpsError(
+            "permission-denied",
+            "Join the group chat before joining its trip.",
+        );
+      }
+      const tripId = String(chat.linkedTripId || "").trim();
+      if (!validDocumentId(tripId)) {
+        throw new HttpsError(
+            "failed-precondition",
+            "This group does not have an attached trip.",
+        );
+      }
+
+      const tripRef = db.collection("trips").doc(tripId);
+      const tripMemberRef = tripRef.collection("members").doc(accountId);
+      const membershipRef = db.collection("travel_users")
+          .doc(accountId)
+          .collection("tripMemberships")
+          .doc(tripId);
+      const tripSnapshot = await transaction.get(tripRef);
+      if (!tripSnapshot.exists) {
+        throw new HttpsError("not-found", "The attached trip no longer exists.");
+      }
+      const trip = tripSnapshot.data() || {};
+      const memberIds = activeMemberIds(trip);
+      const roles = roleMap(trip);
+      const existingRole = String(roles[accountId] || "");
+      const alreadyMember = memberIds.includes(accountId);
+      const role = alreadyMember && ["owner", "editor", "viewer"]
+          .includes(existingRole) ? existingRole : "viewer";
+      const profile = profileSnapshot.data() || {};
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const destination =
+        String(trip.destination || "Untitled trip").trim() || "Untitled trip";
+      const coverImageUrl = tripCoverImage(trip);
+
+      transaction.set(
+          tripRef,
+          {
+            memberIds: alreadyMember ? memberIds : [...memberIds, accountId],
+            roles: {...roles, [accountId]: role},
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      transaction.set(
+          tripMemberRef,
+          {
+            role,
+            status: "active",
+            displayNameSnapshot: String(
+                profile.name || request.auth.token.name || "Explorer",
+            ).trim() || "Explorer",
+            photoUrlSnapshot:
+              typeof profile.photoUrl === "string" ? profile.photoUrl : null,
+            invitedBy: String(chat.ownerId || ""),
+            joinedAt: now,
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      transaction.set(
+          membershipRef,
+          {
+            tripId,
+            role,
+            status: "active",
+            titleSnapshot: tripTitle(trip),
+            destinationSnapshot: destination,
+            coverImageUrl,
+            unreadCount: 0,
+            createdAt: now,
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      return {tripId, role, alreadyMember};
+    });
+  },
+);
+
+exports.removeTripMember = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to manage trip members.",
+    );
+    const tripId = String(request.data?.tripId || "").trim();
+    const memberId = String(request.data?.memberId || "").trim();
+    if (!validDocumentId(tripId) || !validDocumentId(memberId)) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Choose a valid trip member.",
+      );
+    }
+
+    const db = admin.firestore();
+    const tripRef = db.collection("trips").doc(tripId);
+    await db.runTransaction(async (transaction) => {
+      const tripSnapshot = await transaction.get(tripRef);
+      if (!tripSnapshot.exists) {
+        throw new HttpsError("not-found", "Trip not found.");
+      }
+      const trip = tripSnapshot.data() || {};
+      if (
+        String(trip.ownerId || "") !== accountId ||
+        String(trip.roles?.[accountId] || "") !== "owner"
+      ) {
+        throw new HttpsError(
+            "permission-denied",
+            "Only the trip owner can remove members.",
+        );
+      }
+      if (memberId === accountId || String(trip.ownerId || "") === memberId) {
+        throw new HttpsError(
+            "failed-precondition",
+            "The trip owner cannot leave the trip.",
+        );
+      }
+      const memberIds = activeMemberIds(trip);
+      if (!memberIds.includes(memberId)) return;
+      const roles = roleMap(trip);
+      delete roles[memberId];
+      transaction.set(
+          tripRef,
+          {
+            memberIds: memberIds.filter((id) => id !== memberId),
+            roles,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          {merge: true},
+      );
+      transaction.delete(tripRef.collection("members").doc(memberId));
+      transaction.delete(
+          db.collection("travel_users")
+              .doc(memberId)
+              .collection("tripMemberships")
+              .doc(tripId),
+      );
+    });
+    return {tripId, memberId};
+  },
+);
+
+exports.leaveTrip = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to leave this trip.",
+    );
+    const tripId = String(request.data?.tripId || "").trim();
+    if (!validDocumentId(tripId)) {
+      throw new HttpsError("invalid-argument", "Choose a valid trip.");
+    }
+
+    const db = admin.firestore();
+    const tripRef = db.collection("trips").doc(tripId);
+    const membershipRef = db.collection("travel_users")
+        .doc(accountId)
+        .collection("tripMemberships")
+        .doc(tripId);
+    await db.runTransaction(async (transaction) => {
+      const tripSnapshot = await transaction.get(tripRef);
+      if (!tripSnapshot.exists) {
+        transaction.delete(membershipRef);
+        return;
+      }
+      const trip = tripSnapshot.data() || {};
+      if (
+        String(trip.ownerId || "") === accountId ||
+        String(trip.roles?.[accountId] || "") === "owner"
+      ) {
+        throw new HttpsError(
+            "failed-precondition",
+            "The trip owner cannot leave the trip.",
+        );
+      }
+      const memberIds = activeMemberIds(trip);
+      if (!memberIds.includes(accountId)) return;
+      const roles = roleMap(trip);
+      delete roles[accountId];
+      transaction.set(
+          tripRef,
+          {
+            memberIds: memberIds.filter((id) => id !== accountId),
+            roles,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          {merge: true},
+      );
+      transaction.delete(tripRef.collection("members").doc(accountId));
+      transaction.delete(membershipRef);
+    });
+    return {tripId};
+  },
+);
+
+exports.leaveGroupChat = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to leave this group.",
+    );
+    const chatId = String(request.data?.chatId || "").trim();
+    const newOwnerId = String(request.data?.newOwnerId || "").trim();
+    if (!validDocumentId(chatId)) {
+      throw new HttpsError("invalid-argument", "Choose a valid group.");
+    }
+
+    const db = admin.firestore();
+    const chatRef = db.collection("chat_groups").doc(chatId);
+    const chatSnapshot = await chatRef.get();
+    if (!chatSnapshot.exists) return {chatId, deleted: true};
+    const chat = chatSnapshot.data() || {};
+    const memberIds = activeMemberIds(chat);
+    if (
+      !memberIds.includes(accountId) ||
+      String(chat.roles?.[accountId] || "") === ""
+    ) {
+      throw new HttpsError(
+          "permission-denied",
+          "You are not an active member of this group.",
+      );
+    }
+    const isOwner = String(chat.ownerId || "") === accountId;
+    if (isOwner && memberIds.length === 1) {
+      await deleteGroupChatTree({
+        db,
+        chatId,
+        ownerId: accountId,
+        requireSoleOwner: true,
+      });
+      return {chatId, deleted: true};
+    }
+    if (isOwner && (!validDocumentId(newOwnerId) || newOwnerId === accountId)) {
+      throw new HttpsError(
+          "failed-precondition",
+          "Choose another member to become the group owner.",
+      );
+    }
+
+    await db.runTransaction(async (transaction) => {
+      const currentChatSnapshot = await transaction.get(chatRef);
+      if (!currentChatSnapshot.exists) return;
+      const currentChat = currentChatSnapshot.data() || {};
+      const currentMemberIds = activeMemberIds(currentChat);
+      const currentRoles = roleMap(currentChat);
+      if (!currentMemberIds.includes(accountId)) return;
+      const ownerLeaving = String(currentChat.ownerId || "") === accountId;
+      let nextOwnerMemberSnapshot = null;
+      if (ownerLeaving) {
+        const nextOwnerMemberRef = chatRef.collection("members").doc(newOwnerId);
+        nextOwnerMemberSnapshot = await transaction.get(nextOwnerMemberRef);
+        if (
+          !currentMemberIds.includes(newOwnerId) ||
+          nextOwnerMemberSnapshot.data()?.status !== "active"
+        ) {
+          throw new HttpsError(
+              "failed-precondition",
+              "Choose an active member to become the group owner.",
+          );
+        }
+      }
+
+      delete currentRoles[accountId];
+      if (ownerLeaving) currentRoles[newOwnerId] = "owner";
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      transaction.set(
+          chatRef,
+          {
+            ownerId: ownerLeaving ? newOwnerId : currentChat.ownerId,
+            memberIds: currentMemberIds.filter((id) => id !== accountId),
+            roles: currentRoles,
+            updatedAt: now,
+          },
+          {merge: true},
+      );
+      transaction.set(
+          chatRef.collection("members").doc(accountId),
+          {status: "left", updatedAt: now},
+          {merge: true},
+      );
+      transaction.set(
+          db.collection("travel_users")
+              .doc(accountId)
+              .collection("chatMemberships")
+              .doc(chatId),
+          {status: "left", updatedAt: now},
+          {merge: true},
+      );
+      if (ownerLeaving) {
+        transaction.set(
+            chatRef.collection("members").doc(newOwnerId),
+            {role: "owner", updatedAt: now},
+            {merge: true},
+        );
+        transaction.set(
+            db.collection("travel_users")
+                .doc(newOwnerId)
+                .collection("chatMemberships")
+                .doc(chatId),
+            {role: "owner", updatedAt: now},
+            {merge: true},
+        );
+      }
+    });
+    return {chatId, deleted: false};
+  },
+);
+
+exports.deleteGroupChat = onCall(
+  {
+    region: "us-central1",
+  },
+  async (request) => {
+    const accountId = requireAuthenticatedUid(
+        request,
+        "Sign in to delete this group.",
+    );
+    const chatId = String(request.data?.chatId || "").trim();
+    if (!validDocumentId(chatId)) {
+      throw new HttpsError("invalid-argument", "Choose a valid group.");
+    }
+    await deleteGroupChatTree({
+      db: admin.firestore(),
+      chatId,
+      ownerId: accountId,
+    });
+    return {chatId, deleted: true};
+  },
 );
 
 exports.getGroupChatJoinCode = onCall(
@@ -1472,6 +3137,9 @@ exports.notifyGroupChatMembers = onDocumentCreated(
     async (event) => {
       const message = event.data?.data();
       if (!message) return;
+      // System messages (join/leave/removed) are posted and notified by the
+      // member-document trigger; skip them here to avoid double notifications.
+      if (String(message.type || "") === "system") return;
 
       const db = admin.firestore();
       const chatId = String(event.params.chatId);
@@ -1510,38 +3178,98 @@ exports.notifyGroupChatMemberJoined = onDocumentWritten(
     async (event) => {
       const before = event.data?.before.data();
       const after = event.data?.after.data();
-      if (!after || after.status !== "active" || before?.status === "active") {
-        return;
-      }
+      if (!after) return;
+
+      const becameActive =
+        after.status === "active" && before?.status !== "active";
+      const becameLeft = after.status === "left" && before?.status !== "left";
+      if (!becameActive && !becameLeft) return;
 
       const db = admin.firestore();
       const chatId = String(event.params.chatId);
-      const joinedMemberId = String(event.params.memberId);
+      const memberId = String(event.params.memberId);
       const chatSnapshot = await db.collection("chat_groups").doc(chatId).get();
       if (!chatSnapshot.exists) return;
 
       const chat = chatSnapshot.data() || {};
-      const memberIds = Array.isArray(chat.memberIds)
-        ? chat.memberIds
-            .map(String)
-            .filter((id) => id && id !== joinedMemberId)
-        : [];
-      if (!memberIds.length) return;
-
-      const joinedName = String(
+      const memberName = String(
           after.displayNameSnapshot || "Someone",
       ).trim() || "Someone";
+
+      let text;
+      let eventType;
+      if (becameActive) {
+        text = `${memberName} joined the group.`;
+        eventType = "group_member_joined";
+      } else {
+        const removedBy = String(after.removedBy || "").trim();
+        if (removedBy && removedBy !== memberId) {
+          text = `${memberName} was removed from the group.`;
+          eventType = "group_member_removed";
+        } else {
+          text = `${memberName} left the group.`;
+          eventType = "group_member_left";
+        }
+      }
+
+      // Post the in-chat system message (admin SDK bypasses security rules).
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const messageRef = db
+          .collection("chat_groups")
+          .doc(chatId)
+          .collection("messages")
+          .doc();
+      await messageRef.set({
+        senderId: memberId,
+        senderNameSnapshot: "",
+        senderPhotoUrlSnapshot: null,
+        text,
+        type: "system",
+        attachments: [],
+        poll: null,
+        createdAt: now,
+        editedAt: null,
+      });
+      await db.collection("chat_groups").doc(chatId).set({
+        lastMessageText: text,
+        lastMessageAt: now,
+        updatedAt: now,
+      }, {merge: true});
+
+      const memberIds = Array.isArray(chat.memberIds)
+        ? chat.memberIds.map(String).filter((id) => id && id !== memberId)
+        : [];
+      // Keep the chat-list preview in sync for remaining members.
+      await Promise.all(
+          memberIds.map((id) =>
+            db
+                .collection("travel_users")
+                .doc(id)
+                .collection("chatMemberships")
+                .doc(chatId)
+                .set({
+                  chatId,
+                  titleSnapshot: String(chat.title || "Group chat"),
+                  lastMessageText: text,
+                  lastMessageAt: now,
+                  updatedAt: now,
+                }, {merge: true})
+                .catch(() => {}),
+          ),
+      );
+      if (!memberIds.length) return;
+
       const title = String(chat.title || "Group chat");
       await sendNotificationToUsers({
         db,
         userIds: memberIds,
         title,
-        body: `${joinedName} joined the group.`,
+        body: text,
         chatId,
         data: {
           chatId,
-          memberId: joinedMemberId,
-          type: "group_member_joined",
+          memberId,
+          type: eventType,
           tag: `group-member-${chatId}`,
           targetPath: `/chat/${encodeURIComponent(chatId)}`,
         },
@@ -2043,6 +3771,7 @@ function dateKey(date) {
 }
 
 async function createStructuredResponse({
+  model = openAiItineraryModel,
   instructions,
   input,
   format,
@@ -2050,9 +3779,10 @@ async function createStructuredResponse({
   toolChoice,
   logContext,
   publicMessage,
+  timeoutMs,
 }) {
   const payload = {
-    model: openAiModel,
+    model,
     instructions,
     input: JSON.stringify(input),
     store: false,
@@ -2073,37 +3803,51 @@ async function createStructuredResponse({
     payload,
     logContext,
     publicMessage,
+    timeoutMs,
   });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    logger.error(logContext, {
-      status: response.status,
-      detail: detail.slice(0, 500),
-    });
-    throw new HttpsError("unavailable", publicMessage);
-  }
 
   const body = await response.json();
   return decodeJsonObject(outputText(body));
 }
 
-async function fetchOpenAiResponses({payload, logContext, publicMessage}) {
+async function fetchOpenAiResponses({
+  payload,
+  logContext,
+  publicMessage,
+  timeoutMs = openAiTimeoutMs,
+}) {
+  const apiKey = openAiApiKey();
+  if (!apiKey) {
+    logger.error("OpenAI API key is not configured", {logContext});
+    throw new HttpsError(
+        "failed-precondition",
+        "AI services are not configured.",
+    );
+  }
+
   try {
-    return await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${openAiApiKey()}`,
+        "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      signal: AbortSignal.timeout(openAiTimeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify(payload),
     });
+    if (!response.ok) {
+      await throwOpenAiResponseError(response, {
+        logContext,
+        publicMessage,
+      });
+    }
+    return response;
   } catch (error) {
+    if (error instanceof HttpsError) throw error;
     const timedOut = error?.name === "AbortError" ||
       error?.name === "TimeoutError";
     logger.error(logContext, {
-      timeoutMs: openAiTimeoutMs,
+      timeoutMs,
       message: error?.message,
     });
     throw new HttpsError(
@@ -2111,6 +3855,41 @@ async function fetchOpenAiResponses({payload, logContext, publicMessage}) {
       publicMessage,
     );
   }
+}
+
+async function throwOpenAiResponseError(
+  response,
+  {logContext, publicMessage},
+) {
+  const detail = await response.text().catch(() => "");
+  let providerCode = "";
+  let providerType = "";
+  try {
+    const parsed = JSON.parse(detail);
+    providerCode = String(parsed?.error?.code ?? "");
+    providerType = String(parsed?.error?.type ?? "");
+  } catch {
+    // Keep malformed provider responses out of user-facing errors.
+  }
+  logger.error(logContext, {
+    status: response.status,
+    providerCode,
+    providerType,
+  });
+
+  if (response.status === 401 || providerCode === "invalid_api_key") {
+    throw new HttpsError(
+        "failed-precondition",
+        "AI_PROVIDER_KEY_INVALID: The configured OpenAI key is invalid or revoked.",
+    );
+  }
+  if (response.status === 429) {
+    throw new HttpsError(
+        "resource-exhausted",
+        "The AI provider is rate limited. Please try again shortly.",
+    );
+  }
+  throw new HttpsError("unavailable", publicMessage);
 }
 
 function outputText(responseBody) {

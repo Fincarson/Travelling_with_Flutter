@@ -1,5 +1,26 @@
 part of travel_agent_app;
 
+const _appVersion = '1.0.0';
+
+// Placeholder legal copy. Replace with finalized text before release.
+const _termsOfServiceParagraphs = <String>[
+  'These Terms of Service are a draft and provided for testing purposes only. They are not legal advice and should be replaced before public release.',
+  'By using Travelling with Flutter you agree to use the app for personal trip planning. AI-generated itineraries, prices, transport options, and travel requirements are suggestions only and may be inaccurate.',
+  'Always confirm visas, entry rules, bookings, and prices with official sources before you travel. We are not responsible for decisions made based on app content.',
+  'You are responsible for the accuracy of information you enter, for any content you share in group chats, and for keeping your account credentials secure.',
+  'Accounts or content may be limited or removed if the app is used unlawfully or to harm others.',
+  'The service is provided "as is" without warranties. We may update these terms; continued use means you accept the changes.',
+];
+
+const _privacyPolicyParagraphs = <String>[
+  'This Privacy Policy is a draft for testing and will be replaced with a finalized policy before release.',
+  'We store the account information you provide (such as name, email, and sign-in method) and the trips, budgets, checklists, favorites, and chat content you create, so the app can sync them across your devices.',
+  'If you enable location access, your approximate location is used only to improve trip and currency suggestions. You can turn this off in Settings at any time.',
+  'Trip data you generate may be sent to AI and mapping services to build itineraries, translations, and recommendations. Only the data needed for the request is shared.',
+  'Your data is stored using Firebase. You can delete your account and associated data from Settings, which removes your profile and saved trips.',
+  'We do not sell your personal data. For questions about your data, contact the app maintainer.',
+];
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     required this.account,
@@ -13,6 +34,7 @@ class SettingsScreen extends StatefulWidget {
     required this.onOpenArchived,
     required this.archivedItemCount,
     required this.onBack,
+    required this.onShowTutorial,
     super.key,
   });
 
@@ -27,6 +49,7 @@ class SettingsScreen extends StatefulWidget {
   final VoidCallback onOpenArchived;
   final int archivedItemCount;
   final VoidCallback onBack;
+  final VoidCallback onShowTutorial;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -586,6 +609,74 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  void _showLegalDocument(String title, List<String> paragraphs) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: .85,
+          maxChildSize: .95,
+          minChildSize: .5,
+          builder: (context, scrollController) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ListView.separated(
+                    controller: scrollController,
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+                    itemCount: paragraphs.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 14),
+                    itemBuilder: (context, index) => Text(
+                      appText(context, paragraphs[index]),
+                      style: TextStyle(
+                        height: 1.45,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: index == 0
+                            ? FontWeight.w800
+                            : FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showAboutApp() {
+    showAboutDialog(
+      context: context,
+      applicationName: appText(context, 'Travelling with Flutter'),
+      applicationVersion: 'v$_appVersion',
+      applicationIcon: const Icon(Icons.flight_takeoff_rounded, size: 40),
+      children: [
+        Text(
+          appText(
+            context,
+            'A travel planning companion for itineraries, budgets, packing lists, and group trips.',
+          ),
+        ),
+      ],
+    );
+  }
+
   void _pickTheme() {
     _showSettingPicker<String>(
       title: appText(context, 'Theme'),
@@ -883,6 +974,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: appText(context, 'Archived'),
                 value: appText(context, '${widget.archivedItemCount} items'),
                 onTap: widget.onOpenArchived,
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _SettingsSection(
+            title: 'Help',
+            description: 'Replay the walkthrough of the main features.',
+            children: [
+              SettingsTile(
+                icon: Icons.help_outline_rounded,
+                title: appText(context, 'Tutorial'),
+                value: '',
+                onTap: widget.onShowTutorial,
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _SettingsSection(
+            title: 'Legal',
+            description: 'Terms, privacy, and app information.',
+            children: [
+              SettingsTile(
+                icon: Icons.description_outlined,
+                title: appText(context, 'Terms of Service'),
+                value: '',
+                onTap: () => _showLegalDocument(
+                  appText(context, 'Terms of Service'),
+                  _termsOfServiceParagraphs,
+                ),
+              ),
+              SettingsTile(
+                icon: Icons.privacy_tip_outlined,
+                title: appText(context, 'Privacy Policy'),
+                value: '',
+                onTap: () => _showLegalDocument(
+                  appText(context, 'Privacy Policy'),
+                  _privacyPolicyParagraphs,
+                ),
+              ),
+              SettingsTile(
+                icon: Icons.info_outline_rounded,
+                title: appText(context, 'About'),
+                value: 'v$_appVersion',
+                onTap: _showAboutApp,
               ),
             ],
           ),

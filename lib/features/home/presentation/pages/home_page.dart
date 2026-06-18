@@ -1,5 +1,7 @@
 part of travel_agent_app;
 
+const _homeColumnsPrefKey = 'travel_agent.layout.home_columns';
+
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({
     required this.user,
@@ -40,24 +42,45 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final _query = TextEditingController();
   List<Destination> _recommendations = const [];
-  final Map<String, bool> _pendingFavoriteStates = {};
+  final Map<String, bool> _favoriteOverrides = {};
+  final Set<String> _busyFavoriteIds = {};
   var _recommendationsLoading = true;
+  var _columns = 1;
 
   @override
   void initState() {
     super.initState();
     _loadRecommendations();
+    unawaited(_loadColumns());
+  }
+
+  Future<void> _loadColumns() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getInt(_homeColumnsPrefKey);
+    if (!mounted || stored == null) return;
+    setState(() => _columns = stored == 2 ? 2 : 1);
+  }
+
+  void _setColumns(int value) {
+    if (_columns == value) return;
+    setState(() => _columns = value);
+    unawaited(
+      SharedPreferences.getInstance().then(
+        (prefs) => prefs.setInt(_homeColumnsPrefKey, value),
+      ),
+    );
   }
 
   @override
   void didUpdateWidget(covariant DashboardScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _pendingFavoriteStates.removeWhere((id, desiredState) {
+    _favoriteOverrides.removeWhere((id, desiredState) {
       final persistedState = widget.user.favoritePlaces.any(
         (place) => place.id == id,
       );
       return persistedState == desiredState;
     });
+    _busyFavoriteIds.removeWhere((id) => !_favoriteOverrides.containsKey(id));
     if (oldWidget.user.interests != widget.user.interests ||
         oldWidget.user.favoritePlaces != widget.user.favoritePlaces ||
         oldWidget.memories != widget.memories) {
@@ -108,18 +131,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final trip =
         widget.activeTrip ?? (widget.trips.isEmpty ? null : widget.trips.first);
     return ScreenScaffold(
-      bottomPadding: 92,
       child: ListView(
         padding: _responsivePagePadding(context, top: 12, bottom: 112),
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
             children: [
-              LabelText(appText(context, 'Welcome Back')),
-              Text(
-                '${widget.user.name.isEmpty ? 'Explorer' : widget.user.name}!',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w900,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    LabelText(appText(context, 'Welcome Back')),
+
+                    Text(
+                      '${widget.user.name.isEmpty ? 'Explorer' : widget.user.name}!',
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox.square(
+                dimension: 50,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned.fill(
+                      child: IconButton.filled(
+                        tooltip: appText(context, 'Notifications'),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: _primary,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                        ),
+                        onPressed: widget.onOpenNotifications,
+                        icon: const Icon(Icons.notifications_none_rounded),
+                      ),
+                    ),
+                    if (widget.user.notificationsEnabled)
+                      const Positioned(right: 10, top: 10, child: Dot()),
+                  ],
                 ),
               ),
             ],
@@ -134,70 +186,98 @@ class _DashboardScreenState extends State<DashboardScreen> {
             },
           ),
           const SizedBox(height: 10),
-          if (widget.user.notificationsEnabled &&
-              widget.user.hasImportantAlerts)
-            const AlertRail(),
+          AlertRail(trip: trip),
           const SizedBox(height: 28),
           if (trip == null) ...[
             _EmptyTripCard(onCreate: widget.onCreate),
           ] else ...[
-            LabelText(
-              appText(context, 'Current trip'),
-            ), // TODO make responsive: show current/past/upcoming trip
+            Text(
+              appText(context, _currentTripHeading(trip)).toUpperCase(),
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.2,
+              ),
+            ),
             const SizedBox(height: 8),
             CurrentTripCard(
               trip: trip,
               onTap: () => widget.onOpenTrip(trip),
-              onStart: trip.status == TripStatus.ongoing
+              onStart: trip.status == TripStatus.ongoing || !trip.canEdit
                   ? null
                   : () => widget.onStartTrip(trip),
             ),
-            const SizedBox(height: 22),
-            ResponsiveActionWrap(
-              children: [
-                QuickAction(
-                  icon: Icons.info_outline_rounded,
-                  label: 'Info',
-                  onTap: widget.onOpenInfo,
-                ),
-                QuickAction(
-                  icon: Icons.map_rounded,
-                  label: 'Map',
-                  onTap: widget.onOpenMap,
-                ),
-                QuickAction(
-                  icon: Icons.translate_rounded,
-                  label: 'Translate',
-                  onTap: widget.onOpenTranslate,
-                ),
-                QuickAction(
-                  icon: Icons.auto_awesome_rounded,
-                  label: 'AI',
-                  onTap: () => widget.onAskAi(_dailyTripPrompt(trip)),
-                ),
-              ],
-            ),
           ],
           const SizedBox(height: 28),
-          SectionHeader(
-            title: 'Places picked for you',
-            action: _recommendationsLoading ? 'Personalizing...' : 'Refresh',
-            onTap: _recommendationsLoading ? null : _loadRecommendations,
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            alignment: WrapAlignment.spaceBetween,
+            children: [
+              Text(
+                appText(context, 'Places picked for you').toUpperCase(),
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.2,
+                ),
+              ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  TextButton(
+                    onPressed: _recommendationsLoading
+                        ? null
+                        : _loadRecommendations,
+                    child: Text(
+                      appText(
+                        context,
+                        _recommendationsLoading
+                            ? 'Personalizing...'
+                            : 'Refresh',
+                      ),
+                    ),
+                  ),
+                  LayoutColumnsToggle(
+                    columns: _columns,
+                    onChanged: _setColumns,
+                  ),
+                ],
+              ),
+            ],
           ),
           const SizedBox(height: 12),
-          for (final destination in _recommendations) ...[
-            _RecommendedPlaceCard(
-              destination: destination,
-              favorite: _isFavorite(destination),
-              favoriteBusy: _pendingFavoriteStates.containsKey(
-                _favoritePlaceId(destination.name),
-              ),
-              onFavorite: () => _toggleFavorite(destination),
-              onDetails: () => _showDestinationDetails(destination),
-              onAdd: () => widget.onAddPlaceToTrip?.call(destination),
-            ),
-            const SizedBox(height: 12),
-          ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const spacing = 12.0;
+              final cellWidth = _columns == 2
+                  ? (constraints.maxWidth - spacing) / 2
+                  : constraints.maxWidth;
+              return Wrap(
+                spacing: spacing,
+                runSpacing: 12,
+                children: [
+                  for (final destination in _recommendations)
+                    SizedBox(
+                      width: cellWidth,
+                      child: _RecommendedPlaceCard(
+                        destination: destination,
+                        favorite: _isFavorite(destination),
+                        favoriteBusy: _busyFavoriteIds.contains(
+                          _favoritePlaceId(destination.name),
+                        ),
+                        onFavorite: () => _toggleFavorite(destination),
+                        onDetails: () => _showDestinationDetails(destination),
+                        onAdd: () => widget.onAddPlaceToTrip?.call(destination),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
         ],
       ),
     );
@@ -205,7 +285,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool _isFavorite(Destination destination) {
     final id = _favoritePlaceId(destination.name);
-    return _pendingFavoriteStates[id] ??
+    return _favoriteOverrides[id] ??
         widget.user.favoritePlaces.any((place) => place.id == id);
   }
 
@@ -214,16 +294,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (callback == null) return;
     final id = _favoritePlaceId(destination.name);
     final desiredState = !_isFavorite(destination);
-    setState(() => _pendingFavoriteStates[id] = desiredState);
+    setState(() {
+      _favoriteOverrides[id] = desiredState;
+      _busyFavoriteIds.add(id);
+    });
     try {
       await callback(destination);
+      if (!mounted) return;
+      setState(() => _busyFavoriteIds.remove(id));
     } catch (_) {
       if (!mounted) return;
-      setState(() => _pendingFavoriteStates.remove(id));
+      setState(() {
+        _favoriteOverrides.remove(id);
+        _busyFavoriteIds.remove(id);
+      });
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(content: Text('Could not update favorite place.')),
+          SnackBar(
+            content: Text(appText(context, 'Could not update favorite place.')),
+          ),
         );
     }
   }
@@ -233,7 +323,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     showGeneralDialog<void>(
       context: context,
       barrierDismissible: true,
-      barrierLabel: 'Close place details',
+      barrierLabel: appText(context, 'Close place details'),
       barrierColor: Colors.black.withValues(alpha: .42),
       transitionDuration: settings.animationsEnabled
           ? settings.transitionDuration
@@ -304,6 +394,7 @@ class _RecommendedPlaceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Material(
+      key: ValueKey('recommended-place-${_favoritePlaceId(destination.name)}'),
       color: scheme.surface,
       elevation: 1,
       shadowColor: Colors.black.withValues(alpha: .08),
@@ -312,110 +403,106 @@ class _RecommendedPlaceCard extends StatelessWidget {
         side: BorderSide(color: scheme.outlineVariant),
       ),
       clipBehavior: Clip.antiAlias,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 560;
-          final image = ClipRRect(
-            borderRadius: compact
-                ? BorderRadius.zero
-                : const BorderRadius.horizontal(left: Radius.circular(20)),
-            child: Image.network(
-              destination.image,
-              height: compact ? 170 : 210,
-              width: compact ? double.infinity : 220,
-              fit: BoxFit.cover,
-              filterQuality: PerformanceScope.maybeSettingsOf(
-                context,
-              ).filterQuality,
-              errorBuilder: (_, __, ___) => Container(
-                color: scheme.surfaceContainer,
-                child: Icon(Icons.landscape_rounded, color: scheme.primary),
+      child: InkWell(
+        onTap: onDetails,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 560;
+            final image = ClipRRect(
+              borderRadius: compact
+                  ? BorderRadius.zero
+                  : const BorderRadius.horizontal(left: Radius.circular(20)),
+              child: Image.network(
+                destination.image,
+                height: compact ? 170 : 210,
+                width: compact ? double.infinity : 220,
+                fit: BoxFit.cover,
+                filterQuality: PerformanceScope.maybeSettingsOf(
+                  context,
+                ).filterQuality,
+                errorBuilder: (_, __, ___) => Container(
+                  color: scheme.surfaceContainer,
+                  child: Icon(Icons.landscape_rounded, color: scheme.primary),
+                ),
               ),
-            ),
-          );
-          final content = Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        destination.name,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w900,
+            );
+            final content = Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          destination.name,
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900),
                         ),
                       ),
-                    ),
-                    IconButton(
-                      key: ValueKey(
-                        'favorite-place-${_favoritePlaceId(destination.name)}',
-                      ),
-                      tooltip: favorite
-                          ? 'Remove from favorites'
-                          : 'Save place',
-                      onPressed: favoriteBusy ? null : onFavorite,
-                      icon: AnimatedSwitcher(
-                        duration: PerformanceScope.maybeSettingsOf(
+                      IconButton(
+                        key: ValueKey(
+                          'favorite-place-${_favoritePlaceId(destination.name)}',
+                        ),
+                        tooltip: appText(
                           context,
-                        ).transitionDuration,
-                        transitionBuilder: (child, animation) =>
-                            ScaleTransition(scale: animation, child: child),
-                        child: Icon(
-                          favorite
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
-                          key: ValueKey(favorite),
-                          color: favorite ? scheme.error : scheme.primary,
+                          favorite ? 'Remove from favorites' : 'Save place',
+                        ),
+                        onPressed: favoriteBusy ? null : onFavorite,
+                        icon: AnimatedSwitcher(
+                          duration: PerformanceScope.maybeSettingsOf(
+                            context,
+                          ).transitionDuration,
+                          transitionBuilder: (child, animation) =>
+                              ScaleTransition(scale: animation, child: child),
+                          child: Icon(
+                            favorite
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            key: ValueKey(favorite),
+                            color: favorite ? scheme.error : scheme.primary,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                Text(
-                  destination.description,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    height: 1.35,
+                    ],
                   ),
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    OutlinedButton(
-                      onPressed: onDetails,
-                      child: const Text('Details'),
+                  Text(
+                    destination.description,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant,
+                      height: 1.35,
                     ),
-                    FilledButton.icon(
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
                       onPressed: onAdd,
                       icon: const Icon(Icons.add_rounded, size: 18),
-                      label: const Text('Add to trip'),
+                      label: Text(appText(context, 'Add to trip')),
                     ),
-                  ],
-                ),
-              ],
-            ),
-          );
-          if (compact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [image, content],
+                  ),
+                ],
+              ),
             );
-          }
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              image,
-              Expanded(child: content),
-            ],
-          );
-        },
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [image, content],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                image,
+                Expanded(child: content),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -479,7 +566,7 @@ class _DestinationDetailsPanel extends StatelessWidget {
                         top: 12,
                         right: 12,
                         child: IconButton.filledTonal(
-                          tooltip: 'Close details',
+                          tooltip: appText(context, 'Close details'),
                           onPressed: () => Navigator.of(context).pop(),
                           icon: const Icon(Icons.close_rounded),
                         ),
@@ -527,13 +614,18 @@ class _DestinationDetailsPanel extends StatelessWidget {
                                     : Icons.favorite_border_rounded,
                               ),
                               label: Text(
-                                favorite ? 'Favorited' : 'Save place',
+                                appText(
+                                  context,
+                                  favorite ? 'Favorited' : 'Save place',
+                                ),
                               ),
                             ),
                             FilledButton.icon(
                               onPressed: onAdd,
                               icon: const Icon(Icons.add_location_alt_rounded),
-                              label: const Text('Add to a new trip'),
+                              label: Text(
+                                appText(context, 'Add to a new trip'),
+                              ),
                             ),
                           ],
                         ),
@@ -550,18 +642,17 @@ class _DestinationDetailsPanel extends StatelessWidget {
   }
 }
 
-String _dailyTripPrompt(Trip trip) {
-  if (trip.status != TripStatus.ongoing) {
-    return 'Help me prepare to start my ${trip.destination} trip.';
-  }
+String _currentTripHeading(Trip trip) {
   final runtime = _tripRuntimePlan(trip);
-  final next = runtime.nextItem;
-  final base =
-      'I am currently running my ${trip.destination} trip. Today is day ${runtime.currentDay} of ${runtime.totalDays}.';
-  if (next == null) {
-    return '$base Help me plan the rest of today based on my schedule, current time, and location if available.';
+  if (runtime.phase == _TripRuntimePhase.duringTrip) return 'Current trip';
+  if (runtime.phase != _TripRuntimePhase.beforeStart) {
+    return 'Continue planning';
   }
-  return '$base My next scheduled activity is "${next.activity}" at ${next.time}. Help me run today smoothly using current time and location if available.';
+
+  final start = _parseTripDate(trip.startDate);
+  if (start == null) return 'Continue planning';
+  final daysUntilStart = start.difference(_dateOnly(_travelAgentNow())).inDays;
+  return daysUntilStart > 7 ? 'Continue planning' : 'Starting soon';
 }
 
 class _EmptyTripCard extends StatelessWidget {
@@ -598,6 +689,210 @@ class _EmptyTripCard extends StatelessWidget {
             label: 'Create schedule',
             icon: Icons.add_rounded,
             onPressed: onCreate,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationCenterSheet extends StatelessWidget {
+  const _NotificationCenterSheet({
+    required this.notificationsEnabled,
+    required this.trip,
+    required this.upcomingTripCount,
+    required this.onEnableNotifications,
+    required this.onOpenTrip,
+  });
+
+  final bool notificationsEnabled;
+  final Trip? trip;
+  final int upcomingTripCount;
+  final VoidCallback onEnableNotifications;
+  final VoidCallback? onOpenTrip;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(28),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 52,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD8DEE4),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const IconBadge(
+                      icon: Icons.notifications_active_rounded,
+                      size: 48,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const LabelText('Notification center'),
+                          const SizedBox(height: 3),
+                          Text(
+                            appText(
+                              context,
+                              notificationsEnabled
+                                  ? 'Daily agent notifications are ready.'
+                                  : 'Notifications are off for this browser.',
+                            ),
+                            style: const TextStyle(
+                              color: _primary,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    SmallPill(
+                      label: notificationsEnabled ? 'Enabled' : 'Needs setup',
+                    ),
+                    SmallPill(label: '$upcomingTripCount active/upcoming'),
+                    if (trip != null) SmallPill(label: trip!.destination),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                FutureBuilder<List<_DailyAgentUpdate>>(
+                  future: _loadGeneralAgentUpdates(),
+                  builder: (context, snapshot) {
+                    final updates = [
+                      ...(snapshot.data ?? _generalAgentFallbackUpdates()),
+                      if (trip != null) ..._dailyAgentUpdates(trip!),
+                    ].take(5).toList(growable: false);
+                    return ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: math.min(
+                          MediaQuery.sizeOf(context).height * .42,
+                          370,
+                        ),
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: updates.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) =>
+                            _NotificationUpdateTile(update: updates[index]),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: onOpenTrip,
+                        icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                        label: Text(appText(context, 'Open trip')),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: onEnableNotifications,
+                        icon: Icon(
+                          notificationsEnabled
+                              ? Icons.sync_rounded
+                              : Icons.notifications_active_rounded,
+                          size: 18,
+                        ),
+                        label: Text(
+                          appText(
+                            context,
+                            notificationsEnabled ? 'Refresh' : 'Enable',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationUpdateTile extends StatelessWidget {
+  const _NotificationUpdateTile({required this.update});
+
+  final _DailyAgentUpdate update;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8FA),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          IconBadge(icon: update.icon, size: 40),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appText(context, update.title),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _primary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  appText(context, update.detail),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),

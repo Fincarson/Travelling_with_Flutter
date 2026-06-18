@@ -7,8 +7,11 @@ class TripDetailScreen extends StatelessWidget {
     required this.onOpenChat,
     required this.onOpenBudget,
     required this.onOpenPacking,
-    required this.onOpenMap,
+    required this.onOpenSettings,
     required this.onUpdateTrip,
+    required this.accountId,
+    required this.repository,
+    required this.onLeftTrip,
     this.initialTabIndex = 0,
     this.initialAiPrompt,
     super.key,
@@ -18,8 +21,11 @@ class TripDetailScreen extends StatelessWidget {
   final VoidCallback onOpenChat;
   final VoidCallback onOpenBudget;
   final VoidCallback onOpenPacking;
-  final VoidCallback onOpenMap;
+  final VoidCallback onOpenSettings;
   final ValueChanged<Trip> onUpdateTrip;
+  final String accountId;
+  final TravelDataRepository repository;
+  final VoidCallback onLeftTrip;
   final int initialTabIndex;
   final String? initialAiPrompt;
 
@@ -29,8 +35,11 @@ class TripDetailScreen extends StatelessWidget {
       trip: trip,
       onBack: onBack,
       onOpenChat: onOpenChat,
-      onOpenMap: onOpenMap,
+      onOpenSettings: onOpenSettings,
       onUpdateTrip: onUpdateTrip,
+      accountId: accountId,
+      repository: repository,
+      onLeftTrip: onLeftTrip,
       initialTabIndex: initialTabIndex,
       initialAiPrompt: initialAiPrompt,
     );
@@ -42,8 +51,11 @@ class _EditableTripDetailScreen extends StatefulWidget {
     required this.trip,
     required this.onBack,
     required this.onOpenChat,
-    required this.onOpenMap,
+    required this.onOpenSettings,
     required this.onUpdateTrip,
+    required this.accountId,
+    required this.repository,
+    required this.onLeftTrip,
     required this.initialTabIndex,
     this.initialAiPrompt,
   });
@@ -51,8 +63,11 @@ class _EditableTripDetailScreen extends StatefulWidget {
   final Trip trip;
   final VoidCallback onBack;
   final VoidCallback onOpenChat;
-  final VoidCallback onOpenMap;
+  final VoidCallback onOpenSettings;
   final ValueChanged<Trip> onUpdateTrip;
+  final String accountId;
+  final TravelDataRepository repository;
+  final VoidCallback onLeftTrip;
   final int initialTabIndex;
   final String? initialAiPrompt;
 
@@ -88,7 +103,7 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
     widget.onUpdateTrip(trip);
   }
 
-  int _clampedSectionIndex(int index) => index.clamp(0, 6);
+  int _clampedSectionIndex(int index) => index.clamp(0, 7);
 
   @override
   Widget build(BuildContext context) {
@@ -96,7 +111,6 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
     final selectedIndex = _selectedSectionIndex.clamp(0, sections.length - 1);
 
     return ScreenScaffold(
-      bottomPadding: 92,
       child: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           _TripDetailSliverAppBar(
@@ -105,10 +119,16 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
             selectedIndex: selectedIndex,
             forceElevated: innerBoxIsScrolled,
             onBack: widget.onBack,
+            onOpenSettings: widget.onOpenSettings,
             onSelect: (index) => setState(() => _selectedSectionIndex = index),
           ),
         ],
-        body: sections[selectedIndex].child,
+        body: Column(
+          children: [
+            if (!_trip.canEdit) const _TripReadOnlyBanner(),
+            Expanded(child: sections[selectedIndex].child),
+          ],
+        ),
       ),
     );
   }
@@ -118,32 +138,54 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
       _TripDetailSection(
         label: 'Overview',
         icon: Icons.dashboard_rounded,
-        child: TripOverviewTab(trip: _trip, onSave: _save),
+        child: TripOverviewTab(
+          trip: _trip,
+          onSave: _save,
+          readOnly: !_trip.canEdit,
+        ),
       ),
       _TripDetailSection(
         label: 'Schedule',
         icon: Icons.route_rounded,
-        child: ScheduleTab(trip: _trip, onSave: _save),
+        child: ScheduleTab(
+          trip: _trip,
+          onSave: _save,
+          readOnly: !_trip.canEdit,
+        ),
       ),
       _TripDetailSection(
         label: 'Budget',
         icon: Icons.account_balance_wallet_rounded,
-        child: BudgetTab(trip: _trip, onSave: _save),
+        child: BudgetTab(trip: _trip, onSave: _save, readOnly: !_trip.canEdit),
       ),
       _TripDetailSection(
         label: 'Map',
         icon: Icons.map_rounded,
-        child: TripMapTab(trip: _trip, onOpenMap: widget.onOpenMap),
+        child: TripMapTab(trip: _trip),
       ),
       _TripDetailSection(
         label: 'Checklist',
         icon: Icons.checklist_rounded,
-        child: ChecklistTab(trip: _trip, onSave: _save),
+        child: ChecklistTab(
+          trip: _trip,
+          onSave: _save,
+          readOnly: !_trip.canEdit,
+        ),
       ),
       _TripDetailSection(
         label: 'Booking',
         icon: Icons.confirmation_number_rounded,
-        child: BookingTab(trip: _trip, onSave: _save),
+        child: BookingTab(trip: _trip, onSave: _save, readOnly: !_trip.canEdit),
+      ),
+      _TripDetailSection(
+        label: 'Members',
+        icon: Icons.groups_rounded,
+        child: TripMembersTab(
+          trip: _trip,
+          accountId: widget.accountId,
+          repository: widget.repository,
+          onLeftTrip: widget.onLeftTrip,
+        ),
       ),
       _TripDetailSection(
         label: 'Chat',
@@ -155,6 +197,41 @@ class _EditableTripDetailScreenState extends State<_EditableTripDetailScreen> {
         ),
       ),
     ];
+  }
+}
+
+class _TripReadOnlyBanner extends StatelessWidget {
+  const _TripReadOnlyBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.secondaryContainer,
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: _responsiveHorizontalPadding(context),
+          vertical: 9,
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.visibility_rounded, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                appText(
+                  context,
+                  'View only: the trip owner manages this plan.',
+                ),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -177,6 +254,7 @@ class _TripDetailSliverAppBar extends StatelessWidget {
     required this.selectedIndex,
     required this.forceElevated,
     required this.onBack,
+    required this.onOpenSettings,
     required this.onSelect,
   });
 
@@ -185,6 +263,7 @@ class _TripDetailSliverAppBar extends StatelessWidget {
   final int selectedIndex;
   final bool forceElevated;
   final VoidCallback onBack;
+  final VoidCallback onOpenSettings;
   final ValueChanged<int> onSelect;
 
   @override
@@ -203,6 +282,7 @@ class _TripDetailSliverAppBar extends StatelessWidget {
       surfaceTintColor: Colors.transparent,
       foregroundColor: _primary,
       automaticallyImplyLeading: false,
+      leadingWidth: 60,
       leading: Padding(
         padding: const EdgeInsets.only(left: 8),
         child: IconButton(
@@ -210,8 +290,25 @@ class _TripDetailSliverAppBar extends StatelessWidget {
           onPressed: onBack,
           icon: const Icon(Icons.arrow_back_rounded),
           color: _primary,
+          style: IconButton.styleFrom(
+            backgroundColor: Colors.white.withValues(alpha: .88),
+          ),
         ),
       ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: IconButton(
+            tooltip: appText(context, 'Trip settings'),
+            onPressed: onOpenSettings,
+            icon: const Icon(Icons.settings_rounded),
+            color: _primary,
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white.withValues(alpha: .88),
+            ),
+          ),
+        ),
+      ],
       flexibleSpace: _TripDetailFlexibleBanner(trip: trip),
       bottom: _TripSectionTabBar(
         sections: sections,
@@ -229,6 +326,9 @@ class _TripDetailFlexibleBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final image = trip.images.isEmpty
+        ? destinations.first.image
+        : trip.images.first;
     return LayoutBuilder(
       builder: (context, constraints) {
         const bannerBottom = _TripSectionTabBar.height;
@@ -256,7 +356,7 @@ class _TripDetailFlexibleBanner extends StatelessWidget {
               child: Opacity(
                 opacity: imageOpacity,
                 child: Image.network(
-                  trip.images.first,
+                  image,
                   fit: BoxFit.cover,
                   filterQuality: PerformanceScope.maybeSettingsOf(
                     context,
@@ -351,38 +451,17 @@ class _TripHeaderBannerContent extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '${trip.startDate} ~ ${trip.endDate}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: .82),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Icon(
-              Icons.person_rounded,
-              color: Colors.white.withValues(alpha: .82),
-              size: 20,
-            ),
-            Flexible(
-              child: Text(
-                trip.numOfTravelers.toString(),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.5,
-                ),
-              ),
-            ),
-          ],
+        _TripDateTravelerLine(
+          dates: trip.startDate == trip.endDate
+              ? trip.startDate
+              : '${trip.startDate} ~ ${trip.endDate}',
+          travelerCount: trip.numOfTravelers,
+          dateStyle: TextStyle(
+            color: Colors.white.withValues(alpha: .82),
+            fontWeight: FontWeight.w800,
+          ),
+          travelerForeground: Colors.white,
+          travelerBackground: Colors.white.withValues(alpha: .14),
         ),
       ],
     );

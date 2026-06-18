@@ -22,62 +22,37 @@ class AccountGate extends StatefulWidget {
 class _AccountGateState extends State<AccountGate> {
   final _deviceContextService = AppDeviceContextService();
   final _locationPromptedAccountIds = <String>{};
-  AccountAuthService? _authService;
-  Future<AuthenticatedAccount?>? _rememberedAccount;
-  var _showStartupOnboarding = true;
-  PreAccountOnboardingData? _startupOnboarding;
+  late final AccountAuthService _authService;
+  late final Future<void> _signInPreparation;
 
-  void _initializeAuth() {
-    final authService = _authService ??=
-        widget._providedAuthService ?? AccountAuthService();
-    _rememberedAccount ??= authService.restoreRememberedAccount();
+  @override
+  void initState() {
+    super.initState();
+    _authService = widget._providedAuthService ?? AccountAuthService();
+    _signInPreparation = _authService.prepareForFreshSignIn();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_showStartupOnboarding) {
-      return PreAccountOnboardingFlow(
-        initialData: _startupOnboarding,
-        onBack: () => setState(() => _showStartupOnboarding = false),
-        onComplete: (data) {
-          setState(() {
-            _startupOnboarding = data;
-            _showStartupOnboarding = false;
-          });
-        },
-      );
-    }
-
-    _initializeAuth();
-    final authService = _authService!;
-    return FutureBuilder<AuthenticatedAccount?>(
-      future: _rememberedAccount!,
+    return FutureBuilder<void>(
+      future: _signInPreparation,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const _AuthFrame(child: _AuthLoading());
         }
 
         return StreamBuilder<AuthenticatedAccount?>(
-          stream: authService.accountChanges,
-          initialData: snapshot.data,
+          stream: _authService.accountChanges,
           builder: (context, snapshot) {
             final account = snapshot.data;
             if (account == null) {
               return _AuthFrame(
-                child: AccountSignInPage(
-                  authService: authService,
-                  initialOnboarding: _startupOnboarding,
-                ),
+                child: AccountSignInPage(authService: _authService),
               );
             }
 
             unawaited(_requestLocationAfterLogin(account.uid));
-            return TravelAgentApp(
-              key: ValueKey(account.uid),
-              account: account,
-              startupOnboarding: _startupOnboarding,
-            );
+            return TravelAgentApp(key: ValueKey(account.uid), account: account);
           },
         );
       },
@@ -91,14 +66,9 @@ class _AccountGateState extends State<AccountGate> {
 }
 
 class AccountSignInPage extends StatefulWidget {
-  const AccountSignInPage({
-    required this.authService,
-    this.initialOnboarding,
-    super.key,
-  });
+  const AccountSignInPage({required this.authService, super.key});
 
   final AccountAuthService authService;
-  final PreAccountOnboardingData? initialOnboarding;
 
   @override
   State<AccountSignInPage> createState() => _AccountSignInPageState();
@@ -122,13 +92,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
   var _showOnboarding = false;
   PreAccountOnboardingData? _pendingOnboarding;
   PhoneSignInSession? _phoneSession;
-
-  @override
-  void initState() {
-    super.initState();
-    _pendingOnboarding = widget.initialOnboarding;
-    _name.text = widget.initialOnboarding?.name ?? '';
-  }
 
   @override
   void dispose() {
@@ -256,7 +219,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
           password: _password.text,
         );
       }
-      await widget.authService.rememberCurrentSession(remember: true);
     }, errorTarget: _AuthErrorTarget.email);
   }
 
@@ -274,7 +236,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
       final session = await widget.authService.sendPhoneCode(phone);
       if (!mounted) return;
       if (session.autoVerified) {
-        await widget.authService.rememberCurrentSession(remember: true);
         return;
       }
       setState(() {
@@ -300,7 +261,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
         session: session,
         smsCode: _smsCode.text,
       );
-      await widget.authService.rememberCurrentSession(remember: true);
     }, errorTarget: _AuthErrorTarget.phone);
   }
 
@@ -309,7 +269,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
     await _runAuth(() async {
       try {
         await widget.authService.signInWithGoogle();
-        await widget.authService.rememberCurrentSession(remember: true);
       } on GoogleAccountLinkRequiredException catch (error) {
         pendingLink = error;
       }
@@ -329,7 +288,6 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
         password: password,
         googleCredential: link.googleCredential,
       );
-      await widget.authService.rememberCurrentSession(remember: true);
     }, errorTarget: _AuthErrorTarget.email);
   }
 
@@ -453,7 +411,10 @@ class _AccountSignInPageState extends State<AccountSignInPage> {
               ),
               const SizedBox(height: 10),
               OutlinedButton.icon(
-                onPressed: null,
+                onPressed: _isBusy
+                    ? null
+                    : () =>
+                          _showNotice('Facebook sign-in is not available yet.'),
                 icon: const Icon(Icons.facebook_rounded),
                 label: Text(appText(context, 'Facebook coming later')),
               ),

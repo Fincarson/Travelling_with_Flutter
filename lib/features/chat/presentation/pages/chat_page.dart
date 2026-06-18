@@ -93,12 +93,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
           user: widget.user,
           repository: _repository,
           onBack: _closeActiveChat,
+          onOpenTrip: (tripId) => context.go('/trips/$tripId'),
         ),
       );
     }
 
     return ScreenScaffold(
-      bottomPadding: 92,
       child: ListView(
         padding: _responsivePagePadding(context, top: 12, bottom: 112),
         children: [
@@ -516,6 +516,7 @@ class RoutedGroupChatRoomScreen extends StatefulWidget {
     required this.account,
     required this.user,
     required this.onBack,
+    required this.onOpenTrip,
     required this.onVisibilityChanged,
     super.key,
   });
@@ -524,6 +525,7 @@ class RoutedGroupChatRoomScreen extends StatefulWidget {
   final AuthenticatedAccount account;
   final UserProfile user;
   final VoidCallback onBack;
+  final ValueChanged<String> onOpenTrip;
   final ValueChanged<String?> onVisibilityChanged;
 
   @override
@@ -599,6 +601,7 @@ class _RoutedGroupChatRoomScreenState extends State<RoutedGroupChatRoomScreen> {
               user: widget.user,
               repository: _repository,
               onBack: widget.onBack,
+              onOpenTrip: widget.onOpenTrip,
             );
           }
 
@@ -632,6 +635,85 @@ class _LoadedGroupChatRoom {
   final GroupChatMembership membership;
 }
 
+class _ChatTimelineEntry {
+  const _ChatTimelineEntry.message(this.message) : date = null;
+
+  const _ChatTimelineEntry.date(this.date) : message = null;
+
+  final GroupChatMessage? message;
+  final DateTime? date;
+}
+
+List<_ChatTimelineEntry> _chatTimelineEntries(List<GroupChatMessage> messages) {
+  final entries = <_ChatTimelineEntry>[];
+  DateTime? currentDate;
+  final fallbackDate = DateTime.now();
+
+  for (final message in messages) {
+    final local = message.createdAt?.toDate().toLocal() ?? fallbackDate;
+    final date = DateTime(local.year, local.month, local.day);
+    if (currentDate != date) {
+      currentDate = date;
+      entries.add(_ChatTimelineEntry.date(date));
+    }
+    entries.add(_ChatTimelineEntry.message(message));
+  }
+
+  return entries;
+}
+
+class _ChatDateDivider extends StatelessWidget {
+  const _ChatDateDivider({required this.date});
+
+  final DateTime date;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      key: ValueKey('chat-date-divider-${date.toIso8601String()}'),
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Expanded(child: Divider(color: colors.outlineVariant)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Material(
+              color: colors.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(999),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                child: Text(
+                  _chatDateLabel(context, date),
+                  style: TextStyle(
+                    color: colors.onSurfaceVariant,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(child: Divider(color: colors.outlineVariant)),
+        ],
+      ),
+    );
+  }
+}
+
+String _chatDateLabel(BuildContext context, DateTime date) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final difference = today.difference(date).inDays;
+  if (difference == 0) return appText(context, 'Today');
+  if (difference == 1) return appText(context, 'Yesterday');
+
+  return MaterialLocalizations.of(context).formatMediumDate(date);
+}
+
 class GroupChatRoomScreen extends StatefulWidget {
   const GroupChatRoomScreen({
     required this.chat,
@@ -640,6 +722,7 @@ class GroupChatRoomScreen extends StatefulWidget {
     required this.user,
     required this.repository,
     required this.onBack,
+    required this.onOpenTrip,
     super.key,
   });
 
@@ -649,6 +732,7 @@ class GroupChatRoomScreen extends StatefulWidget {
   final UserProfile user;
   final GroupChatRepository repository;
   final VoidCallback onBack;
+  final ValueChanged<String> onOpenTrip;
 
   @override
   State<GroupChatRoomScreen> createState() => _GroupChatRoomScreenState();
@@ -657,8 +741,11 @@ class GroupChatRoomScreen extends StatefulWidget {
 class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   final _input = TextEditingController();
   final _inputFocusNode = FocusNode();
-  final _scrollController = ScrollController();
   final _attachmentService = ChatAttachmentService();
+  final _composerActionsController = OverlayPortalController(
+    debugLabel: 'chat-composer-actions',
+  );
+  final _composerActionsVisible = ValueNotifier(false);
   late String _chatTitle;
   late GroupChatMembership _membership;
   var _isSending = false;
@@ -670,13 +757,13 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
     super.initState();
     _chatTitle = widget.chat.title;
     _membership = widget.membership;
-    _inputFocusNode.addListener(_refreshComposer);
   }
 
   @override
   void didUpdateWidget(covariant GroupChatRoomScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.chat.id != widget.chat.id) {
+      _hideComposerActions();
       _chatTitle = widget.chat.title;
       _membership = widget.membership;
     }
@@ -684,15 +771,10 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
 
   @override
   void dispose() {
-    _inputFocusNode.removeListener(_refreshComposer);
+    _composerActionsVisible.dispose();
     _input.dispose();
     _inputFocusNode.dispose();
-    _scrollController.dispose();
     super.dispose();
-  }
-
-  void _refreshComposer() {
-    if (mounted) setState(() {});
   }
 
   @override
@@ -719,15 +801,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
               stream: widget.repository.watchMessages(widget.chat.id),
               builder: (context, snapshot) {
                 final messages = snapshot.data ?? const <GroupChatMessage>[];
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  if (!_scrollController.hasClients) return;
-                  _scrollController.animateTo(
-                    _scrollController.position.maxScrollExtent,
-                    duration: const Duration(milliseconds: 180),
-                    curve: Curves.easeOut,
-                  );
-                });
+                final timeline = _chatTimelineEntries(messages);
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
@@ -761,11 +835,15 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                   );
                 }
                 return ListView.builder(
-                  controller: _scrollController,
+                  reverse: true,
                   padding: _responsivePagePadding(context, top: 12, bottom: 12),
-                  itemCount: messages.length,
+                  itemCount: timeline.length,
                   itemBuilder: (context, index) {
-                    final message = messages[index];
+                    final entry = timeline[timeline.length - index - 1];
+                    if (entry.date case final date?) {
+                      return _ChatDateDivider(date: date);
+                    }
+                    final message = entry.message!;
                     return GroupMessageBubble(
                       message: message,
                       isMine: message.senderId == widget.account.uid,
@@ -798,61 +876,103 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
               _responsiveHorizontalPadding(context),
               MediaQuery.viewInsetsOf(context).bottom + 18,
             ),
-            child: Row(
-              children: [
-                IconButton.filledTonal(
-                  tooltip: appText(context, 'Attach'),
-                  onPressed: _isSending || _isSendingAttachment
-                      ? null
-                      : _showAttachmentMenu,
-                  icon: _isSendingAttachment
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.add_rounded),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _input,
-                    focusNode: _inputFocusNode,
-                    minLines: 1,
-                    maxLines: 4,
-                    textInputAction: TextInputAction.send,
-                    decoration: InputDecoration(
-                      hintText: _inputFocusNode.hasFocus
-                          ? null
-                          : appText(context, 'Message'),
-                      hintStyle: TextStyle(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurfaceVariant.withValues(alpha: .72),
-                        fontWeight: FontWeight.w700,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return OverlayPortal.overlayChildLayoutBuilder(
+                  controller: _composerActionsController,
+                  overlayChildBuilder: (overlayContext, layoutInfo) {
+                    final composerTopLeft = MatrixUtils.transformPoint(
+                      layoutInfo.childPaintTransform,
+                      Offset.zero,
+                    );
+                    return Positioned(
+                      left: composerTopLeft.dx,
+                      width: layoutInfo.childSize.width,
+                      bottom:
+                          layoutInfo.overlaySize.height -
+                          composerTopLeft.dy +
+                          8,
+                      child: _buildComposerActions(overlayContext),
+                    );
+                  },
+                  child: Row(
+                    children: [
+                      ValueListenableBuilder<bool>(
+                        valueListenable: _composerActionsVisible,
+                        builder: (context, isVisible, _) {
+                          return IconButton.filledTonal(
+                            tooltip: appText(
+                              context,
+                              isVisible ? 'Close' : 'Attach',
+                            ),
+                            onPressed: _isSending || _isSendingAttachment
+                                ? null
+                                : _toggleComposerActions,
+                            icon: _isSendingAttachment
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Icon(
+                                    isVisible
+                                        ? Icons.close_rounded
+                                        : Icons.add_rounded,
+                                  ),
+                          );
+                        },
                       ),
-                    ),
-                    onSubmitted: (_) => _sendMessage(),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                IconButton.filled(
-                  style: IconButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                    fixedSize: const Size(54, 54),
-                  ),
-                  onPressed: _isSending ? null : _sendMessage,
-                  icon: _isSending
-                      ? SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Theme.of(context).colorScheme.onPrimary,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: _input,
+                          focusNode: _inputFocusNode,
+                          minLines: 1,
+                          maxLines: 4,
+                          textInputAction: TextInputAction.send,
+                          decoration: InputDecoration(
+                            hintText: appText(context, 'Message'),
+                            hintStyle: TextStyle(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant
+                                  .withValues(alpha: .72),
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        )
-                      : const Icon(Icons.send_rounded),
-                ),
-              ],
+                          onTap: _hideComposerActions,
+                          onSubmitted: (_) => _sendMessage(),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      IconButton.filled(
+                        style: IconButton.styleFrom(
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onPrimary,
+                          fixedSize: const Size(54, 54),
+                        ),
+                        onPressed: _isSending ? null : _sendMessage,
+                        icon: _isSending
+                            ? SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onPrimary,
+                                ),
+                              )
+                            : const Icon(Icons.send_rounded),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -863,6 +983,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   Future<void> _sendMessage() async {
     final text = _input.text.trim();
     if (text.isEmpty || _isSending) return;
+    _hideComposerActions();
     setState(() {
       _isSending = true;
       _error = null;
@@ -966,6 +1087,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
           Navigator.of(context).pop();
           Future<void>.delayed(Duration.zero, _showGroupMedia);
         },
+        onOpenTrip: widget.onOpenTrip,
       ),
     );
     final chat = await widget.repository.loadChat(widget.chat.id);
@@ -1082,6 +1204,15 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
   }
 
   Future<void> _showMoreOptions() async {
+    GroupChat? latestChat;
+    try {
+      latestChat = await widget.repository.loadChat(widget.chat.id);
+    } catch (error) {
+      if (mounted) setState(() => _error = _chatErrorMessage(error));
+      return;
+    }
+    if (!mounted || latestChat == null) return;
+    final isOwner = latestChat.ownerId == widget.account.uid;
     final action = await showModalBottomSheet<_ChatMoreAction>(
       context: context,
       showDragHandle: true,
@@ -1107,6 +1238,21 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
                 ),
                 onTap: () => Navigator.of(context).pop(_ChatMoreAction.exit),
               ),
+              if (isOwner)
+                ListTile(
+                  leading: Icon(
+                    Icons.delete_forever_rounded,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  title: Text(
+                    appText(context, 'Delete group'),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                  onTap: () =>
+                      Navigator.of(context).pop(_ChatMoreAction.delete),
+                ),
             ],
           ),
         ),
@@ -1123,6 +1269,82 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
       );
       return;
     }
+    if (action == _ChatMoreAction.delete) {
+      await _deleteGroupChat();
+      return;
+    }
+
+    await _exitGroupChat(isOwner: isOwner);
+  }
+
+  Future<void> _exitGroupChat({required bool isOwner}) async {
+    GroupChatMember? newOwner;
+    if (isOwner) {
+      try {
+        final members = await widget.repository.loadMembers(widget.chat.id);
+        if (!mounted) return;
+        final candidates = members
+            .where((member) => member.uid != widget.account.uid)
+            .toList();
+        if (candidates.isNotEmpty) {
+          newOwner = await showModalBottomSheet<GroupChatMember>(
+            context: context,
+            showDragHandle: true,
+            builder: (context) => SafeArea(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 620),
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: _responsivePagePadding(context, top: 4, bottom: 24),
+                  children: [
+                    Text(
+                      appText(context, 'Choose a new group owner'),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      appText(
+                        context,
+                        'Ownership must be transferred before you leave.',
+                      ),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    for (final member in candidates)
+                      ListTile(
+                        leading: ChatAvatar(
+                          name: member.displayNameSnapshot,
+                          photoUrl: member.photoUrlSnapshot,
+                        ),
+                        title: Text(
+                          member.displayNameSnapshot,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        subtitle: Text(
+                          appText(context, _roleLabel(member.role)),
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () => Navigator.of(context).pop(member),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          );
+          if (newOwner == null || !mounted) return;
+        }
+      } catch (error) {
+        if (mounted) setState(() => _error = _chatErrorMessage(error));
+        return;
+      }
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1131,7 +1353,9 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
         content: Text(
           appText(
             context,
-            'You will lose access until another member invites you again.',
+            isOwner && newOwner == null
+                ? 'You are the only member, so leaving will delete this group chat.'
+                : 'You will lose access until another member invites you again.',
           ),
         ),
         actions: [
@@ -1151,6 +1375,7 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
       await widget.repository.leaveChat(
         chatId: widget.chat.id,
         accountId: widget.account.uid,
+        newOwnerId: newOwner?.uid,
       );
       if (mounted) widget.onBack();
     } catch (error) {
@@ -1158,55 +1383,129 @@ class _GroupChatRoomScreenState extends State<GroupChatRoomScreen> {
     }
   }
 
-  Future<void> _showAttachmentMenu() async {
-    final action = await showModalBottomSheet<_ChatComposerAction>(
+  Future<void> _deleteGroupChat() async {
+    final confirmed = await showDialog<bool>(
       context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _AttachmentSourceButton(
-                icon: Icons.photo_camera_rounded,
-                label: 'Camera',
-                enabled: _attachmentService.cameraAvailable,
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatComposerAction.camera),
-              ),
-              _AttachmentSourceButton(
-                icon: Icons.photo_library_rounded,
-                label: 'Photos',
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatComposerAction.photos),
-              ),
-              _AttachmentSourceButton(
-                icon: Icons.video_library_rounded,
-                label: 'Videos',
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatComposerAction.videos),
-              ),
-              _AttachmentSourceButton(
-                icon: Icons.attach_file_rounded,
-                label: 'Files',
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatComposerAction.files),
-              ),
-              _AttachmentSourceButton(
-                icon: Icons.poll_rounded,
-                label: 'Poll',
-                onTap: () =>
-                    Navigator.of(context).pop(_ChatComposerAction.poll),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: Text(appText(context, 'Delete group chat?')),
+        content: Text(
+          appText(
+            context,
+            'This permanently deletes the chat and its messages. The attached trip and its members will not be changed.',
           ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(appText(context, 'Cancel')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(appText(context, 'Delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.repository.deleteChat(
+        chatId: widget.chat.id,
+        accountId: widget.account.uid,
+      );
+      if (mounted) widget.onBack();
+    } catch (error) {
+      if (mounted) setState(() => _error = _chatErrorMessage(error));
+    }
+  }
+
+  Widget _buildComposerActions(BuildContext context) {
+    return Material(
+      key: const ValueKey('chat-composer-options'),
+      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      elevation: 12,
+      shadowColor: Theme.of(context).colorScheme.shadow.withValues(alpha: .24),
+      borderRadius: BorderRadius.circular(22),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const spacing = 8.0;
+            const preferredWidth = 84.0;
+            const actionCount = 5;
+            final availableWidth = constraints.maxWidth;
+            final columns =
+                ((availableWidth + spacing) / (preferredWidth + spacing))
+                    .floor()
+                    .clamp(1, actionCount);
+            final buttonWidth =
+                (availableWidth - spacing * (columns - 1)) / columns;
+
+            return Wrap(
+              alignment: WrapAlignment.start,
+              spacing: spacing,
+              runSpacing: spacing,
+              children: [
+                _AttachmentSourceButton(
+                  width: buttonWidth,
+                  icon: Icons.photo_camera_rounded,
+                  label: 'Camera',
+                  enabled: _attachmentService.cameraAvailable,
+                  onTap: () => _runComposerAction(_ChatComposerAction.camera),
+                ),
+                _AttachmentSourceButton(
+                  width: buttonWidth,
+                  icon: Icons.photo_library_rounded,
+                  label: 'Photos',
+                  onTap: () => _runComposerAction(_ChatComposerAction.photos),
+                ),
+                _AttachmentSourceButton(
+                  width: buttonWidth,
+                  icon: Icons.video_library_rounded,
+                  label: 'Videos',
+                  onTap: () => _runComposerAction(_ChatComposerAction.videos),
+                ),
+                _AttachmentSourceButton(
+                  width: buttonWidth,
+                  icon: Icons.attach_file_rounded,
+                  label: 'Files',
+                  onTap: () => _runComposerAction(_ChatComposerAction.files),
+                ),
+                _AttachmentSourceButton(
+                  width: buttonWidth,
+                  icon: Icons.poll_rounded,
+                  label: 'Poll',
+                  onTap: () => _runComposerAction(_ChatComposerAction.poll),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
-    if (!mounted || action == null) return;
+  }
+
+  void _toggleComposerActions() {
+    if (_composerActionsController.isShowing) {
+      _hideComposerActions();
+      return;
+    }
+    _inputFocusNode.unfocus();
+    _composerActionsController.show();
+    _composerActionsVisible.value = true;
+  }
+
+  void _hideComposerActions() {
+    if (!_composerActionsController.isShowing) return;
+    _composerActionsController.hide();
+    _composerActionsVisible.value = false;
+  }
+
+  Future<void> _runComposerAction(_ChatComposerAction action) async {
+    if (_isSending || _isSendingAttachment) return;
+    _hideComposerActions();
     if (action == _ChatComposerAction.poll) {
       await _showCreatePollSheet();
       return;
@@ -1698,7 +1997,7 @@ enum _GroupChatMenuAction { addMembers, info, media, notifications, more }
 
 enum _ChatMuteChoice { unmuted, thirtyMinutes, oneHour, oneDay, forever }
 
-enum _ChatMoreAction { report, exit }
+enum _ChatMoreAction { report, exit, delete }
 
 enum _ChatComposerAction { camera, photos, videos, files, poll }
 
@@ -1863,12 +2162,14 @@ class _CreatePollSheetState extends State<_CreatePollSheet> {
 
 class _AttachmentSourceButton extends StatelessWidget {
   const _AttachmentSourceButton({
+    required this.width,
     required this.icon,
     required this.label,
     required this.onTap,
     this.enabled = true,
   });
 
+  final double width;
   final IconData icon;
   final String label;
   final VoidCallback onTap;
@@ -1877,18 +2178,18 @@ class _AttachmentSourceButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 130,
+      width: width,
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
         onTap: enabled ? onTap : null,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 icon,
-                size: 32,
+                size: 28,
                 color: enabled
                     ? Theme.of(context).colorScheme.primary
                     : Theme.of(context).disabledColor,

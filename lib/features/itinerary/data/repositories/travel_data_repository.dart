@@ -1,9 +1,15 @@
 part of travel_agent_app;
 
 class TravelDataRepository {
-  const TravelDataRepository(this._firestore);
+  TravelDataRepository(this._firestore, {FirebaseFunctions? functions})
+    : _functions =
+          functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
+
+  static const _visibleTripLimit = 100;
+  static const _visibleMemoryLimit = 100;
 
   final FirebaseFirestore _firestore;
+  final FirebaseFunctions _functions;
 
   DocumentReference<Map<String, dynamic>> _userDoc(String accountId) =>
       _firestore.collection('travel_users').doc(accountId);
@@ -51,6 +57,31 @@ class TravelDataRepository {
     return batch.commit();
   }
 
+  /// Minimal write for favorites only. Avoids re-sending onboarding/settings,
+  /// so a legacy/invalid field on the rest of the profile cannot reject the
+  /// favorite update under the security rules.
+  Future<void> saveFavorites(
+    String accountId, {
+    required List<FavoritePlace> favoritePlaces,
+    required List<String> favoriteTripIds,
+  }) async {
+    final data = {
+      'favoritePlaces': favoritePlaces.map((place) => place.toMap()).toList(),
+      'favoriteTripIds': favoriteTripIds,
+    };
+    try {
+      await _functions.httpsCallable('saveUserFavorites').call(data);
+    } on FirebaseFunctionsException catch (error) {
+      if (error.code != 'not-found' && error.code != 'unavailable') {
+        rethrow;
+      }
+      await _userDoc(accountId).set({
+        ...data,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
+  }
+
   Future<void> completeOnboarding(String accountId) {
     return _userDoc(accountId).set({
       'settings': {'onboardingRequired': false, 'onboardingCompleted': true},
@@ -60,13 +91,17 @@ class TravelDataRepository {
 
   Future<List<Trip>> loadTrips(String accountId) async {
     await migrateLegacyTrips(accountId);
-    final memberships = await _membershipsRef(accountId).get();
+    final memberships = await _membershipsRef(
+      accountId,
+    ).orderBy('updatedAt', descending: true).limit(_visibleTripLimit).get();
     return _tripsFromMemberships(memberships.docs);
   }
 
   Future<List<TripMemory>> loadTripMemories(String accountId) async {
     try {
-      final snapshot = await _memoriesRef(accountId).get();
+      final snapshot = await _memoriesRef(
+        accountId,
+      ).limit(_visibleMemoryLimit).get();
       return _memoriesFromDocs(snapshot.docs);
     } on FirebaseException catch (error) {
       if (error.code == 'permission-denied') return const [];
@@ -75,9 +110,10 @@ class TravelDataRepository {
   }
 
   Stream<List<TripMemory>> watchTripMemories(String accountId) {
-    return _memoriesRef(
-      accountId,
-    ).snapshots().map((snapshot) => _memoriesFromDocs(snapshot.docs));
+    return _memoriesRef(accountId)
+        .limit(_visibleMemoryLimit)
+        .snapshots()
+        .map((snapshot) => _memoriesFromDocs(snapshot.docs));
   }
 
   Future<void> saveTripMemoryFeedback(
@@ -113,10 +149,13 @@ class TravelDataRepository {
       }
 
       try {
-        await _removeAccountFromTrip(accountId, trip.id);
+        if (trip.isOwner) {
+          await _removeAccountFromTrip(accountId, trip.id);
+        } else {
+          await leaveTrip(trip.id);
+        }
       } on FirebaseException catch (error) {
         if (error.code != 'permission-denied') rethrow;
-        await _membershipsRef(accountId).doc(trip.id).delete();
       }
     }
   }
@@ -133,25 +172,63 @@ class TravelDataRepository {
       }
 
       if (controller.isClosed) return;
-      subscription = _membershipsRef(accountId).snapshots().listen(
-        (snapshot) async {
-          try {
-            final trips = await _tripsFromMemberships(snapshot.docs);
-            if (!controller.isClosed) controller.add(trips);
-          } catch (error, stackTrace) {
-            if (!controller.isClosed) {
-              controller.addError(error, stackTrace);
-            }
-          }
-        },
-        onError: (Object error, StackTrace stackTrace) {
-          if (!controller.isClosed) controller.addError(error, stackTrace);
-        },
-      );
+      subscription = _membershipsRef(accountId)
+          .orderBy('updatedAt', descending: true)
+          .limit(_visibleTripLimit)
+          .snapshots()
+          .listen(
+            (snapshot) async {
+              try {
+                final trips = await _tripsFromMemberships(snapshot.docs);
+                if (!controller.isClosed) controller.add(trips);
+              } catch (error, stackTrace) {
+                if (!controller.isClosed) {
+                  controller.addError(error, stackTrace);
+                }
+              }
+            },
+            onError: (Object error, StackTrace stackTrace) {
+              if (!controller.isClosed) controller.addError(error, stackTrace);
+            },
+          );
     });
 
     controller.onCancel = () => subscription?.cancel();
     return controller.stream;
+  }
+
+  Stream<List<TripMember>> watchTripMembers(String tripId) {
+    return _sharedTripDoc(tripId).collection('members').snapshots().map((
+      snapshot,
+    ) {
+      final members = snapshot.docs
+          .map(TripMember.fromDoc)
+          .where((member) => member.isActive)
+          .toList();
+      members.sort((a, b) {
+        if (a.isOwner != b.isOwner) return a.isOwner ? -1 : 1;
+        return a.displayNameSnapshot.toLowerCase().compareTo(
+          b.displayNameSnapshot.toLowerCase(),
+        );
+      });
+      return members;
+    });
+  }
+
+  Future<void> removeTripMember({
+    required String tripId,
+    required String memberId,
+  }) async {
+    final callable = _functions.httpsCallable('removeTripMember');
+    await callable.call(<String, dynamic>{
+      'tripId': tripId,
+      'memberId': memberId,
+    });
+  }
+
+  Future<void> leaveTrip(String tripId) async {
+    final callable = _functions.httpsCallable('leaveTrip');
+    await callable.call(<String, dynamic>{'tripId': tripId});
   }
 
   Future<void> saveTrip(String accountId, Trip trip) {
@@ -197,7 +274,18 @@ class TravelDataRepository {
 
     final memberships = await _membershipsRef(accountId).get();
     for (final membership in memberships.docs) {
-      await _removeAccountFromTrip(accountId, membership.id);
+      final trip = await _sharedTripDoc(membership.id).get();
+      final roles = Map<String, String>.from(
+        ((trip.data()?['roles'] as Map?) ?? const <String, dynamic>{}).map(
+          (key, value) => MapEntry(key.toString(), value.toString()),
+        ),
+      );
+      final role = roles[accountId];
+      if (role == 'owner') {
+        await _removeAccountFromTrip(accountId, membership.id);
+      } else {
+        await leaveTrip(membership.id);
+      }
     }
 
     final legacyTrips = await _legacyTripsRef(accountId).get();
@@ -222,7 +310,21 @@ class TravelDataRepository {
     for (final membership in docs) {
       final tripDoc = await _sharedTripDoc(membership.id).get();
       if (!tripDoc.exists) continue;
-      trips.add(await _tripFromSharedDoc(tripDoc));
+      final accountId = membership.reference.parent.parent?.id ?? '';
+      final tripRoles = Map<String, String>.from(
+        ((tripDoc.data()?['roles'] as Map?) ?? const <String, dynamic>{}).map(
+          (key, value) => MapEntry(key.toString(), value.toString()),
+        ),
+      );
+      trips.add(
+        await _tripFromSharedDoc(
+          tripDoc,
+          currentUserRole:
+              tripRoles[accountId] ??
+              (membership.data()['role'] as String?) ??
+              'viewer',
+        ),
+      );
     }
     return trips;
   }
@@ -236,8 +338,9 @@ class TravelDataRepository {
   }
 
   Future<Trip> _tripFromSharedDoc(
-    DocumentSnapshot<Map<String, dynamic>> tripDoc,
-  ) async {
+    DocumentSnapshot<Map<String, dynamic>> tripDoc, {
+    required String currentUserRole,
+  }) async {
     final tripRef = tripDoc.reference;
     final snapshots = await Future.wait([
       tripRef.collection('itineraryItems').get(),
@@ -272,6 +375,7 @@ class TravelDataRepository {
       items: items,
       bookings: bookings,
       budgetCategories: budgetCategories,
+      currentUserRole: currentUserRole,
     );
   }
 
@@ -448,6 +552,10 @@ class TravelDataRepository {
           'activity': item.activity,
           'type': _iconName(item.type),
           'cost': item.cost,
+          'address': item.address,
+          'latitude': item.latitude,
+          'longitude': item.longitude,
+          'imageUrl': item.imageUrl,
           'source': 'user',
           'order': index,
           'updatedAt': FieldValue.serverTimestamp(),

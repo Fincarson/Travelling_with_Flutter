@@ -1,5 +1,7 @@
 part of travel_agent_app;
 
+const _tripsColumnsPrefKey = 'travel_agent.layout.trips_columns';
+
 enum _TripsTab { upcoming, past }
 
 enum _TripSort {
@@ -33,7 +35,7 @@ class TripsScreen extends StatefulWidget {
   final ValueChanged<Trip> onStartTrip;
   final ValueChanged<Trip> onDeleteTrip;
   final List<String> favoriteTripIds;
-  final ValueChanged<Trip>? onToggleFavoriteTrip;
+  final Future<void> Function(Trip)? onToggleFavoriteTrip;
   final Future<void> Function(TripMemory memory, int rating, String feedback)?
   onRateMemory;
 
@@ -47,6 +49,31 @@ class _TripsScreenState extends State<TripsScreen> {
   _TripSort _sort = _TripSort.dateAscending;
   int? _travelerFilter;
   bool _filtersExpanded = false;
+  int _columns = 1;
+  final Map<String, bool> _pendingFavoriteTripStates = {};
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadColumns());
+  }
+
+  Future<void> _loadColumns() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getInt(_tripsColumnsPrefKey);
+    if (!mounted || stored == null) return;
+    setState(() => _columns = stored == 2 ? 2 : 1);
+  }
+
+  void _setColumns(int value) {
+    if (_columns == value) return;
+    setState(() => _columns = value);
+    unawaited(
+      SharedPreferences.getInstance().then(
+        (prefs) => prefs.setInt(_tripsColumnsPrefKey, value),
+      ),
+    );
+  }
 
   List<Trip> get _tabTrips {
     final trips = widget.trips
@@ -110,6 +137,14 @@ class _TripsScreenState extends State<TripsScreen> {
       widget.memories.length;
 
   @override
+  void didUpdateWidget(covariant TripsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _pendingFavoriteTripStates.removeWhere((id, desiredState) {
+      return widget.favoriteTripIds.contains(id) == desiredState;
+    });
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
@@ -145,6 +180,31 @@ class _TripsScreenState extends State<TripsScreen> {
     });
   }
 
+  bool _isFavoriteTrip(Trip trip) {
+    return _pendingFavoriteTripStates[trip.id] ??
+        widget.favoriteTripIds.contains(trip.id);
+  }
+
+  Future<void> _toggleFavoriteTrip(Trip trip) async {
+    final callback = widget.onToggleFavoriteTrip;
+    if (callback == null) return;
+    final desiredState = !_isFavoriteTrip(trip);
+    setState(() => _pendingFavoriteTripStates[trip.id] = desiredState);
+    try {
+      await callback(trip);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _pendingFavoriteTripStates.remove(trip.id));
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(appText(context, 'Could not update favorite.')),
+          ),
+        );
+    }
+  }
+
   Future<bool> _confirmDelete(Trip trip) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -153,9 +213,12 @@ class _TripsScreenState extends State<TripsScreen> {
           Icons.delete_outline_rounded,
           color: Color(0xFFC64D57),
         ),
-        title: Text('Delete ${trip.destination}?'),
-        content: const Text(
-          'This trip will be queued for deletion. You can still undo it from the confirmation message.',
+        title: Text('${appText(context, 'Delete')} ${trip.destination}?'),
+        content: Text(
+          appText(
+            context,
+            'This trip will be queued for deletion. You can still undo it from the confirmation message.',
+          ),
         ),
         actions: [
           TextButton(
@@ -188,7 +251,6 @@ class _TripsScreenState extends State<TripsScreen> {
     final hasResults = trips.isNotEmpty || memories.isNotEmpty;
 
     return ScreenScaffold(
-      bottomPadding: 92,
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1080),
@@ -201,6 +263,8 @@ class _TripsScreenState extends State<TripsScreen> {
                 pastCount: _pastCount,
                 activeFilterCount: _activeFilterCount,
                 filtersExpanded: _filtersExpanded,
+                columns: _columns,
+                onColumnsChanged: _setColumns,
                 onToggleFilters: () =>
                     setState(() => _filtersExpanded = !_filtersExpanded),
                 onSelected: (tab) => setState(() => _selectedTab = tab),
@@ -234,52 +298,88 @@ class _TripsScreenState extends State<TripsScreen> {
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeOutCubic,
                 child: hasResults
-                    ? Column(
+                    ? LayoutBuilder(
                         key: ValueKey(
-                          '${_selectedTab.name}-${_travelerFilter ?? 'all'}-${_sort.name}-${_searchController.text}',
+                          '${_selectedTab.name}-${_travelerFilter ?? 'all'}-${_sort.name}-${_searchController.text}-$_columns',
                         ),
-                        children: [
-                          for (final trip in trips)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 16),
-                              child: _SwipeToDeleteTrip(
-                                trip: trip,
-                                confirmDelete: () => _confirmDelete(trip),
-                                child: TripListCard(
-                                  trip: trip,
-                                  onTap: () => widget.onOpenTrip(trip),
-                                  onStart: () => widget.onStartTrip(trip),
-                                  favorite: widget.favoriteTripIds.contains(
-                                    trip.id,
+                        builder: (context, constraints) {
+                          const spacing = 16.0;
+                          final effectiveColumns = _columns == 2 ? 2 : 1;
+                          final cellWidth = effectiveColumns == 2
+                              ? (constraints.maxWidth - spacing) / 2
+                              : constraints.maxWidth;
+                          return Wrap(
+                            spacing: spacing,
+                            runSpacing: 16,
+                            children: [
+                              for (final trip in trips)
+                                SizedBox(
+                                  width: cellWidth,
+                                  child: trip.isOwner
+                                      ? _SwipeToDeleteTrip(
+                                          trip: trip,
+                                          confirmDelete: () =>
+                                              _confirmDelete(trip),
+                                          child: TripListCard(
+                                            trip: trip,
+                                            onTap: () =>
+                                                widget.onOpenTrip(trip),
+                                            onStart: () =>
+                                                widget.onStartTrip(trip),
+                                            favorite: _isFavoriteTrip(trip),
+                                            onToggleFavorite:
+                                                widget.onToggleFavoriteTrip ==
+                                                        null ||
+                                                    effectiveColumns == 2
+                                                ? null
+                                                : () => unawaited(
+                                                    _toggleFavoriteTrip(trip),
+                                                  ),
+                                          ),
+                                        )
+                                      : TripListCard(
+                                          trip: trip,
+                                          onTap: () => widget.onOpenTrip(trip),
+                                          onStart: trip.canEdit
+                                              ? () => widget.onStartTrip(trip)
+                                              : null,
+                                          canDelete: false,
+                                          favorite: _isFavoriteTrip(trip),
+                                          onToggleFavorite:
+                                              widget.onToggleFavoriteTrip ==
+                                                      null ||
+                                                  effectiveColumns == 2
+                                              ? null
+                                              : () => unawaited(
+                                                  _toggleFavoriteTrip(trip),
+                                                ),
+                                        ),
+                                ),
+                              if (memories.isNotEmpty) ...[
+                                const SizedBox(
+                                  width: double.infinity,
+                                  child: Padding(
+                                    padding: EdgeInsets.fromLTRB(2, 8, 2, 0),
+                                    child: Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: LabelText('Trip memories'),
+                                    ),
                                   ),
-                                  onToggleFavorite:
-                                      widget.onToggleFavoriteTrip == null
-                                      ? null
-                                      : () =>
-                                            widget.onToggleFavoriteTrip!(trip),
                                 ),
-                              ),
-                            ),
-                          if (memories.isNotEmpty) ...[
-                            const Padding(
-                              padding: EdgeInsets.fromLTRB(2, 8, 2, 12),
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: LabelText('Trip memories'),
-                              ),
-                            ),
-                            for (final memory in memories)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 14),
-                                child: _TripMemoryCard(
-                                  memory: memory,
-                                  onRate: widget.onRateMemory == null
-                                      ? null
-                                      : () => _rateMemory(memory),
-                                ),
-                              ),
-                          ],
-                        ],
+                                for (final memory in memories)
+                                  SizedBox(
+                                    width: cellWidth,
+                                    child: _TripMemoryCard(
+                                      memory: memory,
+                                      onRate: widget.onRateMemory == null
+                                          ? null
+                                          : () => _rateMemory(memory),
+                                    ),
+                                  ),
+                              ],
+                            ],
+                          );
+                        },
                       )
                     : _TripsEmptyState(
                         key: ValueKey(
@@ -305,13 +405,18 @@ class _TripsScreenState extends State<TripsScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: Text('Rate ${memory.destination}'),
+          title: Text('${appText(context, 'Rate')} ${memory.destination}'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('How well did this trip match your preferences?'),
+                Text(
+                  appText(
+                    context,
+                    'How well did this trip match your preferences?',
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -333,9 +438,12 @@ class _TripsScreenState extends State<TripsScreen> {
                   controller: feedback,
                   maxLines: 3,
                   maxLength: 400,
-                  decoration: const InputDecoration(
-                    labelText: 'Optional feedback',
-                    hintText: 'What should future recommendations change?',
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Optional feedback'),
+                    hintText: appText(
+                      context,
+                      'What should future recommendations change?',
+                    ),
                   ),
                 ),
               ],
@@ -344,12 +452,12 @@ class _TripsScreenState extends State<TripsScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+              child: Text(appText(context, 'Cancel')),
             ),
             FilledButton(
               onPressed: () =>
                   Navigator.of(context).pop((rating, feedback.text)),
-              child: const Text('Save rating'),
+              child: Text(appText(context, 'Save rating')),
             ),
           ],
         ),
@@ -368,6 +476,8 @@ class _TripsControlBar extends StatelessWidget {
     required this.pastCount,
     required this.activeFilterCount,
     required this.filtersExpanded,
+    required this.columns,
+    required this.onColumnsChanged,
     required this.onToggleFilters,
     required this.onSelected,
   });
@@ -377,6 +487,8 @@ class _TripsControlBar extends StatelessWidget {
   final int pastCount;
   final int activeFilterCount;
   final bool filtersExpanded;
+  final int columns;
+  final ValueChanged<int> onColumnsChanged;
   final VoidCallback onToggleFilters;
   final ValueChanged<_TripsTab> onSelected;
 
@@ -398,20 +510,26 @@ class _TripsControlBar extends StatelessWidget {
         padding: const EdgeInsets.all(10),
         child: Column(
           children: [
-            Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 240),
-                child: _TripsControlButton(
-                  key: const ValueKey('trip-filter-button'),
-                  label: 'FILTER',
-                  icon: filtersExpanded
-                      ? Icons.tune_rounded
-                      : Icons.filter_list_rounded,
-                  count: activeFilterCount,
-                  selected: filtersExpanded,
-                  onTap: onToggleFilters,
+            Row(
+              children: [
+                Expanded(
+                  child: _TripsControlButton(
+                    key: const ValueKey('trip-filter-button'),
+                    label: 'FILTER',
+                    icon: filtersExpanded
+                        ? Icons.tune_rounded
+                        : Icons.filter_list_rounded,
+                    count: activeFilterCount,
+                    selected: filtersExpanded,
+                    onTap: onToggleFilters,
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                LayoutColumnsToggle(
+                  columns: columns,
+                  onChanged: onColumnsChanged,
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             Container(
@@ -600,9 +718,9 @@ class _TripFilters extends StatelessWidget {
                   key: const ValueKey('trip-search-field'),
                   controller: searchController,
                   onChanged: onSearchChanged,
-                  decoration: const InputDecoration(
-                    labelText: 'Search trips',
-                    prefixIcon: Icon(Icons.search_rounded),
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Search trips'),
+                    prefixIcon: const Icon(Icons.search_rounded),
                     isDense: true,
                   ),
                 );
@@ -610,16 +728,16 @@ class _TripFilters extends StatelessWidget {
                   key: const ValueKey('trip-sort-dropdown'),
                   initialValue: selectedSort,
                   isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Sort by',
-                    prefixIcon: Icon(Icons.sort_rounded),
+                  decoration: InputDecoration(
+                    labelText: appText(context, 'Sort by'),
+                    prefixIcon: const Icon(Icons.sort_rounded),
                     isDense: true,
                   ),
                   items: [
                     for (final option in _TripSort.values)
                       DropdownMenuItem(
                         value: option,
-                        child: Text(option.label),
+                        child: Text(appText(context, option.label)),
                       ),
                   ],
                   onChanged: (value) {
@@ -643,7 +761,7 @@ class _TripFilters extends StatelessWidget {
             if (travelerCounts.isNotEmpty) ...[
               const SizedBox(height: 14),
               Text(
-                'TRAVELERS',
+                appText(context, 'TRAVELERS'),
                 style: TextStyle(
                   color: scheme.onSurfaceVariant,
                   fontSize: 10,
@@ -657,7 +775,7 @@ class _TripFilters extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   ChoiceChip(
-                    label: const Text('All'),
+                    label: Text(appText(context, 'All')),
                     selected: selectedTravelerCount == null,
                     onSelected: (_) => onTravelerCountSelected(null),
                   ),
@@ -677,7 +795,7 @@ class _TripFilters extends StatelessWidget {
                 child: TextButton.icon(
                   onPressed: onClear,
                   icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                  label: const Text('Clear filters'),
+                  label: Text(appText(context, 'Clear filters')),
                 ),
               ),
             ],
@@ -804,11 +922,14 @@ class _TripsEmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           Text(
-            hasFilters
-                ? 'No matching trips'
-                : tab == _TripsTab.upcoming
-                ? appText(context, 'No trips yet')
-                : 'No past trips yet',
+            appText(
+              context,
+              hasFilters
+                  ? 'No matching trips'
+                  : tab == _TripsTab.upcoming
+                  ? 'No trips yet'
+                  : 'No past trips yet',
+            ),
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               color: Theme.of(context).colorScheme.onSurface,
               fontWeight: FontWeight.w900,
@@ -816,11 +937,14 @@ class _TripsEmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            hasFilters
-                ? 'Try clearing a filter or searching for another destination.'
-                : tab == _TripsTab.upcoming
-                ? appText(context, 'Create a trip to see it here.')
-                : 'Completed trips and travel memories will appear here.',
+            appText(
+              context,
+              hasFilters
+                  ? 'Try clearing a filter or searching for another destination.'
+                  : tab == _TripsTab.upcoming
+                  ? 'Create a trip to see it here.'
+                  : 'Completed trips and travel memories will appear here.',
+            ),
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w700,
@@ -832,7 +956,7 @@ class _TripsEmptyState extends StatelessWidget {
             OutlinedButton.icon(
               onPressed: onClearFilters,
               icon: const Icon(Icons.restart_alt_rounded),
-              label: const Text('Clear filters'),
+              label: Text(appText(context, 'Clear filters')),
             )
           else if (tab == _TripsTab.upcoming)
             PrimaryButton(

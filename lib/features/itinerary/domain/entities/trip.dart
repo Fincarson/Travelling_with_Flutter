@@ -27,6 +27,7 @@ class Trip {
     this.originLatitude,
     this.originLongitude,
     this.title = '',
+    this.currentUserRole = 'owner',
   });
 
   final String id;
@@ -52,6 +53,11 @@ class Trip {
   final String? originLabel;
   final double? originLatitude;
   final double? originLongitude;
+  final String currentUserRole;
+
+  String get groupType => _travelerGroupLabel(numOfTravelers);
+  bool get canEdit => currentUserRole == 'owner' || currentUserRole == 'editor';
+  bool get isOwner => currentUserRole == 'owner';
 
   Trip copyWith({
     TripStatus? status,
@@ -76,6 +82,8 @@ class Trip {
     String? originLabel,
     double? originLatitude,
     double? originLongitude,
+    String? currentUserRole,
+    bool clearDestinationPlace = false,
   }) => Trip(
     id: id,
     title: title ?? this.title,
@@ -93,13 +101,16 @@ class Trip {
     currency: currency ?? this.currency,
     preferences: preferences ?? this.preferences,
     budgetCategories: budgetCategories ?? this.budgetCategories,
-    placeId: placeId ?? this.placeId,
-    formattedAddress: formattedAddress ?? this.formattedAddress,
-    latitude: latitude ?? this.latitude,
-    longitude: longitude ?? this.longitude,
+    placeId: clearDestinationPlace ? null : placeId ?? this.placeId,
+    formattedAddress: clearDestinationPlace
+        ? null
+        : formattedAddress ?? this.formattedAddress,
+    latitude: clearDestinationPlace ? null : latitude ?? this.latitude,
+    longitude: clearDestinationPlace ? null : longitude ?? this.longitude,
     originLabel: originLabel ?? this.originLabel,
     originLatitude: originLatitude ?? this.originLatitude,
     originLongitude: originLongitude ?? this.originLongitude,
+    currentUserRole: currentUserRole ?? this.currentUserRole,
   );
 
   Map<String, dynamic> toMap() => {
@@ -192,6 +203,7 @@ class Trip {
     required List<ScheduleItem> items,
     required List<Booking> bookings,
     required List<BudgetCategory> budgetCategories,
+    required String currentUserRole,
   }) {
     final map = doc.data() ?? const <String, dynamic>{};
     final destination = (map['destination'] as String?) ?? 'Untitled trip';
@@ -232,6 +244,41 @@ class Trip {
           .whereType<String>()
           .toList(),
       budgetCategories: budgetCategories,
+      currentUserRole: currentUserRole,
+    );
+  }
+}
+
+class TripMember {
+  const TripMember({
+    required this.uid,
+    required this.role,
+    required this.status,
+    required this.displayNameSnapshot,
+    this.photoUrlSnapshot,
+    this.joinedAt,
+  });
+
+  final String uid;
+  final String role;
+  final String status;
+  final String displayNameSnapshot;
+  final String? photoUrlSnapshot;
+  final Timestamp? joinedAt;
+
+  bool get isOwner => role == 'owner';
+  bool get isActive => status == 'active';
+
+  static TripMember fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final map = doc.data() ?? const <String, dynamic>{};
+    return TripMember(
+      uid: doc.id,
+      role: (map['role'] as String?) ?? 'viewer',
+      status: (map['status'] as String?) ?? 'active',
+      displayNameSnapshot:
+          (map['displayNameSnapshot'] as String?) ?? 'Explorer',
+      photoUrlSnapshot: map['photoUrlSnapshot'] as String?,
+      joinedAt: map['joinedAt'] as Timestamp?,
     );
   }
 }
@@ -245,6 +292,11 @@ int _numOfTravelersFromMap(Map<String, dynamic> map) {
 String _travelerCountLabel(int count) {
   final safeCount = count.clamp(1, 99).toInt();
   return safeCount == 1 ? '1 traveler' : '$safeCount travelers';
+}
+
+String _travelerGroupLabel(int count) {
+  final safeCount = count.clamp(1, 99).toInt();
+  return safeCount == 1 ? 'Solo' : _travelerCountLabel(safeCount);
 }
 
 class TripMemory {
@@ -389,12 +441,26 @@ class TripMemory {
 }
 
 class ScheduleItem {
-  const ScheduleItem(this.day, this.time, this.activity, this.type, this.cost);
+  const ScheduleItem(
+    this.day,
+    this.time,
+    this.activity,
+    this.type,
+    this.cost, {
+    this.address,
+    this.latitude,
+    this.longitude,
+    this.imageUrl,
+  });
   final int day;
   final String time;
   final String activity;
   final IconData type;
   final int cost;
+  final String? address;
+  final double? latitude;
+  final double? longitude;
+  final String? imageUrl;
 
   Map<String, dynamic> toMap() => {
     'day': day,
@@ -402,6 +468,10 @@ class ScheduleItem {
     'activity': activity,
     'type': _iconToMap(type),
     'cost': cost,
+    'address': address,
+    'latitude': latitude,
+    'longitude': longitude,
+    'imageUrl': imageUrl,
   };
 
   static ScheduleItem fromMap(Map<String, dynamic> map) => ScheduleItem(
@@ -410,6 +480,10 @@ class ScheduleItem {
     (map['activity'] as String?) ?? 'Activity',
     _iconFromMap(map['type']),
     (map['cost'] as num?)?.toInt() ?? 0,
+    address: map['address'] as String?,
+    latitude: (map['latitude'] as num?)?.toDouble(),
+    longitude: (map['longitude'] as num?)?.toDouble(),
+    imageUrl: map['imageUrl'] as String?,
   );
 }
 
@@ -585,6 +659,16 @@ int? _parseActivityTimeMinutes(String value) {
 String _clockLabel(DateTime value) {
   final hour = value.hour.toString().padLeft(2, '0');
   final minute = value.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
+}
+
+// Normalizes any schedule time string ("6:00 PM", "09:00 AM", "7:30") to a
+// 24-hour "HH:mm" label. Non-time text (e.g. "TBD") is returned unchanged.
+String _to24HourLabel(String value) {
+  final minutes = _parseActivityTimeMinutes(value);
+  if (minutes == null) return value;
+  final hour = (minutes ~/ 60).toString().padLeft(2, '0');
+  final minute = (minutes % 60).toString().padLeft(2, '0');
   return '$hour:$minute';
 }
 
@@ -830,12 +914,27 @@ int? _firstEmptyScheduleDay(Trip trip, int? dateRangeDays) {
   final seen = <String>{};
   final items = [...trip.items]..sort(_compareRuntimeScheduleItems);
   for (final item in items) {
+    if (_isContextScheduleItem(item)) continue;
     final minutes = _parseActivityTimeMinutes(item.time);
     if (minutes == null) continue;
     final key = '${item.day}-$minutes';
     if (!seen.add(key)) return (day: item.day, time: item.time);
   }
   return null;
+}
+
+bool _isContextScheduleItem(ScheduleItem item) {
+  final activity = item.activity.toLowerCase();
+  if (item.type == Icons.cloud_rounded) return true;
+  return activity.contains('weather check') ||
+      activity.contains('rain chance') ||
+      activity.contains('rain expected') ||
+      activity.contains('pack umbrella') ||
+      activity.contains('indoor backup') ||
+      activity.startsWith('weather ') ||
+      activity.startsWith('ai weather ') ||
+      activity.startsWith('reminder:') ||
+      activity.startsWith('note:');
 }
 
 int _tripActualSpend(Trip trip) {

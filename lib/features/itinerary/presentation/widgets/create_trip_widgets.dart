@@ -141,11 +141,19 @@ class CreateTripChatTurn extends StatelessWidget {
   const CreateTripChatTurn({
     required this.message,
     required this.onSelect,
+    this.selectedCurrency,
+    this.currencyOptions = const [],
+    this.onCurrencyChanged,
+    this.budgetOptions = const [],
     super.key,
   });
 
   final CreateTripChatMessage message;
   final ValueChanged<String> onSelect;
+  final String? selectedCurrency;
+  final List<String> currencyOptions;
+  final ValueChanged<String>? onCurrencyChanged;
+  final List<CreateTripChoiceOption> budgetOptions;
 
   @override
   Widget build(BuildContext context) {
@@ -161,6 +169,10 @@ class CreateTripChatTurn extends StatelessWidget {
             child: CreateTripChoicePanel(
               widget: message.widget!,
               onSelect: onSelect,
+              selectedCurrency: selectedCurrency,
+              currencyOptions: currencyOptions,
+              onCurrencyChanged: onCurrencyChanged,
+              budgetOptions: budgetOptions,
             ),
           ),
       ],
@@ -243,14 +255,26 @@ class CreateTripChoicePanel extends StatelessWidget {
   const CreateTripChoicePanel({
     required this.widget,
     required this.onSelect,
+    this.selectedCurrency,
+    this.currencyOptions = const [],
+    this.onCurrencyChanged,
+    this.budgetOptions = const [],
     super.key,
   });
 
   final CreateTripChoiceWidget widget;
   final ValueChanged<String> onSelect;
+  final String? selectedCurrency;
+  final List<String> currencyOptions;
+  final ValueChanged<String>? onCurrencyChanged;
+  final List<CreateTripChoiceOption> budgetOptions;
 
   @override
   Widget build(BuildContext context) {
+    final isBudgetChoice = widget.title.toLowerCase().contains('budget');
+    final options = isBudgetChoice && budgetOptions.isNotEmpty
+        ? budgetOptions
+        : widget.options;
     return GlassPanel(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -263,8 +287,26 @@ class CreateTripChoicePanel extends StatelessWidget {
               fontWeight: FontWeight.w900,
             ),
           ),
+          if (isBudgetChoice &&
+              selectedCurrency != null &&
+              currencyOptions.isNotEmpty &&
+              onCurrencyChanged != null) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final currency in currencyOptions)
+                  ChoiceChip(
+                    label: Text(currency),
+                    selected: currency == selectedCurrency,
+                    onSelected: (_) => onCurrencyChanged!(currency),
+                  ),
+              ],
+            ),
+          ],
           const SizedBox(height: 10),
-          for (final option in widget.options)
+          for (final option in options)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: InkWell(
@@ -328,19 +370,23 @@ class CreateTripDraftCard extends StatelessWidget {
   const CreateTripDraftCard({
     required this.draft,
     required this.confirmed,
-    required this.onConfirm,
     required this.onChange,
-    required this.onEdit,
     this.onUse,
     super.key,
   });
 
   final CreateTripDraft draft;
   final bool confirmed;
-  final VoidCallback onConfirm;
   final ValueChanged<String> onChange;
-  final VoidCallback onEdit;
   final VoidCallback? onUse;
+
+  String get _lengthLabel {
+    final start = draft.startDate;
+    final end = draft.endDate;
+    if (start == null || end == null) return 'TBD';
+    final days = end.difference(start).inDays + 1;
+    return days <= 1 ? '1 day' : '$days days';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -381,17 +427,35 @@ class CreateTripDraftCard extends StatelessWidget {
                     ? 'TBD'
                     : '${_dateKey(draft.startDate!)} / ${_dateKey(draft.endDate!)}',
               ),
+              DraftStat(label: 'Trip length', value: _lengthLabel),
               DraftStat(
                 label: 'Budget',
                 value: draft.budget == null
                     ? 'TBD'
                     : '${draft.currency ?? 'USD'} ${_formatAmountText(draft.budget!)}',
               ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ResponsiveSplit(
+            children: [
               DraftStat(
                 label: 'Travelers',
                 value: draft.numOfTravelers == null
                     ? 'TBD'
                     : _travelerCountLabel(draft.numOfTravelers!),
+              ),
+              DraftStat(
+                label: 'Group',
+                value: (draft.groupType?.trim().isNotEmpty ?? false)
+                    ? draft.groupType!
+                    : 'TBD',
+              ),
+              DraftStat(
+                label: 'Trip type',
+                value: draft.preferences.isEmpty
+                    ? 'TBD'
+                    : '${draft.preferences.length} selected',
               ),
             ],
           ),
@@ -435,56 +499,22 @@ class CreateTripDraftCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          ResponsiveSplit(
-            children: [
-              FilledButton(
-                onPressed: onEdit,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFF8FAFC),
-                  foregroundColor: _primary,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
-                child: Text(
-                  appText(context, 'CUSTOMIZE'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              FilledButton(
-                onPressed: onConfirm,
-                style: FilledButton.styleFrom(
-                  backgroundColor: confirmed ? _accent : _primary,
-                  foregroundColor: confirmed ? _primary : Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
-                child: Text(
-                  appText(context, confirmed ? 'CONFIRMED' : 'CONFIRM'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
+          FilledButton.icon(
             onPressed: onUse,
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _primary,
-              minimumSize: const Size.fromHeight(48),
-              side: const BorderSide(color: Color(0xFFEFF3F6)),
+            style: FilledButton.styleFrom(
+              backgroundColor: _primary,
+              foregroundColor: Colors.white,
+              minimumSize: const Size.fromHeight(50),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
             ),
-            icon: const Icon(Icons.auto_awesome_rounded),
+            icon: const Icon(Icons.map_rounded),
             label: Text(
-              appText(context, 'USE CUSTOMIZED PLAN'),
+              appText(context, 'Preview Itinerary'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w900),
             ),
           ),
         ],
@@ -551,11 +581,13 @@ class DraftStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: scheme.surfaceContainerHighest.withValues(alpha: .78),
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .45)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -564,8 +596,8 @@ class DraftStat extends StatelessWidget {
             appText(context, label).toUpperCase(),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _secondary,
+            style: TextStyle(
+              color: scheme.primary.withValues(alpha: .72),
               fontSize: 9,
               fontWeight: FontWeight.w900,
             ),
@@ -575,8 +607,8 @@ class DraftStat extends StatelessWidget {
             appText(context, value),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _primary,
+            style: TextStyle(
+              color: scheme.onSurface,
               fontSize: 11,
               fontWeight: FontWeight.w900,
             ),
@@ -718,42 +750,184 @@ class DateRangeCard extends StatelessWidget {
 }
 
 class GeneratingTripPanel extends StatelessWidget {
-  const GeneratingTripPanel({super.key});
+  const GeneratingTripPanel({
+    this.progress = AiTripGenerationProgress.initial,
+    super.key,
+  });
+
+  final AiTripGenerationProgress progress;
+
+  static const _icons = [
+    Icons.travel_explore,
+    Icons.public_rounded,
+    Icons.location_on_outlined,
+    Icons.calendar_today_outlined,
+    Icons.attach_money_outlined,
+    Icons.directions_outlined,
+    Icons.checklist_outlined,
+    Icons.photo_library_outlined,
+    Icons.auto_awesome_outlined,
+  ];
 
   @override
   Widget build(BuildContext context) {
+    final clampedIndex = progress.stepIndex.clamp(
+      0,
+      _aiTripProgressSteps.length - 1,
+    );
+    final value = progress.value.clamp(0.0, 1.0);
     return GlassPanel(
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox.square(
-            dimension: 36,
-            child: CircularProgressIndicator(strokeWidth: 3),
+          Row(
+            children: [
+              SizedBox.square(
+                dimension: 36,
+                child: CircularProgressIndicator(strokeWidth: 3, value: value),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      appText(context, 'Generating schedule...'),
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      appText(context, progress.status),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _secondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  appText(context, 'Generating schedule...'),
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  appText(
-                    context,
-                    'AI is shaping the route, bookings, budget, and packing list.',
-                  ),
-                  style: const TextStyle(
-                    color: _secondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 8,
+              value: value,
+              backgroundColor: Theme.of(
+                context,
+              ).colorScheme.primary.withValues(alpha: .14),
             ),
           ),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              '${(value * 100).round()}%',
+              style: const TextStyle(
+                color: _secondary,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          for (var i = 0; i <= clampedIndex; i++)
+            AnimatedSize(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeOutCubic,
+              child: _GeneratingStep(
+                key: ValueKey('generating-step-$i'),
+                icon: _icons[i],
+                text: _aiTripProgressSteps[i].status,
+                isActive: i == clampedIndex,
+              ),
+            ),
         ],
+      ),
+    );
+  }
+}
+
+class _GeneratingStep extends StatefulWidget {
+  const _GeneratingStep({
+    required this.icon,
+    required this.text,
+    required this.isActive,
+    super.key,
+  });
+
+  final IconData icon;
+  final String text;
+  final bool isActive;
+
+  @override
+  State<_GeneratingStep> createState() => _GeneratingStepState();
+}
+
+class _GeneratingStepState extends State<_GeneratingStep>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _opacity;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _opacity = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
+    _slide = Tween<Offset>(
+      begin: const Offset(0, 0.3),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: SlideTransition(
+        position: _slide,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(
+                widget.icon,
+                size: 15,
+                color: widget.isActive
+                    ? Theme.of(context).colorScheme.primary
+                    : _secondary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  appText(context, widget.text),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: widget.isActive
+                        ? Theme.of(context).colorScheme.primary
+                        : _secondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

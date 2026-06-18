@@ -14,10 +14,7 @@ class AppRouter {
         return null;
       },
       routes: [
-        GoRoute(
-          path: '/onboarding',
-          builder: (context, state) => appState._buildOnboardingScreen(),
-        ),
+        GoRoute(path: '/onboarding', redirect: (context, state) => '/'),
         StatefulShellRoute.indexedStack(
           builder: (context, state, navigationShell) {
             return _TravelRouteFrame(
@@ -78,6 +75,14 @@ class AppRouter {
                             state.pathParameters['tripId'] ?? '',
                           ),
                       routes: [
+                        GoRoute(
+                          path: 'settings',
+                          builder: (context, state) =>
+                              appState._buildTripSettingsScreen(
+                                context,
+                                state.pathParameters['tripId'] ?? '',
+                              ),
+                        ),
                         GoRoute(
                           path: 'map',
                           builder: (context, state) =>
@@ -201,6 +206,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
 
   @override
   void dispose() {
+    widget.appState._setBottomNav(null);
     _slideController.dispose();
     super.dispose();
   }
@@ -208,8 +214,9 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
   @override
   Widget build(BuildContext context) {
     final performance = PerformanceScope.settingsOf(context);
-    final title = _mainPageTitle(widget.location);
     final headerAction = _headerAction(context, widget.location);
+    _publishBottomNav();
+    _restoreStuckSlideIfNeeded();
     _slideController.duration = performance.transitionDuration;
 
     return Stack(
@@ -231,24 +238,8 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
                   ),
               child: Column(
                 children: [
-                  if (title != null)
-                    _MainPageHeader(
-                      title: title,
-                      leading: widget.location == '/trips/new'
-                          ? IconButton(
-                              tooltip: appText(context, 'Back'),
-                              onPressed: _navigateBack,
-                              icon: const Icon(Icons.chevron_left_rounded),
-                            )
-                          : null,
-                      action: widget.location == '/profile'
-                          ? IconButton(
-                              tooltip: appText(context, 'Settings'),
-                              onPressed: () => context.go('/profile/settings'),
-                              icon: const Icon(Icons.settings_rounded),
-                            )
-                          : headerAction,
-                    ),
+                  if (headerAction != null)
+                    _MainPageHeader(action: headerAction),
                   Expanded(
                     child: widget.appState._performanceBoundary(
                       widget.navigationShell,
@@ -260,33 +251,41 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
             ),
           ),
         ),
-        if (_showsBottomNav(widget.location))
-          _BottomNav(
-            tab: _tabForIndex,
-            onSelect: (tab) => _select(context, tab),
-          ),
       ],
     );
   }
 
+  void _publishBottomNav() {
+    final controller = _showsBottomNav(widget.location)
+        ? _BottomNavController(tab: _tabForIndex, onSelect: _select)
+        : null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.appState._setBottomNav(controller);
+    });
+  }
+
+  void _restoreStuckSlideIfNeeded() {
+    if (_slideController.isAnimating || _slideController.value >= 1) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _slideController.isAnimating ||
+          _slideController.value >= 1) {
+        return;
+      }
+      setState(() {
+        _slideBegin = Offset.zero;
+        _slideController.value = 1;
+      });
+    });
+  }
+
   Widget? _headerAction(BuildContext context, String location) {
-    if (location == '/') {
-      return SizedBox.square(
-        dimension: _MainPageHeader.actionSize,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Positioned.fill(
-              child: IconButton(
-                tooltip: appText(context, 'Notifications'),
-                onPressed: () => context.go('/notifications'),
-                icon: const Icon(Icons.notifications_none_rounded),
-              ),
-            ),
-            if (widget.appState._user.notificationsEnabled)
-              const Positioned(right: 8, top: 8, child: Dot()),
-          ],
-        ),
+    if (location == '/profile') {
+      return IconButton(
+        tooltip: appText(context, 'Settings'),
+        onPressed: () => context.go('/profile/settings'),
+        icon: const Icon(Icons.settings_rounded),
       );
     }
 
@@ -326,15 +325,6 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     return true;
   }
 
-  String? _mainPageTitle(String location) {
-    if (location == '/') return 'Home';
-    if (location == '/trips') return 'Trips';
-    if (location == '/trips/new') return 'New Plan';
-    if (location == '/profile') return 'Profile';
-    if (location == '/chat' && !widget.appState._isChatRoomOpen) return 'Chats';
-    return null;
-  }
-
   _NavTab get _tabForIndex {
     return switch (widget.navigationShell.currentIndex) {
       0 => _NavTab.home,
@@ -345,9 +335,9 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     };
   }
 
-  void _select(BuildContext context, _NavTab tab) {
+  void _select(_NavTab tab) {
     if (tab == _NavTab.add) {
-      context.push('/trips/new');
+      widget.appState._push('/trips/new');
       return;
     }
 
@@ -414,7 +404,7 @@ class _TravelRouteFrameState extends State<_TravelRouteFrame>
     if (parent == null) return;
     _runNavigationAnimation(
       incomingFromRight: false,
-      navigate: () => context.go(parent),
+      navigate: () => widget.appState._go(parent),
     );
   }
 
@@ -472,15 +462,12 @@ String? _parentLocation(String location) {
 }
 
 class _MainPageHeader extends StatelessWidget {
-  const _MainPageHeader({required this.title, this.leading, this.action});
+  const _MainPageHeader({required this.action});
 
   static const height = 40.0;
   static const verticalPadding = 8.0;
-  static const actionSize = 40.0;
 
-  final String title;
-  final Widget? leading;
-  final Widget? action;
+  final Widget action;
 
   @override
   Widget build(BuildContext context) {
@@ -500,30 +487,7 @@ class _MainPageHeader extends StatelessWidget {
           color: pageColor,
           child: SizedBox(
             height: height,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Positioned.fill(
-                  left: 92,
-                  right: 92,
-                  child: Center(
-                    child: Text(
-                      appText(context, title),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-                if (leading != null)
-                  Align(alignment: Alignment.centerLeft, child: leading!),
-                if (action != null)
-                  Align(alignment: Alignment.centerRight, child: action!),
-              ],
-            ),
+            child: Align(alignment: Alignment.centerRight, child: action),
           ),
         ),
       ),

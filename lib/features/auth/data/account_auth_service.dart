@@ -4,7 +4,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthenticatedAccount {
   const AuthenticatedAccount({
@@ -133,9 +132,6 @@ class AccountAuthService {
   static const _googleServerClientId = String.fromEnvironment(
     'GOOGLE_SERVER_CLIENT_ID',
   );
-  static const rememberDuration = Duration(days: 30);
-  static const _rememberedUidKey = 'account_auth.remembered_uid';
-  static const _rememberUntilKey = 'account_auth.remember_until';
 
   Stream<AuthenticatedAccount?> get accountChanges {
     return _auth.userChanges().map((user) {
@@ -172,41 +168,9 @@ class AccountAuthService {
     );
   }
 
-  Future<AuthenticatedAccount?> restoreRememberedAccount() async {
-    final user = _auth.currentUser;
-    if (user == null) return null;
-
-    final prefs = await SharedPreferences.getInstance();
-    final rememberedUid = prefs.getString(_rememberedUidKey);
-    final rememberUntilText = prefs.getString(_rememberUntilKey);
-    final rememberUntil = rememberUntilText == null
-        ? null
-        : DateTime.tryParse(rememberUntilText)?.toUtc();
-    final isRemembered =
-        rememberedUid == user.uid &&
-        rememberUntil != null &&
-        DateTime.now().toUtc().isBefore(rememberUntil);
-
-    if (!isRemembered) {
-      await signOut();
-      return null;
-    }
-
-    return AuthenticatedAccount.fromFirebaseUser(user);
-  }
-
-  Future<void> rememberCurrentSession({required bool remember}) async {
-    final prefs = await SharedPreferences.getInstance();
-    final user = _auth.currentUser;
-    if (!remember || user == null) {
-      await prefs.remove(_rememberedUidKey);
-      await prefs.remove(_rememberUntilKey);
-      return;
-    }
-
-    final rememberUntil = DateTime.now().toUtc().add(rememberDuration);
-    await prefs.setString(_rememberedUidKey, user.uid);
-    await prefs.setString(_rememberUntilKey, rememberUntil.toIso8601String());
+  Future<void> prepareForFreshSignIn() async {
+    // Startup must not clear FirebaseAuth's persisted session. If no account is
+    // signed in, AccountGate will naturally show the sign-in form.
   }
 
   Future<void> signInWithEmail({
@@ -540,7 +504,6 @@ class AccountAuthService {
 
   Future<void> signOut() async {
     await _auth.signOut();
-    unawaited(_clearRememberedSession());
     if (!kIsWeb) unawaited(_signOutFromGoogle());
   }
 
@@ -610,16 +573,6 @@ class AccountAuthService {
     }
   }
 
-  static Future<void> _clearRememberedSession() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_rememberedUidKey);
-      await prefs.remove(_rememberUntilKey);
-    } catch (_) {
-      // A local preference failure must not restore a signed-out Firebase user.
-    }
-  }
-
   Future<void> _rejectNewProviderAccount(
     UserCredential credential,
     String message,
@@ -661,6 +614,7 @@ class AccountAuthService {
       'settings': {
         'onboardingRequired': !completedOnboarding,
         'onboardingCompleted': completedOnboarding,
+        'tutorialCompleted': false,
       },
       'updatedAt': FieldValue.serverTimestamp(),
     };

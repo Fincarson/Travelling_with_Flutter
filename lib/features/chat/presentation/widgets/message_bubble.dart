@@ -19,6 +19,29 @@ class GroupMessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    if (message.type == 'system') {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 24),
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(
+              appText(context, message.text),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colors.onSurfaceVariant,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     final maxBubbleWidth = math.min(
       360.0,
       MediaQuery.sizeOf(context).width * 0.72,
@@ -61,6 +84,7 @@ class GroupMessageBubble extends StatelessWidget {
                       ),
                     ),
                   Container(
+                    key: ValueKey('chat-message-bubble-${message.id}'),
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: isMine
